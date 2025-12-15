@@ -1,0 +1,64 @@
+{
+  "name": "Jira Simulator Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */45 9-17 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "7e75052b-6446-42ab-b26c-7956b32c4ece",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://jira-simulator:8000/trigger",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "1d588bbc-3e48-454e-84dd-d854133f7ebc",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b8a139c9-8225-44b7-90da-13615bda491d",
+  "meta": {
+    "instanceId": "7041aef4bb06b1c4476e9a714ff6c554f495e14ee3056027e09c2a7cc955c168"
+  },
+  "id": "49xc7FnKx7v4DbKY",
+  "tags": []
+}
