@@ -1,0 +1,56 @@
+# Jira Team Simulator Configuration
+
+jira:
+  # These are loaded from environment variables
+  # JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, PROJECT_KEY
+
+simulation:
+  work_hours:
+    start: 9
+    end: 17
+    timezone: "America/New_York"
+
+  # How many agents act per trigger
+  agents_per_tick:
+    min: 2
+    max: 5
+
+  # Probability weights for action types (should sum to ~1.0)
+  action_weights:
+    transition_status: 0.30
+    add_comment: 0.25
+    assign_ticket: 0.15
+    log_work: 0.15
+    create_ticket: 0.10
+    link_tickets: 0.05
+
+  # Cycle time targets (in days)
+  cycle_times:
+    bug:
+      min: 1
+      max: 3
+    story:
+      min: 3
+      max: 7
+    task:
+      min: 2
+      max: 5
+    epic:
+      min: 14
+      max: 30
+
+llm:
+  routine_model: "claude-3-haiku-20240307"
+  complex_model: "claude-sonnet-4-20250514"
+
+  # Actions that require complex model
+  complex_actions:
+    - create_story
+    - create_epic
+    - architectural_comment
+    - design_discussion
+
+# Sprint configuration
+sprint:
+  duration_days: 14
+  planning_day: 1  # Monday

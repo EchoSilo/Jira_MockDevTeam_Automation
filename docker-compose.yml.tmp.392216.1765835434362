@@ -1,0 +1,22 @@
+services:
+  jira-simulator:
+    build: .
+    container_name: jira-simulator
+    ports:
+      - "8000:8000"
+    environment:
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PROJECT_KEY=${PROJECT_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - n8n_default
+    restart: unless-stopped
+
+networks:
+  n8n_default:
+    external: true

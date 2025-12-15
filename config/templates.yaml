@@ -1,0 +1,83 @@
+# Comment Templates for Routine Actions
+# These are used for simple actions to save LLM costs
+# {variables} are replaced at runtime
+
+status_transitions:
+  to_in_progress:
+    - "Starting work on this now."
+    - "Picking this up."
+    - "Beginning implementation."
+    - "Got it, working on this."
+
+  to_code_review:
+    - "Ready for code review."
+    - "Implementation complete, PR is up for review."
+    - "Code changes ready for review."
+    - "Finished coding, moving to review."
+
+  to_testing:
+    - "Ready for QA."
+    - "Implementation and code review complete. Ready for testing."
+    - "Moving to QA for verification."
+    - "Code merged, ready for test."
+
+  to_done:
+    - "Verified and complete."
+    - "All tests passing, closing this out."
+    - "Done."
+    - "Complete and deployed."
+
+  to_blocked:
+    - "Blocked - see comment below."
+    - "Can't proceed until dependency is resolved."
+    - "Putting on hold due to blocker."
+
+qa_actions:
+  approved:
+    - "Tested and verified. Looks good!"
+    - "QA passed. All acceptance criteria met."
+    - "Verified on staging. Approved to ship."
+    - "Testing complete, no issues found."
+
+  rejected:
+    - "Found an issue during testing. Moving back for fixes."
+    - "QA failed - see details below."
+    - "Needs rework. Documented the issue in comments."
+
+work_log:
+  templates:
+    - "Development work"
+    - "Implementation"
+    - "Code review"
+    - "Testing"
+    - "Bug investigation"
+    - "Documentation"
+
+assignment:
+  self_assign:
+    - "I'll take this one."
+    - "Assigning to myself."
+    - "Picking this up."
+
+  reassign:
+    - "Reassigning to {assignee} who has more context here."
+    - "Handing off to {assignee}."
+    - "{assignee} can you take a look at this?"
+
+simple_comments:
+  acknowledgment:
+    - "Got it, thanks."
+    - "Understood."
+    - "Makes sense."
+    - "Okay, will do."
+
+  progress_update:
+    - "Making good progress on this."
+    - "About halfway through."
+    - "Should have this wrapped up soon."
+    - "Running into some complexity here, might take a bit longer."
+
+  question_followup:
+    - "Good question, let me look into that."
+    - "I'll check and get back to you."
+    - "Following up on this."
