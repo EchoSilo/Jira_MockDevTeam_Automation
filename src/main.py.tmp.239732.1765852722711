@@ -19,7 +19,7 @@ import yaml
 from .state import load_state, save_state, SimulationState, sync_state_with_jira
 from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
-from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
+from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient
 
 
 # Load configuration at startup
@@ -41,34 +41,21 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.personas = personas
     app.state.templates = templates
-
-    # Initialize logging system
-    log_config = settings.get("logging", {})
-    db_path = log_config.get("db_path", "data/logs.db")
-    app.state.log_writer = AsyncLogWriter(db_path=db_path)
-    app.state.log_writer.start()
-
-    # Clean up old logs on startup
-    retention_days = log_config.get("retention_days", 30)
-    try:
-        from .logging import LogDatabase
-        db = LogDatabase(db_path)
-        deleted = db.cleanup_old_logs(retention_days)
-        if deleted > 0:
-            print(f"Cleaned up {deleted} old log entries")
-    except Exception as e:
-        print(f"Warning: Log cleanup failed: {e}")
-
-    # Initialize base services (used for health checks etc)
     app.state.jira = JiraClient()
     app.state.llm = LLMService()
 
-    print("Jira Team Simulator started (scenario-driven mode with logging)")
+    # Initialize scenario-driven orchestrator
+    app.state.orchestrator = ScenarioOrchestrator(
+        jira_client=app.state.jira,
+        llm_service=app.state.llm,
+        personas=personas,
+        templates=templates,
+        settings=settings,
+    )
+    print("Jira Team Simulator started (scenario-driven mode)")
     yield
-
     # Shutdown
     print("Jira Team Simulator shutting down")
-    app.state.log_writer.stop()
 
 
 app = FastAPI(
@@ -77,9 +64,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
-# Include the logs API router
-app.include_router(logs_router)
 
 
 class TriggerResponse(BaseModel):
@@ -156,12 +140,6 @@ async def trigger_simulation():
     3. Execute - CrewAI crews perform the planned actions
     4. Update - state is updated based on results
     """
-    # Track session stats for logging
-    llm_call_count = 0
-    jira_call_count = 0
-    total_input_tokens = 0
-    total_output_tokens = 0
-
     try:
         # Load current state
         state = load_state()
@@ -171,59 +149,23 @@ async def trigger_simulation():
             state.reset_daily_counters()
             state.advance_sprint_day()
 
-        # Determine intensity randomly
-        intensity = determine_intensity()
-
-        # Start logging session for this tick
-        session = app.state.log_writer.start_session(
-            intensity=intensity,
-            simulation_day=state.simulation_day,
-            sprint_day=state.current_sprint.sprint_day,
-            sprint_number=state.current_sprint.sprint_number,
-        )
-
-        # Create logged services for this tick
-        logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
-        logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
-
-        # Sync state with actual Jira board using logged client
+        # Sync state with actual Jira board (optional but recommended)
         try:
-            sync_state_with_jira(state, logged_jira)
+            sync_state_with_jira(state, app.state.jira)
         except Exception as sync_error:
             print(f"Warning: State sync failed: {sync_error}")
 
-        # Create orchestrator with logged services for this tick
-        orchestrator = ScenarioOrchestrator(
-            jira_client=logged_jira,
-            llm_service=logged_llm,
-            personas=app.state.personas,
-            templates=app.state.templates,
-            settings=app.state.settings,
-        )
-
-        # Inject log writer into orchestrator for event logging
-        orchestrator.log_writer = app.state.log_writer
+        # Determine intensity randomly
+        intensity = determine_intensity()
 
         # Run the scenario orchestrator
-        results = await orchestrator.run_tick(
+        results = await app.state.orchestrator.run_tick(
             state=state,
             intensity=intensity,
         )
 
         # Save updated state
         save_state(state)
-
-        # End logging session with stats
-        app.state.log_writer.end_session(
-            success=len(results.get("errors", [])) == 0,
-            llm_calls=results.get("llm_call_count", 0),
-            jira_calls=results.get("jira_call_count", 0),
-            actions_planned=results.get("planned_actions", 0),
-            actions_completed=results.get("actions_completed", 0),
-            errors=len(results.get("errors", [])),
-            total_input_tokens=results.get("total_input_tokens", 0),
-            total_output_tokens=results.get("total_output_tokens", 0),
-        )
 
         return TriggerResponse(
             success=len(results.get("errors", [])) == 0,
@@ -242,12 +184,6 @@ async def trigger_simulation():
         )
 
     except Exception as e:
-        # End session with error if we have one active
-        if hasattr(app.state, 'log_writer') and app.state.log_writer.get_current_session():
-            app.state.log_writer.end_session(
-                success=False,
-                error_summary=str(e),
-            )
         raise HTTPException(status_code=500, detail=str(e))
 
 

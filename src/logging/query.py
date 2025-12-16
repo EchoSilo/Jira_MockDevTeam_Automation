@@ -1,0 +1,359 @@
+"""
+Query interface for log database.
+
+Provides methods to query and retrieve log entries for the viewer UI.
+"""
+
+import sqlite3
+import json
+from datetime import datetime
+from typing import Optional, List
+from pathlib import Path
+
+from .models import (
+    SessionLog,
+    LLMCallLog,
+    JiraAPILog,
+    AgentDecisionLog,
+    OrchestratorLog,
+)
+
+
+class LogQueryService:
+    """Service for querying log entries."""
+
+    def __init__(self, db_path: str = "data/logs.db"):
+        self._db_path = Path(db_path)
+
+    def _get_connection(self):
+        """Get a database connection."""
+        conn = sqlite3.connect(str(self._db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def get_sessions(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> List[dict]:
+        """Get session list with pagination."""
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM sessions WHERE 1=1"
+            params = []
+
+            if start_date:
+                query += " AND started_at >= ?"
+                params.append(start_date.isoformat())
+
+            if end_date:
+                query += " AND started_at <= ?"
+                params.append(end_date.isoformat())
+
+            query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_session(self, session_id: str) -> Optional[dict]:
+        """Get a single session by ID."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_session_timeline(self, session_id: str) -> List[dict]:
+        """
+        Get all log entries for a session in chronological order.
+        Returns unified list with entry_type field.
+        """
+        conn = self._get_connection()
+        try:
+            timeline = []
+
+            # Get LLM calls
+            cursor = conn.execute(
+                """SELECT *, 'llm_call' as entry_type FROM llm_calls
+                   WHERE session_id = ? ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                timeline.append(entry)
+
+            # Get Jira calls
+            cursor = conn.execute(
+                """SELECT *, 'jira_call' as entry_type FROM jira_calls
+                   WHERE session_id = ? ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                if entry.get("parameters"):
+                    entry["parameters"] = json.loads(entry["parameters"])
+                timeline.append(entry)
+
+            # Get orchestrator logs
+            cursor = conn.execute(
+                """SELECT *, 'orchestrator' as entry_type FROM orchestrator_logs
+                   WHERE session_id = ? ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                if entry.get("analysis_summary"):
+                    entry["analysis_summary"] = json.loads(entry["analysis_summary"])
+                if entry.get("planned_actions"):
+                    entry["planned_actions"] = json.loads(entry["planned_actions"])
+                if entry.get("action_result"):
+                    entry["action_result"] = json.loads(entry["action_result"])
+                timeline.append(entry)
+
+            # Get agent decisions
+            cursor = conn.execute(
+                """SELECT *, 'agent_decision' as entry_type FROM agent_decisions
+                   WHERE session_id = ? ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                if entry.get("alternatives_considered"):
+                    entry["alternatives_considered"] = json.loads(
+                        entry["alternatives_considered"]
+                    )
+                timeline.append(entry)
+
+            # Sort all entries by timestamp
+            timeline.sort(key=lambda x: x.get("timestamp", ""))
+
+            return timeline
+
+        finally:
+            conn.close()
+
+    def get_conversation_view(self, session_id: str) -> List[dict]:
+        """
+        Get LLM calls formatted as conversation view.
+        Shows prompt/response pairs in sequence.
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """SELECT
+                    id, timestamp, model, action_type, is_complex,
+                    prompt, response, input_tokens, output_tokens, total_tokens,
+                    agent_id, agent_name, ticket_key, scenario_id,
+                    duration_ms, error, success
+                FROM llm_calls
+                WHERE session_id = ?
+                ORDER BY timestamp""",
+                (session_id,),
+            )
+
+            conversations = []
+            for row in cursor.fetchall():
+                entry = dict(row)
+                entry["is_complex"] = bool(entry.get("is_complex"))
+                entry["success"] = bool(entry.get("success"))
+                conversations.append(entry)
+
+            return conversations
+
+        finally:
+            conn.close()
+
+    def get_llm_calls(
+        self,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        ticket_key: Optional[str] = None,
+        model: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[dict]:
+        """Query LLM calls with filters."""
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM llm_calls WHERE 1=1"
+            params = []
+
+            if session_id:
+                query += " AND session_id = ?"
+                params.append(session_id)
+
+            if agent_id:
+                query += " AND agent_id = ?"
+                params.append(agent_id)
+
+            if ticket_key:
+                query += " AND ticket_key = ?"
+                params.append(ticket_key)
+
+            if model:
+                query += " AND model = ?"
+                params.append(model)
+
+            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            results = []
+            for row in rows:
+                entry = dict(row)
+                entry["is_complex"] = bool(entry.get("is_complex"))
+                entry["success"] = bool(entry.get("success"))
+                results.append(entry)
+
+            return results
+
+        finally:
+            conn.close()
+
+    def get_jira_calls(
+        self,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        ticket_key: Optional[str] = None,
+        method: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[dict]:
+        """Query Jira API calls with filters."""
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM jira_calls WHERE 1=1"
+            params = []
+
+            if session_id:
+                query += " AND session_id = ?"
+                params.append(session_id)
+
+            if agent_id:
+                query += " AND agent_id = ?"
+                params.append(agent_id)
+
+            if ticket_key:
+                query += " AND ticket_key = ?"
+                params.append(ticket_key)
+
+            if method:
+                query += " AND method = ?"
+                params.append(method)
+
+            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            results = []
+            for row in rows:
+                entry = dict(row)
+                if entry.get("parameters"):
+                    entry["parameters"] = json.loads(entry["parameters"])
+                entry["success"] = bool(entry.get("success"))
+                results.append(entry)
+
+            return results
+
+        finally:
+            conn.close()
+
+    def get_token_usage_stats(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict:
+        """Get token usage statistics."""
+        conn = self._get_connection()
+        try:
+            query = """
+                SELECT
+                    COUNT(*) as total_calls,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    AVG(duration_ms) as avg_duration_ms,
+                    SUM(CASE WHEN is_complex = 1 THEN 1 ELSE 0 END) as complex_calls,
+                    SUM(CASE WHEN is_complex = 0 THEN 1 ELSE 0 END) as routine_calls
+                FROM llm_calls
+                WHERE 1=1
+            """
+            params = []
+
+            if start_date:
+                query += " AND timestamp >= ?"
+                params.append(start_date.isoformat())
+
+            if end_date:
+                query += " AND timestamp <= ?"
+                params.append(end_date.isoformat())
+
+            cursor = conn.execute(query, params)
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "total_calls": row["total_calls"] or 0,
+                    "total_input_tokens": row["total_input_tokens"] or 0,
+                    "total_output_tokens": row["total_output_tokens"] or 0,
+                    "total_tokens": row["total_tokens"] or 0,
+                    "avg_duration_ms": round(row["avg_duration_ms"] or 0, 2),
+                    "complex_calls": row["complex_calls"] or 0,
+                    "routine_calls": row["routine_calls"] or 0,
+                }
+
+            return {
+                "total_calls": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_tokens": 0,
+                "avg_duration_ms": 0,
+                "complex_calls": 0,
+                "routine_calls": 0,
+            }
+
+        finally:
+            conn.close()
+
+    def get_session_count(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> int:
+        """Get total session count for pagination."""
+        conn = self._get_connection()
+        try:
+            query = "SELECT COUNT(*) as count FROM sessions WHERE 1=1"
+            params = []
+
+            if start_date:
+                query += " AND started_at >= ?"
+                params.append(start_date.isoformat())
+
+            if end_date:
+                query += " AND started_at <= ?"
+                params.append(end_date.isoformat())
+
+            cursor = conn.execute(query, params)
+            row = cursor.fetchone()
+
+            return row["count"] if row else 0
+
+        finally:
+            conn.close()

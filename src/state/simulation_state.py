@@ -1,171 +1,42 @@
 """
 Simulation state management.
-Persists state between runs to maintain continuity and avoid repetitive actions.
+Persists state between runs to maintain continuity and scenario progression.
+
+This module provides backwards-compatible state management while supporting
+the new scenario-driven simulation model.
 """
 
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, Field
 
-
-class AgentState(BaseModel):
-    """State for a single agent."""
-    last_action: Optional[datetime] = None
-    actions_today: int = 0
-    assigned_tickets: list[str] = Field(default_factory=list)
-    recent_comments: list[str] = Field(default_factory=list)  # ticket keys commented on recently
-
-
-class TicketState(BaseModel):
-    """Tracked state for an active ticket."""
-    assigned_to: Optional[str] = None
-    status: str = "To Do"
-    started: Optional[datetime] = None
-    blocked: bool = False
-    comments_count: int = 0
-    last_action: Optional[datetime] = None
-
-
-class SprintState(BaseModel):
-    """Current sprint tracking."""
-    name: str = "Sprint 1"
-    day: int = 1
-    total_days: int = 14
-    start_date: Optional[datetime] = None
-
-
-class RecentAction(BaseModel):
-    """Record of a recent action for avoiding repetition."""
-    agent_id: str
-    action: str
-    ticket: Optional[str] = None
-    timestamp: datetime
-
-
-class SimulationState(BaseModel):
-    """Complete simulation state."""
-    last_run: Optional[datetime] = None
-    simulation_day: int = 1
-    current_sprint: SprintState = Field(default_factory=SprintState)
-    agents: dict[str, AgentState] = Field(default_factory=dict)
-    active_tickets: dict[str, TicketState] = Field(default_factory=dict)
-    recent_actions: list[RecentAction] = Field(default_factory=list)
-
-    def get_agent_state(self, agent_id: str) -> AgentState:
-        """Get or create agent state."""
-        if agent_id not in self.agents:
-            self.agents[agent_id] = AgentState()
-        return self.agents[agent_id]
-
-    def record_action(
-        self,
-        agent_id: str,
-        action: str,
-        ticket: Optional[str] = None,
-    ) -> None:
-        """Record an action taken by an agent."""
-        now = datetime.utcnow()
-
-        # Update agent state
-        agent = self.get_agent_state(agent_id)
-        agent.last_action = now
-        agent.actions_today += 1
-
-        if ticket and action == "comment":
-            agent.recent_comments.append(ticket)
-            # Keep only last 5
-            agent.recent_comments = agent.recent_comments[-5:]
-
-        # Add to recent actions
-        self.recent_actions.append(
-            RecentAction(
-                agent_id=agent_id,
-                action=action,
-                ticket=ticket,
-                timestamp=now,
-            )
-        )
-
-        # Keep only last 50 actions
-        self.recent_actions = self.recent_actions[-50:]
-
-        self.last_run = now
-
-    def track_ticket(self, ticket_key: str, status: str, assigned_to: Optional[str] = None) -> None:
-        """Start tracking or update a ticket."""
-        if ticket_key not in self.active_tickets:
-            self.active_tickets[ticket_key] = TicketState(
-                status=status,
-                assigned_to=assigned_to,
-                started=datetime.utcnow() if status == "In Progress" else None,
-            )
-        else:
-            ticket = self.active_tickets[ticket_key]
-            ticket.status = status
-            if assigned_to:
-                ticket.assigned_to = assigned_to
-            if status == "In Progress" and not ticket.started:
-                ticket.started = datetime.utcnow()
-            ticket.last_action = datetime.utcnow()
-
-    def get_agent_workload(self, agent_id: str) -> int:
-        """Count how many active tickets an agent has."""
-        count = 0
-        for ticket in self.active_tickets.values():
-            if ticket.assigned_to == agent_id and ticket.status not in ["Done", "Closed"]:
-                count += 1
-        return count
-
-    def reset_daily_counters(self) -> None:
-        """Reset daily action counters (call at start of new day)."""
-        for agent in self.agents.values():
-            agent.actions_today = 0
-
-    def advance_sprint_day(self) -> None:
-        """Advance the sprint day counter."""
-        self.current_sprint.day += 1
-        if self.current_sprint.day > self.current_sprint.total_days:
-            # Start new sprint
-            sprint_num = int(self.current_sprint.name.split()[-1]) + 1
-            self.current_sprint = SprintState(
-                name=f"Sprint {sprint_num}",
-                day=1,
-                total_days=14,
-                start_date=datetime.utcnow(),
-            )
-        self.simulation_day += 1
-
-    def is_new_day(self) -> bool:
-        """Check if this is a new simulation day."""
-        if not self.last_run:
-            return True
-        now = datetime.utcnow()
-        return now.date() > self.last_run.date()
-
-    def did_agent_recently_act(self, agent_id: str, minutes: int = 30) -> bool:
-        """Check if agent acted recently (to avoid back-to-back actions)."""
-        agent = self.get_agent_state(agent_id)
-        if not agent.last_action:
-            return False
-        threshold = datetime.utcnow() - timedelta(minutes=minutes)
-        return agent.last_action > threshold
-
-    def did_agent_comment_on_ticket(self, agent_id: str, ticket_key: str) -> bool:
-        """Check if agent recently commented on a ticket."""
-        agent = self.get_agent_state(agent_id)
-        return ticket_key in agent.recent_comments
+from .models import (
+    SimulationState,
+    ActiveScenario,
+    AgentState,
+    ScenarioType,
+    ScenarioPhase,
+    TicketComplexity,
+    ISSUE_TYPE_TO_COMPLEXITY,
+)
 
 
 def load_state(path: str = "data/state.json") -> SimulationState:
-    """Load state from disk, or create new if doesn't exist."""
+    """
+    Load state from disk, or create new if doesn't exist.
+    Handles migration from old state format if needed.
+    """
     state_path = Path(path)
 
     if state_path.exists():
         with open(state_path, "r") as f:
             data = json.load(f)
+
+        # Check if this is old format (has 'active_tickets' instead of 'active_scenarios')
+        if "active_tickets" in data and "active_scenarios" not in data:
+            return _migrate_old_state(data)
+
         return SimulationState.model_validate(data)
 
     return SimulationState()
@@ -178,3 +49,257 @@ def save_state(state: SimulationState, path: str = "data/state.json") -> None:
 
     with open(state_path, "w") as f:
         json.dump(state.model_dump(mode="json"), f, indent=2, default=str)
+
+
+def _migrate_old_state(old_data: dict) -> SimulationState:
+    """
+    Migrate from old state format to new scenario-based format.
+    Preserves agent states and converts active_tickets to active_scenarios.
+    """
+    new_state = SimulationState()
+
+    # Migrate basic fields
+    new_state.last_run = (
+        datetime.fromisoformat(old_data["last_run"])
+        if old_data.get("last_run")
+        else None
+    )
+    new_state.simulation_day = old_data.get("simulation_day", 1)
+
+    # Migrate sprint state
+    if "current_sprint" in old_data:
+        old_sprint = old_data["current_sprint"]
+        new_state.sprint.sprint_number = int(old_sprint.get("name", "Sprint 1").split()[-1])
+        new_state.sprint.sprint_day = old_sprint.get("day", 1)
+        new_state.sprint.total_days = old_sprint.get("total_days", 14)
+
+    # Migrate agent states
+    for agent_id, old_agent in old_data.get("agents", {}).items():
+        agent_state = AgentState(agent_id=agent_id)
+        agent_state.last_action = (
+            datetime.fromisoformat(old_agent["last_action"])
+            if old_agent.get("last_action")
+            else None
+        )
+        agent_state.actions_today = old_agent.get("actions_today", 0)
+        agent_state.assigned_tickets = old_agent.get("assigned_tickets", [])
+        agent_state.current_workload = len(agent_state.assigned_tickets)
+        agent_state.is_overloaded = agent_state.current_workload >= 5
+        new_state.agents[agent_id] = agent_state
+
+    # Convert active_tickets to active_scenarios
+    for ticket_key, old_ticket in old_data.get("active_tickets", {}).items():
+        # Skip completed tickets
+        if old_ticket.get("status") in ["Done", "Closed"]:
+            continue
+
+        # Create scenario from old ticket state
+        scenario = _convert_ticket_to_scenario(ticket_key, old_ticket)
+        if scenario:
+            new_state.active_scenarios[scenario.scenario_id] = scenario
+
+    # Migrate recent actions (convert format)
+    for old_action in old_data.get("recent_actions", [])[-20:]:
+        new_state.record_action(
+            agent_id=old_action.get("agent_id", "unknown"),
+            agent_name=old_action.get("agent_id", "Unknown"),
+            action_type=old_action.get("action", "unknown"),
+            ticket_key=old_action.get("ticket"),
+        )
+
+    return new_state
+
+
+def _convert_ticket_to_scenario(ticket_key: str, old_ticket: dict) -> Optional[ActiveScenario]:
+    """Convert an old-format ticket to a new scenario."""
+    status = old_ticket.get("status", "To Do")
+
+    # Map old status to scenario phase
+    status_to_phase = {
+        "To Do": ScenarioPhase.BACKLOG,
+        "Backlog": ScenarioPhase.BACKLOG,
+        "In Progress": ScenarioPhase.IN_PROGRESS,
+        "Code Review": ScenarioPhase.IN_REVIEW,
+        "In Review": ScenarioPhase.IN_REVIEW,
+        "Testing": ScenarioPhase.IN_TESTING,
+        "QA": ScenarioPhase.IN_TESTING,
+        "Blocked": ScenarioPhase.BLOCKED,
+    }
+
+    phase = status_to_phase.get(status)
+    if not phase:
+        return None
+
+    # Determine scenario type from old state
+    scenario_type = ScenarioType.NORMAL_FLOW
+    if old_ticket.get("blocked"):
+        scenario_type = ScenarioType.BLOCKER
+
+    # Default to STORY complexity
+    complexity = TicketComplexity.STORY
+
+    # Calculate timeline based on when ticket started
+    started = (
+        datetime.fromisoformat(old_ticket["started"])
+        if old_ticket.get("started")
+        else datetime.utcnow() - timedelta(days=2)
+    )
+
+    # Estimate target completion
+    target_completion = started + timedelta(days=5)  # Default 5 days for story
+
+    now = datetime.utcnow()
+
+    return ActiveScenario(
+        ticket_key=ticket_key,
+        scenario_type=scenario_type,
+        complexity=complexity,
+        started=started,
+        target_completion=target_completion,
+        current_phase=phase,
+        phase_started=now - timedelta(hours=12),  # Assume been in phase for a bit
+        phase_target_end=now + timedelta(hours=12),  # Ready to advance soon
+        assigned_agent=old_ticket.get("assigned_to"),
+        involved_agents=[old_ticket["assigned_to"]] if old_ticket.get("assigned_to") else [],
+    )
+
+
+# ============ Utility Functions ============
+
+def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState:
+    """
+    Sync simulation state with actual Jira board state.
+    Creates scenarios for tickets not yet tracked.
+    Updates phases for tickets that have changed status.
+    """
+    # Get all active tickets from Jira
+    try:
+        jira_tickets = jira_client.get_all_active_issues()
+    except Exception:
+        return state
+
+    tracked_tickets = {s.ticket_key for s in state.active_scenarios.values()}
+
+    for ticket in jira_tickets:
+        ticket_key = ticket.key
+        status = ticket.fields.status.name
+        issue_type = ticket.fields.issuetype.name
+        assignee = ticket.fields.assignee
+
+        # Skip if already completed
+        if status in ["Done", "Closed", "Resolved"]:
+            # If we were tracking it, mark complete
+            scenario = state.get_scenario_by_ticket(ticket_key)
+            if scenario:
+                state.complete_scenario(scenario.scenario_id)
+            continue
+
+        # If not tracked, create a new scenario
+        if ticket_key not in tracked_tickets:
+            complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
+            assigned_agent = _find_agent_by_jira_account(
+                state,
+                assignee.accountId if assignee else None
+            )
+
+            scenario = ActiveScenario.create_normal_flow(
+                ticket_key=ticket_key,
+                complexity=complexity,
+                assigned_agent=assigned_agent,
+            )
+
+            # Set phase based on current Jira status
+            jira_status_to_phase = {
+                "To Do": ScenarioPhase.BACKLOG,
+                "Backlog": ScenarioPhase.BACKLOG,
+                "Selected for Development": ScenarioPhase.ASSIGNED,
+                "In Progress": ScenarioPhase.IN_PROGRESS,
+                "Code Review": ScenarioPhase.IN_REVIEW,
+                "In Review": ScenarioPhase.IN_REVIEW,
+                "Testing": ScenarioPhase.IN_TESTING,
+                "QA": ScenarioPhase.IN_TESTING,
+            }
+            if status in jira_status_to_phase:
+                scenario.current_phase = jira_status_to_phase[status]
+
+            state.add_scenario(scenario)
+
+            # Update agent assignment
+            if assigned_agent:
+                state.get_agent_state(assigned_agent).assign_ticket(ticket_key)
+
+    return state
+
+
+def _find_agent_by_jira_account(state: SimulationState, account_id: Optional[str]) -> Optional[str]:
+    """
+    Find agent_id by Jira account ID.
+    Note: This requires personas config which isn't in state.
+    Returns None if not found - caller should handle mapping.
+    """
+    # This is a placeholder - actual implementation needs personas config
+    # The orchestrator will handle the proper mapping
+    return None
+
+
+def get_scenario_opportunities(state: SimulationState) -> list[dict]:
+    """
+    Analyze state and return opportunities for scenario actions.
+    Used by the rules-based analyzer.
+    """
+    opportunities = []
+
+    # Check for scenarios ready to advance
+    ready_scenarios = state.get_scenarios_ready_to_advance()
+    for scenario in ready_scenarios:
+        opportunities.append({
+            "type": "phase_advancement",
+            "scenario_id": scenario.scenario_id,
+            "ticket_key": scenario.ticket_key,
+            "current_phase": scenario.current_phase.value,
+            "description": f"{scenario.ticket_key} ready to advance from {scenario.current_phase.value}",
+        })
+
+    # Check for overdue scenarios
+    for scenario in state.active_scenarios.values():
+        if scenario.is_overdue():
+            opportunities.append({
+                "type": "overdue_scenario",
+                "scenario_id": scenario.scenario_id,
+                "ticket_key": scenario.ticket_key,
+                "description": f"{scenario.ticket_key} is overdue (started {scenario.get_total_cycle_days():.1f} days ago)",
+            })
+
+    # Check for overloaded agents
+    for agent_id, agent in state.agents.items():
+        if agent.is_overloaded:
+            opportunities.append({
+                "type": "agent_overloaded",
+                "agent_id": agent_id,
+                "workload": agent.current_workload,
+                "description": f"Agent {agent_id} is overloaded with {agent.current_workload} tickets",
+            })
+
+    # Check scenario distribution for balance
+    percentages = state.scenario_distribution.get_percentages()
+    if percentages.get(ScenarioType.BLOCKER.value, 0) < 0.10:
+        opportunities.append({
+            "type": "low_blocker_rate",
+            "description": "Blocker scenarios underrepresented - consider injecting one",
+        })
+    if percentages.get(ScenarioType.REWORK.value, 0) < 0.10:
+        opportunities.append({
+            "type": "low_rework_rate",
+            "description": "Rework scenarios underrepresented - consider a QA rejection",
+        })
+
+    # Check for scope creep opportunity mid-sprint
+    if state.sprint.is_mid_sprint():
+        scope_creep_count = state.scenario_distribution.scope_creep
+        if scope_creep_count < 2:  # Max 2 per sprint
+            opportunities.append({
+                "type": "scope_creep_opportunity",
+                "description": "Mid-sprint - opportunity for scope creep story",
+            })
+
+    return opportunities

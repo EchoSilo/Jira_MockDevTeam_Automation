@@ -1,4 +1,5 @@
 # Jira Team Simulator Configuration
+# Version 2.0 - Scenario-driven simulation with CrewAI
 
 jira:
   # These are loaded from environment variables
@@ -10,47 +11,158 @@ simulation:
     end: 17
     timezone: "America/New_York"
 
-  # How many agents act per trigger
-  agents_per_tick:
-    min: 2
-    max: 5
-
-  # Probability weights for action types (should sum to ~1.0)
-  action_weights:
-    transition_status: 0.30
-    add_comment: 0.25
-    assign_ticket: 0.15
-    log_work: 0.15
-    create_ticket: 0.10
-    link_tickets: 0.05
-
-  # Cycle time targets (in days)
-  cycle_times:
-    bug:
+  # Actions per tick based on intensity
+  actions_per_tick:
+    light:
       min: 1
-      max: 3
-    story:
-      min: 3
-      max: 7
-    task:
+      max: 2
+    normal:
+      min: 2
+      max: 4
+    busy:
+      min: 4
+      max: 6
+
+  # Maximum concurrent scenarios per type
+  max_concurrent_scenarios:
+    normal_flow: 10
+    blocker: 3
+    rework: 2
+    scope_creep: 2
+    dependency: 2
+
+# Scenario configuration
+scenarios:
+  # Target distribution of scenario types (probabilities, should sum to ~1.0)
+  # Higher values = more likely to inject this scenario type
+  target_distribution:
+    normal_flow: 0.50   # Half of activity is normal ticket progression
+    blocker: 0.15       # ~15% chance of injecting blockers
+    rework: 0.15        # ~15% chance of QA rejections
+    scope_creep: 0.10   # ~10% mid-sprint additions
+    dependency: 0.10    # ~10% cross-team dependencies
+
+  # Rules for scenario injection thresholds
+  injection_rules:
+    # Minimum tickets in progress before injecting complications
+    min_in_progress_for_blocker: 2
+    min_in_progress_for_rework: 3
+
+    # Maximum active scenarios of each type
+    max_active_blockers: 2
+    max_active_rework: 2
+    max_active_scope_creep: 1
+    max_active_dependencies: 2
+
+    # Blocker duration range (in ticks)
+    blocker_duration:
       min: 2
       max: 5
-    epic:
-      min: 14
-      max: 30
 
+    # Rework iterations allowed
+    max_rework_iterations: 3
+
+  # Phase duration fractions (as fraction of total cycle time)
+  # These define how long each phase should ideally take
+  phase_durations:
+    backlog: 0.0        # Instant - just waiting
+    in_progress: 0.40   # 40% of time in development
+    in_review: 0.15     # 15% in code review
+    in_testing: 0.25    # 25% in QA
+    done: 0.0           # Instant - complete
+
+    # Complication phases
+    blocked: 0.10       # Blockers add ~10% overhead
+    rejected: 0.05      # Rejections add ~5% per iteration
+    waiting_on_dependency: 0.15  # Dependencies can add significant time
+
+# Cycle time targets (in hours for more granular control)
+# These define realistic durations for different ticket complexities
+cycle_times:
+  bug:
+    min_hours: 4
+    max_hours: 24
+    typical_hours: 12
+  story:
+    min_hours: 24
+    max_hours: 72
+    typical_hours: 40
+  task:
+    min_hours: 8
+    max_hours: 40
+    typical_hours: 20
+  epic:
+    min_hours: 168     # 1 week minimum
+    max_hours: 504     # 3 weeks maximum
+    typical_hours: 280 # ~2 weeks typical
+
+# LLM configuration
 llm:
   routine_model: "claude-3-haiku-20240307"
   complex_model: "claude-sonnet-4-20250514"
 
-  # Actions that require complex model
+  # Temperature settings
+  planning_temperature: 0.7   # Higher for creative scenario decisions
+  routine_temperature: 0.3    # Lower for consistent comments
+
+  # Actions that use the complex model
   complex_actions:
+    - scenario_planning     # Deciding which scenarios to inject
     - create_story
     - create_epic
     - architectural_comment
     - design_discussion
+    - blocker_analysis
+    - dependency_identification
 
 # Sprint configuration
 sprint:
   duration_days: 14
   planning_day: 1  # Monday
+
+# Agent workload configuration
+workload:
+  # Maximum tickets an agent can have assigned simultaneously
+  max_assigned_per_agent:
+    developer: 3
+    qa: 4
+    tech_lead: 2
+    pm: 5
+
+  # Daily action limits per role
+  max_daily_actions:
+    developer: 8
+    qa: 10
+    tech_lead: 6
+    pm: 12
+
+# Board state thresholds for analyzer
+analyzer:
+  # Alert thresholds
+  wip_limit_warning: 5      # Warn if too many tickets in progress
+  stale_ticket_hours: 48    # Flag tickets with no activity for 48+ hours
+  overdue_threshold: 1.2    # Flag if taking 20% longer than target
+
+  # Opportunity weights (how much to prefer each type)
+  opportunity_weights:
+    phase_advancement: 1.0   # Always consider advancing tickets
+    blocker_injection: 0.3   # Sometimes inject blockers
+    rework_injection: 0.3    # Sometimes inject rework
+    scope_creep: 0.2         # Occasionally add scope creep
+    dependency_injection: 0.2
+    workload_balance: 0.5    # Consider workload distribution
+
+# Logging configuration
+logging:
+  enabled: true
+  db_path: "data/logs.db"
+
+  # Retention settings
+  retention_days: 30         # Keep logs for 30 days
+
+  # What to capture
+  log_full_prompts: true     # Log full LLM prompts
+  log_full_responses: true   # Log full LLM responses
+
+  # Viewer settings
+  viewer_enabled: true       # Enable the /logs/viewer endpoint
