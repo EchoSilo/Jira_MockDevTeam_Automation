@@ -24,7 +24,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://jira-simulator:8000/trigger",
+        "url": "http://host.docker.internal:8000/trigger",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -55,7 +55,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "b8a139c9-8225-44b7-90da-13615bda491d",
+  "versionId": "e51bb48b-5bcd-49ed-a77f-2e55e67aa4be",
   "meta": {
     "instanceId": "7041aef4bb06b1c4476e9a714ff6c554f495e14ee3056027e09c2a7cc955c168"
   },

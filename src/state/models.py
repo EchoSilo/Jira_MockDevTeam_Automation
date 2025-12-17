@@ -340,9 +340,20 @@ class RecentAction(BaseModel):
 class SprintState(BaseModel):
     """Current sprint tracking."""
     sprint_number: int = 1
-    sprint_day: int = 1
+    sprint_day: int = Field(default=1, validation_alias="day")
     total_days: int = 14
-    start_date: datetime = Field(default_factory=datetime.utcnow)
+    start_date: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        """Handle legacy format with 'name' field instead of 'sprint_number'."""
+        if isinstance(obj, dict) and "name" in obj and "sprint_number" not in obj:
+            # Parse sprint number from name like "Sprint 1"
+            try:
+                obj["sprint_number"] = int(obj["name"].split()[-1])
+            except (ValueError, IndexError):
+                obj["sprint_number"] = 1
+        return super().model_validate(obj, **kwargs)
 
     def advance_day(self) -> bool:
         """Advance sprint day, returns True if new sprint started."""
@@ -408,8 +419,8 @@ class SimulationState(BaseModel):
     last_run: Optional[datetime] = None
     simulation_day: int = 1
 
-    # Sprint tracking
-    sprint: SprintState = Field(default_factory=SprintState)
+    # Sprint tracking (alias for backwards compatibility with old state.json)
+    sprint: SprintState = Field(default_factory=SprintState, validation_alias="current_sprint")
 
     # Core scenario tracking
     active_scenarios: dict[str, ActiveScenario] = Field(default_factory=dict)

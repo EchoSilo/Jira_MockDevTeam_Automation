@@ -92,6 +92,10 @@ class ScenarioOrchestrator:
         if self.log_writer:
             self.log_writer.log_orchestrator_event(phase=phase, **kwargs)
 
+            # Also inject log_writer into planner if not already done
+            if self.planner.log_writer is None:
+                self.planner.log_writer = self.log_writer
+
     async def run_tick(
         self,
         state: SimulationState,

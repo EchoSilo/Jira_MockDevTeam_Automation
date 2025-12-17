@@ -233,8 +233,14 @@ List simulation sessions.
       "started_at": "2024-01-15T14:30:00",
       "ended_at": "2024-01-15T14:30:45",
       "intensity": "normal",
+      "simulation_day": 5,
+      "sprint_day": 8,
+      "sprint_number": 3,
+      "llm_calls": 2,
       "actions_planned": 4,
       "actions_completed": 3,
+      "total_input_tokens": 3200,
+      "total_output_tokens": 450,
       "success": true
     }
   ],
@@ -307,6 +313,45 @@ Query Jira API calls.
 | `agent_id` | string | Filter by agent |
 | `ticket_key` | string | Filter by ticket |
 | `method` | string | HTTP method filter |
+
+---
+
+#### `GET /logs/stats`
+
+Get LLM token usage statistics.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `start_date` | string (ISO) | Filter by date |
+| `end_date` | string (ISO) | Filter by date |
+
+**Response:**
+```json
+{
+  "total_calls": 25,
+  "total_input_tokens": 45000,
+  "total_output_tokens": 8500,
+  "total_tokens": 53500,
+  "avg_duration_ms": 2500,
+  "complex_calls": 10,
+  "routine_calls": 15
+}
+```
+
+---
+
+#### `GET /logs/viewer`
+
+HTML-based log viewer UI. Open in a browser to view sessions, LLM conversations, and timelines.
+
+**Usage:** Navigate to `http://localhost:8000/logs/viewer` in a browser.
+
+**Features:**
+- Session list with token usage and error counts
+- Conversation view showing LLM prompts/responses
+- Timeline view of all events (LLM calls, Jira calls, orchestrator events)
+- Auto-refresh every 30 seconds
 
 ---
 

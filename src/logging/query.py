@@ -24,6 +24,13 @@ class LogQueryService:
 
     def __init__(self, db_path: str = "data/logs.db"):
         self._db_path = Path(db_path)
+        self._ensure_schema()
+
+    def _ensure_schema(self):
+        """Create database tables if they don't exist."""
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        from .database import LogDatabase
+        LogDatabase(str(self._db_path))
 
     def _get_connection(self):
         """Get a database connection."""
@@ -38,27 +45,46 @@ class LogQueryService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> List[dict]:
-        """Get session list with pagination."""
+        """Get session list with pagination, aggregating token counts from llm_calls."""
         conn = self._get_connection()
         try:
-            query = "SELECT * FROM sessions WHERE 1=1"
+            # Join with llm_calls to get actual token counts
+            query = """
+                SELECT
+                    s.*,
+                    COALESCE(SUM(l.input_tokens), 0) as computed_input_tokens,
+                    COALESCE(SUM(l.output_tokens), 0) as computed_output_tokens,
+                    COUNT(l.id) as computed_llm_calls
+                FROM sessions s
+                LEFT JOIN llm_calls l ON s.session_id = l.session_id
+                WHERE 1=1
+            """
             params = []
 
             if start_date:
-                query += " AND started_at >= ?"
+                query += " AND s.started_at >= ?"
                 params.append(start_date.isoformat())
 
             if end_date:
-                query += " AND started_at <= ?"
+                query += " AND s.started_at <= ?"
                 params.append(end_date.isoformat())
 
-            query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+            query += " GROUP BY s.session_id ORDER BY s.started_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
 
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
 
-            return [dict(row) for row in rows]
+            results = []
+            for row in rows:
+                entry = dict(row)
+                # Use computed values instead of stored values (which may be 0)
+                entry["total_input_tokens"] = entry.pop("computed_input_tokens", 0)
+                entry["total_output_tokens"] = entry.pop("computed_output_tokens", 0)
+                entry["llm_calls"] = entry.pop("computed_llm_calls", 0)
+                results.append(entry)
+
+            return results
         finally:
             conn.close()
 

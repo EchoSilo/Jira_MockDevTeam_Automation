@@ -112,18 +112,22 @@ def _migrate_old_state(old_data: dict) -> SimulationState:
 
 def _convert_ticket_to_scenario(ticket_key: str, old_ticket: dict) -> Optional[ActiveScenario]:
     """Convert an old-format ticket to a new scenario."""
-    status = old_ticket.get("status", "To Do")
+    status = old_ticket.get("status", "To Do").title()
 
-    # Map old status to scenario phase
+    # Map old status to scenario phase (includes .title() variants for case normalization)
     status_to_phase = {
         "To Do": ScenarioPhase.BACKLOG,
         "Backlog": ScenarioPhase.BACKLOG,
         "In Progress": ScenarioPhase.IN_PROGRESS,
         "Code Review": ScenarioPhase.IN_REVIEW,
         "In Review": ScenarioPhase.IN_REVIEW,
+        "Ready For Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "READY FOR QA"
         "Testing": ScenarioPhase.IN_TESTING,
         "QA": ScenarioPhase.IN_TESTING,
+        "Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "QA"
         "Blocked": ScenarioPhase.BLOCKED,
+        "Done": ScenarioPhase.COMPLETED,
+        "Closed": ScenarioPhase.COMPLETED,
     }
 
     phase = status_to_phase.get(status)
@@ -182,7 +186,7 @@ def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState
 
     for ticket in jira_tickets:
         ticket_key = ticket.key
-        status = ticket.fields.status.name
+        status = ticket.fields.status.name.title()
         issue_type = ticket.fields.issuetype.name
         assignee = ticket.fields.assignee
 
@@ -208,16 +212,20 @@ def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState
                 assigned_agent=assigned_agent,
             )
 
-            # Set phase based on current Jira status
+            # Set phase based on current Jira status (includes .title() variants for case normalization)
             jira_status_to_phase = {
                 "To Do": ScenarioPhase.BACKLOG,
                 "Backlog": ScenarioPhase.BACKLOG,
-                "Selected for Development": ScenarioPhase.ASSIGNED,
+                "Selected For Development": ScenarioPhase.ASSIGNED,  # .title() variant
                 "In Progress": ScenarioPhase.IN_PROGRESS,
                 "Code Review": ScenarioPhase.IN_REVIEW,
                 "In Review": ScenarioPhase.IN_REVIEW,
+                "Ready For Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "READY FOR QA"
                 "Testing": ScenarioPhase.IN_TESTING,
                 "QA": ScenarioPhase.IN_TESTING,
+                "Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "QA"
+                "Done": ScenarioPhase.COMPLETED,
+                "Closed": ScenarioPhase.COMPLETED,
             }
             if status in jira_status_to_phase:
                 scenario.current_phase = jira_status_to_phase[status]

@@ -74,6 +74,10 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 | `/state` | GET | View current simulation state |
 | `/reset` | POST | Reset simulation state |
 | `/agents` | GET | List configured agents |
+| `/scenarios` | GET | List active scenarios |
+| `/logs/viewer` | GET | HTML log viewer UI |
+| `/logs/sessions` | GET | List simulation sessions |
+| `/logs/stats` | GET | Token usage statistics |
 
 ## State Management
 

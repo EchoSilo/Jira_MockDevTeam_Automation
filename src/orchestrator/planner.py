@@ -6,11 +6,15 @@ based on the current board state and detected opportunities.
 """
 
 import json
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from ..services.llm_service import LLMService
 from ..state import SimulationState, ScenarioType
+
+if TYPE_CHECKING:
+    from ..logging import AsyncLogWriter
 
 
 class ScenarioPlanner:
@@ -24,6 +28,9 @@ class ScenarioPlanner:
     def __init__(self, llm_service: LLMService, settings: dict):
         self.llm = llm_service
         self.settings = settings
+
+        # Optional log writer - injected by orchestrator
+        self.log_writer: "AsyncLogWriter | None" = None
 
         # Planning configuration
         self.max_actions_per_tick = settings.get("scenarios", {}).get(
@@ -64,15 +71,36 @@ class ScenarioPlanner:
         prompt = self._build_planning_prompt(analysis, state, target_actions)
 
         try:
-            # Call LLM
+            # Call LLM with timing
+            start_time = time.time()
+            model = self.llm.complex_model  # Use Sonnet for planning
+
             response = self.llm.client.messages.create(
-                model=self.llm.complex_model,  # Use Sonnet for planning
+                model=model,
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             )
 
+            duration_ms = int((time.time() - start_time) * 1000)
             raw_response = response.content[0].text.strip()
             self.last_raw_response = raw_response
+
+            # Log the LLM call
+            if self.log_writer:
+                self.log_writer.log_llm_call(
+                    model=model,
+                    action_type="scenario_planning",
+                    prompt=prompt,
+                    response=raw_response,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    duration_ms=duration_ms,
+                    agent_id=None,
+                    agent_name="Orchestrator",
+                    ticket_key=None,
+                    scenario_id=None,
+                    is_complex=True,
+                )
 
             # Parse the JSON response
             result = self._parse_response(raw_response)
@@ -87,6 +115,24 @@ class ScenarioPlanner:
             return validated_actions[:target_actions]
 
         except Exception as e:
+            # Log failed LLM call
+            if self.log_writer:
+                duration_ms = int((time.time() - start_time) * 1000) if 'start_time' in dir() else 0
+                self.log_writer.log_llm_call(
+                    model=self.llm.complex_model,
+                    action_type="scenario_planning",
+                    prompt=prompt,
+                    response="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    duration_ms=duration_ms,
+                    agent_id=None,
+                    agent_name="Orchestrator",
+                    ticket_key=None,
+                    scenario_id=None,
+                    is_complex=True,
+                    error=str(e),
+                )
             # On error, fall back to basic actions
             return self._fallback_plan(analysis, state, target_actions)
 

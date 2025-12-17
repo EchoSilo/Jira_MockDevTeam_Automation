@@ -178,8 +178,8 @@ async def trigger_simulation():
         session = app.state.log_writer.start_session(
             intensity=intensity,
             simulation_day=state.simulation_day,
-            sprint_day=state.current_sprint.sprint_day,
-            sprint_number=state.current_sprint.sprint_number,
+            sprint_day=state.sprint.sprint_day,
+            sprint_number=state.sprint.sprint_number,
         )
 
         # Create logged services for this tick
@@ -236,7 +236,7 @@ async def trigger_simulation():
             errors=results.get("errors", []),
             active_scenarios=len(state.active_scenarios),
             simulation_day=state.simulation_day,
-            sprint=state.current_sprint.name,
+            sprint=f"Sprint {state.sprint.sprint_number}",
             tick_start=results.get("tick_start", ""),
             tick_end=results.get("tick_end", ""),
         )

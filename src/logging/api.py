@@ -23,20 +23,28 @@ async def list_sessions(
     end_date: Optional[str] = None,
 ):
     """List simulation sessions/ticks with summary stats."""
-    query = LogQueryService()
+    try:
+        query = LogQueryService()
 
-    start_dt = datetime.fromisoformat(start_date) if start_date else None
-    end_dt = datetime.fromisoformat(end_date) if end_date else None
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
 
-    sessions = query.get_sessions(limit, offset, start_dt, end_dt)
-    total = query.get_session_count(start_dt, end_dt)
+        sessions = query.get_sessions(limit, offset, start_dt, end_dt)
+        total = query.get_session_count(start_dt, end_dt)
 
-    return {
-        "sessions": sessions,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+        return {
+            "sessions": sessions,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception:
+        return {
+            "sessions": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+        }
 
 
 @router.get("/sessions/{session_id}")
@@ -106,12 +114,23 @@ async def get_stats(
     end_date: Optional[str] = None,
 ):
     """Get usage statistics (token counts, call counts, etc.)."""
-    query = LogQueryService()
+    try:
+        query = LogQueryService()
 
-    start_dt = datetime.fromisoformat(start_date) if start_date else None
-    end_dt = datetime.fromisoformat(end_date) if end_date else None
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
 
-    return query.get_token_usage_stats(start_dt, end_dt)
+        return query.get_token_usage_stats(start_dt, end_dt)
+    except Exception:
+        return {
+            "total_calls": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "avg_duration_ms": 0,
+            "complex_calls": 0,
+            "routine_calls": 0,
+        }
 
 
 @router.get("/viewer", response_class=HTMLResponse)
