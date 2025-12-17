@@ -25,9 +25,10 @@ class ScenarioPlanner:
     Uses Sonnet for intelligent, contextual decision making.
     """
 
-    def __init__(self, llm_service: LLMService, settings: dict):
+    def __init__(self, llm_service: LLMService, settings: dict, personas: dict = None):
         self.llm = llm_service
         self.settings = settings
+        self.personas = personas or {}
 
         # Optional log writer - injected by orchestrator
         self.log_writer: "AsyncLogWriter | None" = None
@@ -36,6 +37,14 @@ class ScenarioPlanner:
         self.max_actions_per_tick = settings.get("scenarios", {}).get(
             "limits", {}
         ).get("max_actions_per_tick", 5)
+
+        # Issue type permissions by role
+        self.issue_type_permissions = settings.get("issue_type_permissions", {
+            "pm": {"can_act_on": ["Epic", "Story", "Bug", "Task"]},
+            "developer": {"can_act_on": ["Story", "Bug", "Task"]},
+            "qa": {"can_act_on": ["Story", "Bug", "Task"]},
+            "tech_lead": {"can_act_on": ["Story", "Bug", "Task"]},
+        })
 
         # Store last reasoning for debugging
         self.last_reasoning = ""
@@ -339,6 +348,29 @@ Important:
         # Return empty result on parse failure
         return {"reasoning": "Failed to parse LLM response", "actions": []}
 
+    def _get_agent_role(self, agent_id: str) -> str:
+        """Get the role for an agent."""
+        agent_config = self.personas.get("agents", {}).get(agent_id, {})
+        return agent_config.get("role", "developer")
+
+    def _can_agent_act_on_issue_type(self, agent_id: str, issue_type: str) -> bool:
+        """Check if an agent can act on a specific issue type based on role."""
+        role = self._get_agent_role(agent_id)
+        role_permissions = self.issue_type_permissions.get(role, {})
+        allowed_types = role_permissions.get("can_act_on", ["Story", "Bug", "Task"])
+        return issue_type in allowed_types
+
+    def _get_ticket_type_from_analysis(
+        self, ticket_key: str, analysis: dict
+    ) -> str | None:
+        """Look up issue type from board snapshot."""
+        board_snapshot = analysis.get("board_snapshot", {})
+        for status, tickets in board_snapshot.items():
+            for ticket in tickets:
+                if ticket.get("key") == ticket_key:
+                    return ticket.get("type")
+        return None
+
     def _validate_actions(
         self,
         actions: list,
@@ -358,6 +390,16 @@ Important:
             agent_id = action.get("agent_id")
             if agent_id and agent_id in used_agents:
                 continue
+
+            # Validate issue type permissions
+            ticket_key = action.get("ticket_key")
+            if agent_id and ticket_key:
+                issue_type = self._get_ticket_type_from_analysis(ticket_key, analysis)
+                if issue_type and not self._can_agent_act_on_issue_type(
+                    agent_id, issue_type
+                ):
+                    # Skip action - agent role cannot act on this issue type
+                    continue
 
             # Validate ticket exists in scenario if scenario_id provided
             scenario_id = action.get("scenario_id")

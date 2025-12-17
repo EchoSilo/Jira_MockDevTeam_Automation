@@ -341,7 +341,7 @@ class SprintState(BaseModel):
     """Current sprint tracking."""
     sprint_number: int = 1
     sprint_day: int = Field(default=1, validation_alias="day")
-    total_days: int = 14
+    total_days: int = 7  # 1-week sprints (Monday to Friday)
     start_date: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
     @classmethod
@@ -366,12 +366,20 @@ class SprintState(BaseModel):
         return False
 
     def is_mid_sprint(self) -> bool:
-        """Check if we're in the middle of the sprint (days 5-10)."""
-        return 5 <= self.sprint_day <= 10
+        """Check if we're in the middle of the sprint (days 3-5 for 7-day sprint)."""
+        return 3 <= self.sprint_day <= 5
 
     def is_sprint_end(self) -> bool:
-        """Check if we're near sprint end (last 3 days)."""
-        return self.sprint_day > self.total_days - 3
+        """Check if we're near sprint end (last 2 days for 7-day sprint)."""
+        return self.sprint_day > self.total_days - 2
+
+    def is_sprint_planning_day(self) -> bool:
+        """Check if it's sprint planning day (day 1 = Monday)."""
+        return self.sprint_day == 1
+
+    def is_sprint_start(self) -> bool:
+        """Check if we're at the start of the sprint (first 2 days)."""
+        return self.sprint_day <= 2
 
 
 class ScenarioDistribution(BaseModel):

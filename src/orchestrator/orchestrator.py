@@ -25,6 +25,7 @@ from ..crews import (
     ReworkCrew,
     ScopeCreepCrew,
     DependencyCrew,
+    SprintPlanningCrew,
 )
 from .analyzer import ScenarioAnalyzer
 from .planner import ScenarioPlanner
@@ -74,7 +75,7 @@ class ScenarioOrchestrator:
 
         # Initialize components
         self.analyzer = ScenarioAnalyzer(jira_client, personas, settings)
-        self.planner = ScenarioPlanner(llm_service, settings)
+        self.planner = ScenarioPlanner(llm_service, settings, personas)
 
         # Initialize crews
         self.lifecycle_crew = TicketLifecycleCrew(personas, self.jira_tools, self.llm_config)
@@ -82,6 +83,25 @@ class ScenarioOrchestrator:
         self.rework_crew = ReworkCrew(personas, self.jira_tools, self.llm_config)
         self.scope_creep_crew = ScopeCreepCrew(personas, self.jira_tools, self.llm_config)
         self.dependency_crew = DependencyCrew(personas, self.jira_tools, self.llm_config)
+        self.sprint_planning_crew = SprintPlanningCrew(
+            personas, self.jira_tools, self.llm_config
+        )
+
+        # Actions that require sprint membership to execute
+        self.sprint_required_actions = {
+            "pick_up_task",
+            "progress_to_review",
+            "complete_review",
+            "qa_approve",
+            "qa_reject",
+            "add_progress_comment",
+            "inject_blocker",
+            "discuss_blocker",
+            "resolve_blocker",
+            "acknowledge_rejection",
+            "complete_fix",
+            "verify_fix",
+        }
 
     def _log_event(
         self,
@@ -208,6 +228,12 @@ class ScenarioOrchestrator:
 
         return results
 
+    def _validate_sprint_requirement(self, ticket_key: str) -> bool:
+        """Check if ticket is in active sprint and can be worked on."""
+        if not ticket_key:
+            return True  # No ticket to validate
+        return self.jira.is_issue_in_active_sprint(ticket_key)
+
     async def _execute_action(
         self,
         action: dict,
@@ -219,6 +245,17 @@ class ScenarioOrchestrator:
         scenario_id = action.get("scenario_id")
         agent_id = action.get("agent_id")
         details = action.get("details", "")
+
+        # Validate sprint requirement for work actions
+        if action_type in self.sprint_required_actions and ticket_key:
+            if not self._validate_sprint_requirement(ticket_key):
+                return {
+                    "action_type": action_type,
+                    "ticket_key": ticket_key,
+                    "error": "Ticket not in active sprint - work cannot proceed",
+                    "skipped": True,
+                    "reason": "sprint_violation",
+                }
 
         # Get scenario if exists
         scenario = None
@@ -336,6 +373,184 @@ class ScenarioOrchestrator:
                         scenario, details or "Dependency resolved"
                     )
                 )
+
+        # ========== Epic Lifecycle Actions ==========
+        elif action_type == "update_epic_status":
+            epic_key = action.get("epic_key")
+            new_status = action.get("suggested_status")
+            reason = action.get("reason", "Child issues have progressed")
+            pm_id = action.get("pm_id")
+
+            if epic_key and new_status:
+                try:
+                    # Transition the Epic
+                    success = self.jira.transition_issue(epic_key, new_status)
+                    if success:
+                        # Add comment explaining the status change
+                        persona = self.personas.get("agents", {}).get(pm_id, {})
+                        pm_name = persona.get("display_name", "Product Manager")
+                        comment = (
+                            f"Updated Epic status to '{new_status}'. "
+                            f"Reason: {reason}. - {pm_name}"
+                        )
+                        self.jira.add_comment(epic_key, comment)
+                        result.update({
+                            "success": True,
+                            "epic_key": epic_key,
+                            "new_status": new_status,
+                            "agent": pm_id,
+                        })
+                    else:
+                        result["error"] = f"Could not transition Epic to {new_status}"
+                except Exception as e:
+                    result["error"] = f"Failed to update Epic status: {str(e)}"
+
+        elif action_type == "assign_epic_to_pm":
+            epic_key = action.get("epic_key")
+            pm_id = action.get("pm_id")
+
+            if epic_key and pm_id:
+                try:
+                    persona = self.personas.get("agents", {}).get(pm_id, {})
+                    pm_account_id = persona.get("jira_account_id")
+                    pm_name = persona.get("display_name", "Product Manager")
+
+                    if pm_account_id:
+                        # Assign the Epic to the PM
+                        self.jira.assign_issue(epic_key, pm_account_id)
+                        # Add comment explaining the assignment
+                        comment = (
+                            f"Assigned to {pm_name} for Epic ownership. "
+                            f"Epics should be managed by Product Management."
+                        )
+                        self.jira.add_comment(epic_key, comment)
+                        result.update({
+                            "success": True,
+                            "epic_key": epic_key,
+                            "assigned_to": pm_name,
+                            "agent": pm_id,
+                        })
+                    else:
+                        result["error"] = "PM account ID not found"
+                except Exception as e:
+                    result["error"] = f"Failed to assign Epic: {str(e)}"
+
+        # ========== Sprint Planning Actions ==========
+        elif action_type == "sprint_planning":
+            pm_id = action.get("pm_id")
+            team = action.get("team", "alpha")
+            active_sprint = action.get("active_sprint", {})
+            unassigned_items = action.get("unassigned_items", [])
+
+            if pm_id:
+                try:
+                    crew_result = self.sprint_planning_crew.plan_current_sprint(
+                        pm_id=pm_id,
+                        team=team,
+                        active_sprint=active_sprint,
+                        unassigned_items=unassigned_items,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Sprint planning failed: {str(e)}"
+
+        elif action_type == "create_future_sprint":
+            pm_id = action.get("pm_id")
+            team = action.get("team", "alpha")
+            sprint_number = action.get("sprint_number", 1)
+            start_date = action.get("start_date")
+
+            if pm_id and start_date:
+                try:
+                    crew_result = self.sprint_planning_crew.create_future_sprint(
+                        pm_id=pm_id,
+                        team=team,
+                        sprint_number=sprint_number,
+                        start_date=start_date,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Create future sprint failed: {str(e)}"
+
+        elif action_type == "allocate_to_future_sprint":
+            pm_id = action.get("pm_id")
+            team = action.get("team", "alpha")
+            sprint_info = action.get("sprint_info", {})
+            backlog_items = action.get("backlog_items", [])
+
+            if pm_id and sprint_info:
+                try:
+                    crew_result = self.sprint_planning_crew.allocate_items_to_future_sprint(
+                        pm_id=pm_id,
+                        team=team,
+                        sprint_info=sprint_info,
+                        backlog_items=backlog_items,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Allocate to future sprint failed: {str(e)}"
+
+        # ========== Violation Fix Actions ==========
+        elif action_type == "fix_sprint_violation":
+            ticket_key = action.get("ticket_key")
+            pm_id = action.get("pm_id")
+            fix_comment = action.get("fix_comment", "Added to active sprint.")
+
+            if ticket_key:
+                try:
+                    # Get active sprint
+                    active_sprint = self.jira.get_active_sprint()
+                    if active_sprint:
+                        sprint_id = active_sprint.get("id")
+                        success = self.jira.add_issue_to_sprint(ticket_key, sprint_id)
+                        if success:
+                            # Add explanatory comment
+                            persona = self.personas.get("agents", {}).get(pm_id, {})
+                            pm_name = persona.get("display_name", "Product Manager")
+                            comment = f"{fix_comment} - {pm_name}"
+                            self.jira.add_comment(ticket_key, comment)
+                            result.update({
+                                "success": True,
+                                "ticket_key": ticket_key,
+                                "sprint_id": sprint_id,
+                                "agent": pm_id,
+                                "fix_type": "added_to_sprint",
+                            })
+                        else:
+                            result["error"] = "Could not add issue to sprint"
+                    else:
+                        result["error"] = "No active sprint found"
+                except Exception as e:
+                    result["error"] = f"Fix sprint violation failed: {str(e)}"
+
+        elif action_type == "fix_issue_type_violation":
+            epic_key = action.get("epic_key")
+            pm_id = action.get("pm_id")
+            fix_comment = action.get("fix_comment", "Reassigned to PM.")
+
+            if epic_key and pm_id:
+                try:
+                    persona = self.personas.get("agents", {}).get(pm_id, {})
+                    pm_account_id = persona.get("jira_account_id")
+                    pm_name = persona.get("display_name", "Product Manager")
+
+                    if pm_account_id:
+                        # Reassign Epic to PM
+                        self.jira.assign_issue(epic_key, pm_account_id)
+                        # Add explanatory comment
+                        comment = f"{fix_comment} - {pm_name}"
+                        self.jira.add_comment(epic_key, comment)
+                        result.update({
+                            "success": True,
+                            "epic_key": epic_key,
+                            "assigned_to": pm_name,
+                            "agent": pm_id,
+                            "fix_type": "reassigned_to_pm",
+                        })
+                    else:
+                        result["error"] = "PM account ID not found"
+                except Exception as e:
+                    result["error"] = f"Fix issue type violation failed: {str(e)}"
 
         else:
             result["error"] = f"Unknown action type: {action_type}"

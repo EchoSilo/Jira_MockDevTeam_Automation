@@ -48,6 +48,13 @@ n8n (cron scheduler) → POST /trigger → FastAPI → Orchestrator → Agents �
 - `LLMService` routes to Haiku (routine actions) or Sonnet (complex actions like story creation)
 - Complex actions defined in `config/settings.yaml` under `llm.complex_actions`
 
+**Process Adherence:**
+- Issue type permissions: Devs/QA/Tech Leads work on Stories, Bugs, Tasks only. Epics are PM-only.
+- Sprint integration: Items must be in active sprint to be worked on (Board ID: 4)
+- Epic lifecycle: Epic status syncs with children; Epics auto-assigned to team PMs
+- Sprint planning: PMs plan 7-day sprints on Mondays; maintains 1-2 future sprints
+- Violation cleanup: Gradually fixes process violations with explanatory comments
+
 ## Configuration
 
 - `config/settings.yaml`: Simulation parameters, LLM models, action weights, cycle times

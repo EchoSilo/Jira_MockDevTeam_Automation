@@ -117,8 +117,26 @@ llm:
 
 # Sprint configuration
 sprint:
-  duration_days: 14
-  planning_day: 1  # Monday
+  duration_days: 7   # 1-week sprints
+  planning_day: 1    # Monday (day 1 of sprint)
+  board_id: 4        # Jira board ID for sprint operations
+  future_sprints_to_maintain: 2  # Always keep 1-2 future sprints planned
+
+# Issue type permissions by role
+# Controls which issue types each role can act on and create
+issue_type_permissions:
+  pm:
+    can_act_on: ["Epic", "Story", "Bug", "Task"]
+    can_create: ["Epic", "Story"]
+  developer:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
+  qa:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
+  tech_lead:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
 
 # Agent workload configuration
 workload:

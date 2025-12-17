@@ -309,6 +309,133 @@ Description:
             except Exception as e:
                 return f"Error getting comments: {str(e)}"
 
+        # ============ Sprint Management Tools ============
+
+        @tool("Get Active Sprint")
+        def get_active_sprint() -> str:
+            """
+            Get information about the currently active sprint.
+
+            Returns:
+                Sprint details including ID, name, and dates
+            """
+            try:
+                sprint = jira.get_active_sprint()
+                if not sprint:
+                    return "No active sprint found"
+
+                return (
+                    f"Active Sprint: {sprint['name']} (ID: {sprint['id']})\n"
+                    f"State: {sprint['state']}\n"
+                    f"Start: {sprint.get('start_date', 'Not set')}\n"
+                    f"End: {sprint.get('end_date', 'Not set')}"
+                )
+            except Exception as e:
+                return f"Error getting active sprint: {str(e)}"
+
+        @tool("Get Future Sprints")
+        def get_future_sprints() -> str:
+            """
+            Get upcoming/future sprints for planning.
+
+            Returns:
+                List of future sprints with IDs and names
+            """
+            try:
+                sprints = jira.get_future_sprints(max_results=4)
+                if not sprints:
+                    return "No future sprints found"
+
+                results = []
+                for s in sprints:
+                    results.append(
+                        f"- {s['name']} (ID: {s['id']}) - {s['state']}"
+                    )
+                return f"Future Sprints ({len(sprints)}):\n" + "\n".join(results)
+            except Exception as e:
+                return f"Error getting future sprints: {str(e)}"
+
+        @tool("Get Unplanned Items")
+        def get_unplanned_items() -> str:
+            """
+            Get items in backlog not assigned to any sprint.
+
+            Returns:
+                List of items needing sprint assignment
+            """
+            try:
+                issues = jira.get_issues_not_in_sprint(
+                    issue_types=["Story", "Bug", "Task"]
+                )
+                if not issues:
+                    return "All items are assigned to sprints"
+
+                results = []
+                for issue in issues[:15]:
+                    priority = (
+                        issue.fields.priority.name
+                        if issue.fields.priority
+                        else "Medium"
+                    )
+                    issue_type = issue.fields.issuetype.name
+                    results.append(
+                        f"- {issue.key}: {issue.fields.summary} "
+                        f"[{issue_type}] Priority: {priority}"
+                    )
+
+                return (
+                    f"Unplanned items ({len(issues)} total):\n" + "\n".join(results)
+                )
+            except Exception as e:
+                return f"Error getting unplanned items: {str(e)}"
+
+        @tool("Add Issue to Sprint")
+        def add_to_sprint(issue_key: str, sprint_id: int) -> str:
+            """
+            Add an issue to a specific sprint.
+
+            Args:
+                issue_key: The Jira issue key (e.g., PROJ-123)
+                sprint_id: The ID of the target sprint
+
+            Returns:
+                Confirmation message
+            """
+            try:
+                success = jira.add_issue_to_sprint(sprint_id, [issue_key])
+                if success:
+                    return f"Added {issue_key} to sprint {sprint_id}"
+                return f"Failed to add {issue_key} to sprint"
+            except Exception as e:
+                return f"Error adding to sprint: {str(e)}"
+
+        @tool("Create Sprint")
+        def create_sprint(name: str, start_date: str, end_date: str) -> str:
+            """
+            Create a new sprint on the board.
+
+            Args:
+                name: Sprint name (e.g., 'Sprint 5')
+                start_date: Start date in ISO format (YYYY-MM-DD)
+                end_date: End date in ISO format (YYYY-MM-DD)
+
+            Returns:
+                Confirmation with new sprint ID
+            """
+            try:
+                from datetime import date as date_type
+                start = date_type.fromisoformat(start_date)
+                end = date_type.fromisoformat(end_date)
+
+                sprint = jira.create_sprint(name, start_date=start, end_date=end)
+                if sprint:
+                    return (
+                        f"Created sprint '{sprint['name']}' (ID: {sprint['id']})"
+                    )
+                return "Failed to create sprint"
+            except Exception as e:
+                return f"Error creating sprint: {str(e)}"
+
         # Store tool references
         self._search_issues = search_issues
         self._get_issue_details = get_issue_details
@@ -322,6 +449,12 @@ Description:
         self._get_ready_for_qa = get_ready_for_qa
         self._link_issues = link_issues
         self._get_comments = get_comments
+        # Sprint tools
+        self._get_active_sprint = get_active_sprint
+        self._get_future_sprints = get_future_sprints
+        self._get_unplanned_items = get_unplanned_items
+        self._add_to_sprint = add_to_sprint
+        self._create_sprint = create_sprint
 
     # ============ Tool Sets by Role ============
 
@@ -340,6 +473,12 @@ Description:
             self._get_ready_for_qa,
             self._link_issues,
             self._get_comments,
+            # Sprint tools
+            self._get_active_sprint,
+            self._get_future_sprints,
+            self._get_unplanned_items,
+            self._add_to_sprint,
+            self._create_sprint,
         ]
 
     def get_pm_tools(self) -> list:
@@ -352,6 +491,24 @@ Description:
             self._get_backlog,
             self._get_in_progress,
             self._get_comments,
+            # Sprint planning tools for PMs
+            self._get_active_sprint,
+            self._get_future_sprints,
+            self._get_unplanned_items,
+            self._add_to_sprint,
+            self._create_sprint,
+        ]
+
+    def get_sprint_planning_tools(self) -> list:
+        """Get tools for sprint planning activities."""
+        return [
+            self._get_active_sprint,
+            self._get_future_sprints,
+            self._get_unplanned_items,
+            self._add_to_sprint,
+            self._create_sprint,
+            self._get_backlog,
+            self._add_comment,
         ]
 
     def get_developer_tools(self) -> list:

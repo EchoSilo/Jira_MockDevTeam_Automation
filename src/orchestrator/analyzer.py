@@ -58,6 +58,14 @@ class ScenarioAnalyzer:
             "dependency_probability": 0.10,
         })
 
+        # Issue type permissions by role
+        self.issue_type_permissions = settings.get("issue_type_permissions", {
+            "pm": {"can_act_on": ["Epic", "Story", "Bug", "Task"], "can_create": ["Epic", "Story"]},
+            "developer": {"can_act_on": ["Story", "Bug", "Task"], "can_create": ["Bug"]},
+            "qa": {"can_act_on": ["Story", "Bug", "Task"], "can_create": ["Bug"]},
+            "tech_lead": {"can_act_on": ["Story", "Bug", "Task"], "can_create": ["Bug"]},
+        })
+
     def get_board_snapshot(self) -> dict:
         """
         Get current state of the Jira board organized by status.
@@ -71,9 +79,14 @@ class ScenarioAnalyzer:
             "code_review": [],
             "testing": [],
             "done": [],
+            "active_sprint": None,
         }
 
         try:
+            # Get active sprint info
+            active_sprint = self.jira.get_active_sprint()
+            snapshot["active_sprint"] = active_sprint
+
             # Get all project issues
             all_issues = self.jira.get_project_issues(max_results=100)
 
@@ -82,6 +95,13 @@ class ScenarioAnalyzer:
                 assignee = issue.fields.assignee
                 issue_type = issue.fields.issuetype.name
 
+                # Get sprint info for this issue
+                sprint_info = self.jira.get_issue_sprint_info(issue.key)
+                in_active_sprint = (
+                    sprint_info is not None
+                    and sprint_info.get("state") == "active"
+                )
+
                 ticket_info = {
                     "key": issue.key,
                     "summary": issue.fields.summary,
@@ -89,8 +109,12 @@ class ScenarioAnalyzer:
                     "type": issue_type,
                     "assignee": assignee.displayName if assignee else None,
                     "assignee_id": assignee.accountId if assignee else None,
-                    "priority": issue.fields.priority.name if issue.fields.priority else "Medium",
+                    "priority": (
+                        issue.fields.priority.name if issue.fields.priority else "Medium"
+                    ),
                     "created": str(issue.fields.created),
+                    "sprint": sprint_info,
+                    "in_active_sprint": in_active_sprint,
                 }
 
                 # Map to our categories
@@ -105,7 +129,7 @@ class ScenarioAnalyzer:
                 elif status in ["done", "closed", "resolved"]:
                     snapshot["done"].append(ticket_info)
 
-        except Exception as e:
+        except Exception:
             # Return empty snapshot on error
             pass
 
@@ -162,6 +186,22 @@ class ScenarioAnalyzer:
 
         # 7. Check scenario balance
         opportunities.extend(self._detect_balance_opportunities(state))
+
+        # 8. Check for epic lifecycle issues
+        opportunities.extend(self._detect_epic_lifecycle_opportunities())
+
+        # 9. Check for unassigned epics
+        opportunities.extend(self._detect_unassigned_epic_opportunities())
+
+        # 10. Check for sprint planning opportunities
+        opportunities.extend(
+            self._detect_sprint_planning_opportunities(state, board_snapshot)
+        )
+
+        # 11. Check for process violations to fix (gradual cleanup)
+        violations = self._detect_all_violations(state, board_snapshot)
+        # Limit to 2 violations per tick for gradual cleanup
+        opportunities.extend(violations[:2])
 
         return opportunities
 
@@ -385,6 +425,16 @@ class ScenarioAnalyzer:
 
         return opportunities
 
+    def _get_allowed_issue_types(self, role: str) -> list[str]:
+        """Get the issue types a role is allowed to act on."""
+        role_permissions = self.issue_type_permissions.get(role, {})
+        return role_permissions.get("can_act_on", ["Story", "Bug", "Task"])
+
+    def _can_role_act_on_issue_type(self, role: str, issue_type: str) -> bool:
+        """Check if a role can act on a specific issue type."""
+        allowed_types = self._get_allowed_issue_types(role)
+        return issue_type in allowed_types
+
     def _detect_pickup_opportunities(
         self,
         state: SimulationState,
@@ -408,12 +458,24 @@ class ScenarioAnalyzer:
 
             # Developer is available
             seniority = persona.get("seniority", "mid")
+            # Get allowed issue types for developers
+            allowed_types = self._get_allowed_issue_types("developer")
 
             # Find appropriate ticket for this developer
             for ticket in backlog:
-                # Junior devs shouldn't take complex items
-                if seniority == "junior" and "complex" in ticket.get("summary", "").lower():
+                # Filter by issue type - developers can't act on Epics
+                ticket_type = ticket.get("type", "Story")
+                if ticket_type not in allowed_types:
                     continue
+
+                # Items must be in active sprint to be picked up
+                if not ticket.get("in_active_sprint"):
+                    continue
+
+                # Junior devs shouldn't take complex items
+                if seniority == "junior":
+                    if "complex" in ticket.get("summary", "").lower():
+                        continue
 
                 # Check if ticket already has a scenario
                 existing = state.get_scenario_by_ticket(ticket["key"])
@@ -425,9 +487,13 @@ class ScenarioAnalyzer:
                     "priority": "medium",
                     "ticket_key": ticket["key"],
                     "ticket_summary": ticket["summary"],
+                    "ticket_type": ticket_type,
+                    "in_active_sprint": True,
                     "agent_id": agent_id,
                     "agent_name": persona.get("display_name"),
-                    "description": f"{persona.get('display_name')} could pick up {ticket['key']}",
+                    "description": (
+                        f"{persona.get('display_name')} could pick up {ticket['key']}"
+                    ),
                 })
                 break  # One ticket per developer
 
@@ -491,3 +557,275 @@ class ScenarioAnalyzer:
             "sprint_day": state.sprint.sprint_day,
             "is_mid_sprint": state.sprint.is_mid_sprint(),
         }
+
+    # ==================== Epic Lifecycle Detection ====================
+
+    def _detect_epic_lifecycle_opportunities(self) -> list[dict]:
+        """Detect Epics that need status updates based on child issues."""
+        opportunities = []
+
+        try:
+            epics_needing_update = self.jira.get_epics_needing_status_update()
+
+            for epic_info in epics_needing_update:
+                # Find appropriate PM for this epic based on team
+                pm_id = self._find_pm_for_epic(epic_info["epic_key"])
+
+                opportunities.append({
+                    "type": "update_epic_status",
+                    "priority": "medium",
+                    "epic_key": epic_info["epic_key"],
+                    "current_status": epic_info["current_status"],
+                    "suggested_status": epic_info["suggested_status"],
+                    "reason": epic_info["reason"],
+                    "child_count": epic_info["child_count"],
+                    "pm_id": pm_id,
+                    "description": (
+                        f"Epic {epic_info['epic_key']} should be "
+                        f"'{epic_info['suggested_status']}' - {epic_info['reason']}"
+                    ),
+                })
+        except Exception:
+            pass
+
+        return opportunities
+
+    def _detect_unassigned_epic_opportunities(self) -> list[dict]:
+        """Detect Epics that are not assigned to a PM."""
+        opportunities = []
+
+        # PM account IDs (Sarah Chen and David Kim)
+        pm_account_ids = set()
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("role") == "pm":
+                pm_account_ids.add(config.get("jira_account_id"))
+
+        try:
+            epics = self.jira.get_epics()
+
+            for epic in epics:
+                assignee = epic.fields.assignee
+                assignee_id = assignee.accountId if assignee else None
+
+                # Check if Epic is unassigned or assigned to non-PM
+                if not assignee_id or assignee_id not in pm_account_ids:
+                    # Find appropriate PM based on team hints
+                    pm_id = self._find_pm_for_epic(epic.key)
+
+                    opportunities.append({
+                        "type": "assign_epic_to_pm",
+                        "priority": "medium",
+                        "epic_key": epic.key,
+                        "epic_summary": epic.fields.summary,
+                        "current_assignee": assignee.displayName if assignee else None,
+                        "pm_id": pm_id,
+                        "description": (
+                            f"Epic {epic.key} should be assigned to PM "
+                            f"for proper ownership"
+                        ),
+                    })
+        except Exception:
+            pass
+
+        return opportunities
+
+    def _find_pm_for_epic(self, epic_key: str) -> Optional[str]:
+        """
+        Find the appropriate PM for an Epic.
+
+        Tries to determine team from Epic content/labels, defaults to alpha PM.
+        """
+        try:
+            epic = self.jira.get_issue(epic_key)
+            summary = (epic.fields.summary or "").lower()
+            labels = epic.fields.labels or []
+
+            # Check for team hints in labels or summary
+            if "beta" in labels or "beta" in summary or "ux" in summary:
+                return self._get_team_agents("beta").get("pm")
+            return self._get_team_agents("alpha").get("pm")
+        except Exception:
+            # Default to alpha PM
+            return self._get_team_agents("alpha").get("pm")
+
+    # ==================== Sprint Planning Detection ====================
+
+    def _detect_sprint_planning_opportunities(
+        self,
+        state: SimulationState,
+        board_snapshot: dict,
+    ) -> list[dict]:
+        """
+        Detect when sprint planning activities are needed.
+
+        Triggers on:
+        - Sprint planning day (Monday / day 1)
+        - When future sprints < 2
+        - When unassigned items need sprint allocation
+        """
+        opportunities = []
+
+        # Only trigger on sprint planning day (day 1)
+        if not state.sprint.is_sprint_planning_day():
+            return opportunities
+
+        try:
+            # Get sprint info
+            active_sprint = board_snapshot.get("active_sprint")
+            future_sprints = self.jira.get_future_sprints(max_results=4)
+
+            # Get unassigned items (not in any sprint)
+            unassigned_items = self.jira.get_issues_not_in_sprint(
+                issue_types=["Story", "Bug", "Task"]
+            )
+
+            # Opportunity 1: Plan current sprint if there are unassigned items
+            if active_sprint and unassigned_items:
+                for team in ["alpha", "beta"]:
+                    pm_id = self._get_team_agents(team).get("pm")
+                    if pm_id:
+                        opportunities.append({
+                            "type": "sprint_planning",
+                            "priority": "high",
+                            "team": team,
+                            "pm_id": pm_id,
+                            "sprint_id": active_sprint.get("id"),
+                            "sprint_name": active_sprint.get("name"),
+                            "unassigned_count": len(unassigned_items),
+                            "description": (
+                                f"Sprint planning: {len(unassigned_items)} items "
+                                f"need sprint assignment"
+                            ),
+                        })
+                        break  # Only one PM needs to do planning
+
+            # Opportunity 2: Create future sprints if < 2 exist
+            future_sprint_count = len(future_sprints)
+            target_future_sprints = self.settings.get("sprint", {}).get(
+                "future_sprints_to_maintain", 2
+            )
+
+            if future_sprint_count < target_future_sprints:
+                pm_id = self._get_team_agents("alpha").get("pm")
+                if pm_id:
+                    opportunities.append({
+                        "type": "create_future_sprint",
+                        "priority": "medium",
+                        "pm_id": pm_id,
+                        "current_sprint_number": state.sprint.sprint_number,
+                        "existing_future_sprints": future_sprint_count,
+                        "target_count": target_future_sprints,
+                        "description": (
+                            f"Need to create future sprints "
+                            f"({future_sprint_count}/{target_future_sprints} exist)"
+                        ),
+                    })
+
+        except Exception:
+            pass
+
+        return opportunities
+
+    # ==================== Violation Detection ====================
+
+    def _detect_all_violations(
+        self,
+        state: SimulationState,
+        board_snapshot: dict,
+    ) -> list[dict]:
+        """
+        Detect all process violations for gradual cleanup.
+
+        Returns list of violations with fix recommendations.
+        """
+        violations = []
+
+        violations.extend(self._detect_sprint_violations(board_snapshot))
+        violations.extend(self._detect_issue_type_violations(board_snapshot))
+
+        return violations
+
+    def _detect_sprint_violations(self, board_snapshot: dict) -> list[dict]:
+        """
+        Detect items being worked on but not in active sprint.
+
+        These are items in 'In Progress', 'Code Review', or 'Testing'
+        status but not assigned to the active sprint.
+        """
+        violations = []
+
+        work_statuses = ["in_progress", "code_review", "testing"]
+
+        for status_key in work_statuses:
+            for ticket in board_snapshot.get(status_key, []):
+                if not ticket.get("in_active_sprint"):
+                    # Find appropriate PM to fix this
+                    pm_id = self._get_team_agents("alpha").get("pm")
+
+                    violations.append({
+                        "type": "fix_sprint_violation",
+                        "priority": "high",
+                        "ticket_key": ticket["key"],
+                        "ticket_status": ticket["status"],
+                        "violation_type": "work_without_sprint",
+                        "pm_id": pm_id,
+                        "description": (
+                            f"{ticket['key']} is {ticket['status']} but not "
+                            f"in active sprint"
+                        ),
+                        "fix_action": "add_to_active_sprint",
+                        "fix_comment": (
+                            "Added to active sprint - items being worked "
+                            "must be in a sprint for proper tracking."
+                        ),
+                    })
+
+        return violations
+
+    def _detect_issue_type_violations(self, board_snapshot: dict) -> list[dict]:
+        """
+        Detect developers assigned to Epics (should be PM-only).
+        """
+        violations = []
+
+        # Get PM account IDs
+        pm_account_ids = set()
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("role") == "pm":
+                pm_account_ids.add(config.get("jira_account_id"))
+
+        try:
+            epics = self.jira.get_epics()
+
+            for epic in epics:
+                assignee = epic.fields.assignee
+                if not assignee:
+                    continue
+
+                # Check if assigned to non-PM
+                if assignee.accountId not in pm_account_ids:
+                    # Find appropriate PM to reassign to
+                    pm_id = self._find_pm_for_epic(epic.key)
+
+                    violations.append({
+                        "type": "fix_issue_type_violation",
+                        "priority": "medium",
+                        "epic_key": epic.key,
+                        "epic_summary": epic.fields.summary,
+                        "current_assignee": assignee.displayName,
+                        "violation_type": "non_pm_on_epic",
+                        "pm_id": pm_id,
+                        "description": (
+                            f"Epic {epic.key} assigned to {assignee.displayName} "
+                            f"(non-PM) - should be managed by PM"
+                        ),
+                        "fix_action": "reassign_to_pm",
+                        "fix_comment": (
+                            "Reassigned - Epics are managed by Product Management. "
+                            "Developers work on Stories, Bugs, and Tasks."
+                        ),
+                    })
+        except Exception:
+            pass
+
+        return violations

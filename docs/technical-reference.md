@@ -485,9 +485,36 @@ workload:
 
 ```yaml
 sprint:
-  duration_days: 14
-  planning_day: 1       # 1 = Monday
+  duration_days: 7        # 1-week sprints
+  planning_day: 1         # Monday (day 1 of sprint)
+  board_id: 4             # Jira board ID for sprint operations
+  future_sprints_to_maintain: 2  # Always keep 1-2 future sprints planned
 ```
+
+#### Issue Type Permissions
+
+Controls which issue types each role can act on and create. This prevents developers from acting on Epics (PM-only) and enforces realistic process adherence.
+
+```yaml
+issue_type_permissions:
+  pm:
+    can_act_on: ["Epic", "Story", "Bug", "Task"]
+    can_create: ["Epic", "Story"]
+  developer:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
+  qa:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
+  tech_lead:
+    can_act_on: ["Story", "Bug", "Task"]
+    can_create: ["Bug"]
+```
+
+**Key Rules:**
+- **Epics are PM-only**: Developers, QA, and Tech Leads cannot pick up or comment on Epics
+- **Story creation is PM-only**: Only PMs can create Stories and Epics
+- **All roles can create Bugs**: For reporting issues during development/testing
 
 #### Analyzer Thresholds
 
@@ -721,7 +748,7 @@ Templates are selected randomly to add variety.
 - Agent daily action counts → 0
 - Sprint day advances
 
-**Sprint Reset** (after day 14):
+**Sprint Reset** (after day 7):
 - Sprint number increments
 - Sprint day → 1
 
@@ -739,6 +766,67 @@ curl -X POST http://localhost:8000/reset
 ```
 
 Or manually delete `data/state.json` and restart.
+
+---
+
+## Process Adherence Features
+
+### Sprint Integration
+
+The simulation integrates with Jira's actual sprint system (Board ID: 4).
+
+**Sprint Requirements:**
+- Items must be in the active sprint to be worked on
+- Work actions (pick up, transition, comment) are blocked for items not in sprint
+- Violations are detected and gradually fixed with explanatory comments
+
+**Sprint Planning (Every Monday):**
+- PMs (Sarah Chen, David Kim) plan sprints on day 1
+- System maintains 1-2 future sprints
+- Unassigned backlog items are allocated to sprints
+
+**Sprint Configuration:**
+```yaml
+sprint:
+  duration_days: 7        # 1-week sprints (Monday to Sunday)
+  planning_day: 1         # Monday
+  board_id: 4             # Jira board ID
+  future_sprints_to_maintain: 2
+```
+
+### Epic Lifecycle Management
+
+Epics follow automatic lifecycle rules based on child issue status.
+
+**Epic Status Rules:**
+| Child Status | Epic Should Be |
+|--------------|----------------|
+| All "To Do" | "To Do" |
+| Any in progress | "In Progress" |
+| All "Done" | "Done" |
+
+**Epic Ownership:**
+- Epics are automatically assigned to team PMs
+- Unassigned Epics get assigned with explanatory comments
+- Sarah Chen handles Alpha team Epics
+- David Kim handles Beta team Epics
+
+### Violation Detection & Cleanup
+
+The system gradually fixes process violations with explanatory comments.
+
+**Detected Violations:**
+| Violation | Detection | Fix |
+|-----------|-----------|-----|
+| Work without sprint | Item in progress but no sprint | Add to active sprint |
+| Non-PM on Epic | Developer assigned to Epic | Reassign to team PM |
+| Epic status mismatch | Epic status doesn't match children | Transition Epic |
+| Unassigned Epic | Epic with no assignee | Assign to team PM |
+
+**Cleanup Behavior:**
+- Maximum 2 violations fixed per tick (gradual)
+- Each fix includes an explanatory comment
+- Comments explain why the change was made
 
 ---
 

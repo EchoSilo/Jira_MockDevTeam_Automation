@@ -12,6 +12,7 @@ from .blocker_crew import BlockerCrew
 from .rework_crew import ReworkCrew
 from .scope_creep_crew import ScopeCreepCrew
 from .dependency_crew import DependencyCrew
+from .sprint_planning_crew import SprintPlanningCrew
 
 __all__ = [
     "BaseCrew",
@@ -20,4 +21,5 @@ __all__ = [
     "ReworkCrew",
     "ScopeCreepCrew",
     "DependencyCrew",
+    "SprintPlanningCrew",
 ]

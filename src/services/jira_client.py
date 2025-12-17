@@ -4,9 +4,13 @@ Handles all Jira interactions with proper authentication per agent.
 """
 
 import os
+from datetime import date, datetime, timedelta
 from typing import Optional
 from jira import JIRA
 from jira.resources import Issue
+
+# Configured board ID for sprint operations
+BOARD_ID = 4
 
 
 class JiraClient:
@@ -164,3 +168,251 @@ class JiraClient:
     def get_current_user(self) -> dict:
         """Get the current authenticated user info."""
         return self._client.myself()
+
+    # ==================== Sprint Methods ====================
+
+    def get_active_sprint(self, board_id: int = BOARD_ID) -> Optional[dict]:
+        """Get the currently active sprint for the board."""
+        try:
+            sprints = self._client.sprints(board_id, state="active")
+            if sprints:
+                sprint = sprints[0]
+                return {
+                    "id": sprint.id,
+                    "name": sprint.name,
+                    "state": sprint.state,
+                    "start_date": getattr(sprint, "startDate", None),
+                    "end_date": getattr(sprint, "endDate", None),
+                }
+            return None
+        except Exception:
+            return None
+
+    def get_future_sprints(
+        self, board_id: int = BOARD_ID, max_results: int = 4
+    ) -> list[dict]:
+        """Get upcoming/future sprints for planning."""
+        try:
+            sprints = self._client.sprints(board_id, state="future")
+            result = []
+            for sprint in sprints[:max_results]:
+                result.append({
+                    "id": sprint.id,
+                    "name": sprint.name,
+                    "state": sprint.state,
+                    "start_date": getattr(sprint, "startDate", None),
+                    "end_date": getattr(sprint, "endDate", None),
+                })
+            return result
+        except Exception:
+            return []
+
+    def get_sprint_issues(
+        self,
+        sprint_id: int,
+        issue_types: Optional[list[str]] = None,
+    ) -> list[Issue]:
+        """Get all issues in a specific sprint."""
+        jql = f"project = {self.project_key} AND sprint = {sprint_id}"
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+        return self._client.search_issues(jql)
+
+    def add_issue_to_sprint(self, sprint_id: int, issue_keys: list[str]) -> bool:
+        """Add issues to a sprint."""
+        try:
+            self._client.add_issues_to_sprint(sprint_id, issue_keys)
+            return True
+        except Exception:
+            return False
+
+    def remove_issue_from_sprint(self, issue_key: str) -> bool:
+        """Remove an issue from its current sprint (move to backlog)."""
+        try:
+            # Setting sprint to None moves it to backlog
+            issue = self._client.issue(issue_key)
+            # Get the sprint field ID (usually customfield_10020 or similar)
+            sprint_field = self._get_sprint_field_id()
+            if sprint_field:
+                issue.update(fields={sprint_field: None})
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _get_sprint_field_id(self) -> Optional[str]:
+        """Get the custom field ID for the sprint field."""
+        try:
+            fields = self._client.fields()
+            for field in fields:
+                if field["name"].lower() == "sprint":
+                    return field["id"]
+            return None
+        except Exception:
+            return None
+
+    def create_sprint(
+        self,
+        name: str,
+        board_id: int = BOARD_ID,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> Optional[dict]:
+        """Create a new sprint on the board."""
+        try:
+            sprint_data = {"name": name, "board_id": board_id}
+            if start_date:
+                sprint_data["startDate"] = start_date.isoformat()
+            if end_date:
+                sprint_data["endDate"] = end_date.isoformat()
+
+            sprint = self._client.create_sprint(**sprint_data)
+            return {
+                "id": sprint.id,
+                "name": sprint.name,
+                "state": sprint.state,
+            }
+        except Exception:
+            return None
+
+    def get_issues_not_in_sprint(
+        self, issue_types: Optional[list[str]] = None
+    ) -> list[Issue]:
+        """Get issues not assigned to any sprint (refinement backlog)."""
+        jql = f"project = {self.project_key} AND sprint IS EMPTY AND status != Done"
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+        jql += " ORDER BY priority DESC, created ASC"
+        return self._client.search_issues(jql)
+
+    def is_issue_in_active_sprint(self, issue_key: str) -> bool:
+        """Check if an issue is in the currently active sprint."""
+        try:
+            issue = self._client.issue(issue_key)
+            sprint_field = getattr(issue.fields, "sprint", None)
+            if not sprint_field:
+                # Try custom field approach
+                for field_name in dir(issue.fields):
+                    if "sprint" in field_name.lower():
+                        sprint_field = getattr(issue.fields, field_name, None)
+                        break
+
+            if sprint_field:
+                # sprint_field can be a list of sprint objects
+                if isinstance(sprint_field, list):
+                    for sprint in sprint_field:
+                        if hasattr(sprint, "state") and sprint.state == "active":
+                            return True
+                elif hasattr(sprint_field, "state"):
+                    return sprint_field.state == "active"
+            return False
+        except Exception:
+            return False
+
+    def get_issue_sprint_info(self, issue_key: str) -> Optional[dict]:
+        """Get sprint information for an issue."""
+        try:
+            issue = self._client.issue(issue_key)
+            sprint_field = getattr(issue.fields, "sprint", None)
+            if not sprint_field:
+                for field_name in dir(issue.fields):
+                    if "sprint" in field_name.lower():
+                        sprint_field = getattr(issue.fields, field_name, None)
+                        break
+
+            if sprint_field:
+                if isinstance(sprint_field, list) and sprint_field:
+                    sprint = sprint_field[-1]  # Most recent sprint
+                    return {
+                        "id": getattr(sprint, "id", None),
+                        "name": getattr(sprint, "name", None),
+                        "state": getattr(sprint, "state", None),
+                    }
+                elif hasattr(sprint_field, "id"):
+                    return {
+                        "id": sprint_field.id,
+                        "name": getattr(sprint_field, "name", None),
+                        "state": getattr(sprint_field, "state", None),
+                    }
+            return None
+        except Exception:
+            return None
+
+    # ==================== Epic Methods ====================
+
+    def get_epic_children(self, epic_key: str) -> list[Issue]:
+        """Get all child issues of an Epic."""
+        # Try both Epic Link and parent fields (depends on Jira version)
+        jql = f'"Epic Link" = {epic_key} OR parent = {epic_key}'
+        try:
+            return self._client.search_issues(jql)
+        except Exception:
+            # Fall back to just Epic Link if parent syntax fails
+            jql = f'"Epic Link" = {epic_key}'
+            return self._client.search_issues(jql)
+
+    def get_epics(self, max_results: int = 50) -> list[Issue]:
+        """Get all Epics in the project."""
+        jql = f'project = {self.project_key} AND issuetype = Epic ORDER BY updated DESC'
+        return self._client.search_issues(jql, maxResults=max_results)
+
+    def get_unassigned_epics(self) -> list[Issue]:
+        """Get Epics that are not assigned to anyone."""
+        jql = f'project = {self.project_key} AND issuetype = Epic AND assignee IS EMPTY'
+        return self._client.search_issues(jql)
+
+    def get_epics_needing_status_update(self) -> list[dict]:
+        """
+        Find Epics whose status doesn't match their children's state.
+
+        Returns list of dicts with epic_key, current_status, suggested_status, reason
+        """
+        needs_update = []
+        epics = self.get_epics()
+
+        for epic in epics:
+            children = self.get_epic_children(epic.key)
+            if not children:
+                continue
+
+            child_statuses = [c.fields.status.name for c in children]
+            epic_status = epic.fields.status.name
+
+            # Determine what the Epic status should be
+            all_done = all(
+                s.lower() in ["done", "closed", "resolved"] for s in child_statuses
+            )
+            all_todo = all(
+                s.lower() in ["to do", "backlog", "open"] for s in child_statuses
+            )
+            any_in_progress = any(
+                s.lower() not in ["to do", "backlog", "open", "done", "closed", "resolved"]
+                for s in child_statuses
+            )
+
+            suggested_status = None
+            reason = None
+
+            if all_done and epic_status.lower() not in ["done", "closed", "resolved"]:
+                suggested_status = "Done"
+                reason = "All child issues are completed"
+            elif all_todo and epic_status.lower() not in ["to do", "backlog", "open"]:
+                suggested_status = "To Do"
+                reason = "All child issues are still in To Do"
+            elif any_in_progress and epic_status.lower() in ["to do", "backlog", "open"]:
+                suggested_status = "In Progress"
+                reason = "Child issues have started work"
+
+            if suggested_status:
+                needs_update.append({
+                    "epic_key": epic.key,
+                    "current_status": epic_status,
+                    "suggested_status": suggested_status,
+                    "child_count": len(children),
+                    "reason": reason,
+                    "child_statuses": list(set(child_statuses)),
+                })
+
+        return needs_update
