@@ -6,10 +6,14 @@ Each tool is decorated with @tool and has clear descriptions
 for the LLM to understand when and how to use them.
 """
 
-from typing import Optional
+import time
+from typing import Optional, TYPE_CHECKING
 from crewai.tools import tool
 
 from ..services.jira_client import JiraClient
+
+if TYPE_CHECKING:
+    from ..logging import AsyncLogWriter
 
 
 class JiraTools:
@@ -20,15 +24,66 @@ class JiraTools:
     All tools share a single JiraClient instance for consistent authentication.
     """
 
-    def __init__(self, jira_client: JiraClient):
+    def __init__(
+        self,
+        jira_client: JiraClient,
+        log_writer: "AsyncLogWriter | None" = None,
+    ):
         self.jira = jira_client
+        self.log_writer = log_writer
+        self._current_agent_id: str | None = None
+        self._current_ticket_key: str | None = None
         self._create_tools()
+
+    def set_context(
+        self,
+        agent_id: str | None = None,
+        ticket_key: str | None = None,
+    ) -> None:
+        """Set context for logging Jira calls."""
+        self._current_agent_id = agent_id
+        self._current_ticket_key = ticket_key
+
+    def clear_context(self) -> None:
+        """Clear the logging context."""
+        self._current_agent_id = None
+        self._current_ticket_key = None
+
+    def _log_jira_call(
+        self,
+        method: str,
+        parameters: dict,
+        response: str,
+        duration_ms: int,
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        """Log a Jira API call if log_writer is available."""
+        if not self.log_writer:
+            return
+
+        # Extract ticket key from parameters if not set in context
+        ticket_key = self._current_ticket_key
+        if not ticket_key:
+            ticket_key = parameters.get("issue_key") or parameters.get("ticket_key")
+
+        self.log_writer.log_jira_call(
+            method=method,
+            parameters=parameters,
+            response=response if success else "",
+            success=success,
+            duration_ms=duration_ms,
+            agent_id=self._current_agent_id,
+            ticket_key=ticket_key,
+            error=error,
+        )
 
     def _create_tools(self) -> None:
         """Create tool instances bound to this JiraClient."""
-        # We need to create closures that capture self.jira
+        # We need to create closures that capture self.jira and self for logging
 
         jira = self.jira  # Capture for closures
+        tools_self = self  # Capture self for logging
 
         @tool("Search Jira Issues")
         def search_issues(query: str) -> str:
@@ -41,6 +96,7 @@ class JiraTools:
             Returns:
                 List of matching issues with key, summary, status, and assignee
             """
+            start_time = time.time()
             try:
                 if "=" in query or "AND" in query or "OR" in query:
                     issues = jira._client.search_issues(query, maxResults=10)
@@ -49,18 +105,29 @@ class JiraTools:
                     issues = jira._client.search_issues(jql, maxResults=10)
 
                 if not issues:
-                    return "No issues found"
+                    result = "No issues found"
+                else:
+                    results = []
+                    for issue in issues:
+                        assignee = issue.fields.assignee
+                        assignee_name = assignee.displayName if assignee else "Unassigned"
+                        results.append(
+                            f"- {issue.key}: {issue.fields.summary} "
+                            f"[{issue.fields.status.name}] (Assignee: {assignee_name})"
+                        )
+                    result = "\n".join(results)
 
-                results = []
-                for issue in issues:
-                    assignee = issue.fields.assignee
-                    assignee_name = assignee.displayName if assignee else "Unassigned"
-                    results.append(
-                        f"- {issue.key}: {issue.fields.summary} "
-                        f"[{issue.fields.status.name}] (Assignee: {assignee_name})"
-                    )
-                return "\n".join(results)
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "search_issues", {"query": query}, result, duration_ms
+                )
+                return result
             except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "search_issues", {"query": query}, "",
+                    duration_ms, success=False, error=str(e)
+                )
                 return f"Error searching: {str(e)}"
 
         @tool("Get Issue Details")
@@ -74,12 +141,13 @@ class JiraTools:
             Returns:
                 Issue details including summary, description, status, assignee, priority
             """
+            start_time = time.time()
             try:
                 issue = jira.get_issue(issue_key)
                 assignee = issue.fields.assignee
                 assignee_name = assignee.displayName if assignee else "Unassigned"
 
-                return f"""Issue: {issue.key}
+                result = f"""Issue: {issue.key}
 Summary: {issue.fields.summary}
 Type: {issue.fields.issuetype.name}
 Status: {issue.fields.status.name}
@@ -88,7 +156,18 @@ Assignee: {assignee_name}
 
 Description:
 {issue.fields.description or 'No description'}"""
+
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "get_issue", {"issue_key": issue_key}, result, duration_ms
+                )
+                return result
             except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "get_issue", {"issue_key": issue_key}, "",
+                    duration_ms, success=False, error=str(e)
+                )
                 return f"Error getting issue: {str(e)}"
 
         @tool("Add Comment to Issue")
@@ -103,10 +182,24 @@ Description:
             Returns:
                 Confirmation message
             """
+            start_time = time.time()
             try:
                 jira.add_comment(issue_key, comment)
-                return f"Comment added to {issue_key}"
+                result = f"Comment added to {issue_key}"
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "add_comment",
+                    {"issue_key": issue_key, "comment": comment[:200]},
+                    result, duration_ms
+                )
+                return result
             except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "add_comment",
+                    {"issue_key": issue_key, "comment": comment[:200]},
+                    "", duration_ms, success=False, error=str(e)
+                )
                 return f"Error adding comment: {str(e)}"
 
         @tool("Transition Issue Status")
@@ -121,16 +214,31 @@ Description:
             Returns:
                 Confirmation or error message
             """
+            start_time = time.time()
             try:
                 success = jira.transition_issue(issue_key, new_status)
                 if success:
-                    return f"Transitioned {issue_key} to '{new_status}'"
+                    result = f"Transitioned {issue_key} to '{new_status}'"
                 else:
                     # Get available transitions
                     available = jira.get_transitions(issue_key)
                     trans_names = [t["name"] for t in available]
-                    return f"Could not transition to '{new_status}'. Available transitions: {trans_names}"
+                    result = f"Could not transition to '{new_status}'. Available: {trans_names}"
+
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "transition_issue",
+                    {"issue_key": issue_key, "new_status": new_status},
+                    result, duration_ms, success=success
+                )
+                return result
             except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "transition_issue",
+                    {"issue_key": issue_key, "new_status": new_status},
+                    "", duration_ms, success=False, error=str(e)
+                )
                 return f"Error transitioning: {str(e)}"
 
         @tool("Assign Issue to User")
@@ -145,10 +253,24 @@ Description:
             Returns:
                 Confirmation message
             """
+            start_time = time.time()
             try:
                 jira.assign_issue(issue_key, account_id)
-                return f"Assigned {issue_key} to account {account_id}"
+                result = f"Assigned {issue_key} to account {account_id}"
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "assign_issue",
+                    {"issue_key": issue_key, "account_id": account_id},
+                    result, duration_ms
+                )
+                return result
             except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                tools_self._log_jira_call(
+                    "assign_issue",
+                    {"issue_key": issue_key, "account_id": account_id},
+                    "", duration_ms, success=False, error=str(e)
+                )
                 return f"Error assigning: {str(e)}"
 
         @tool("Log Work Time")
@@ -436,6 +558,64 @@ Description:
             except Exception as e:
                 return f"Error creating sprint: {str(e)}"
 
+        @tool("Start Sprint")
+        def start_sprint(sprint_id: int) -> str:
+            """
+            Activate a future sprint, making it the current active sprint.
+
+            Args:
+                sprint_id: The ID of the future sprint to activate
+
+            Returns:
+                Success or failure message
+
+            Note: If another sprint is currently active, it will be automatically
+            closed when the new sprint starts.
+            """
+            try:
+                from datetime import date as date_type, timedelta
+
+                # Get sprint info first to verify it exists
+                future_sprints = jira.get_future_sprints()
+                sprint_info = next(
+                    (s for s in future_sprints if s["id"] == sprint_id), None
+                )
+
+                if not sprint_info:
+                    return f"Sprint {sprint_id} not found or not in 'future' state"
+
+                # Use today as start, 7 days from now as end
+                start_date = date_type.today()
+                end_date = start_date + timedelta(days=7)
+
+                success = jira.start_sprint(
+                    sprint_id, start_date=start_date, end_date=end_date
+                )
+                if success:
+                    return f"Successfully activated sprint {sprint_id}"
+                return f"Failed to activate sprint {sprint_id}"
+            except Exception as e:
+                return f"Error starting sprint: {str(e)}"
+
+        @tool("Complete Sprint")
+        def complete_sprint(sprint_id: int) -> str:
+            """
+            Complete the currently active sprint, closing it out.
+
+            Args:
+                sprint_id: The ID of the active sprint to complete
+
+            Returns:
+                Success or failure message
+            """
+            try:
+                success = jira.complete_sprint(sprint_id)
+                if success:
+                    return f"Successfully completed sprint {sprint_id}"
+                return f"Failed to complete sprint {sprint_id}"
+            except Exception as e:
+                return f"Error completing sprint: {str(e)}"
+
         # Store tool references
         self._search_issues = search_issues
         self._get_issue_details = get_issue_details
@@ -455,6 +635,8 @@ Description:
         self._get_unplanned_items = get_unplanned_items
         self._add_to_sprint = add_to_sprint
         self._create_sprint = create_sprint
+        self._start_sprint = start_sprint
+        self._complete_sprint = complete_sprint
 
     # ============ Tool Sets by Role ============
 
@@ -479,6 +661,8 @@ Description:
             self._get_unplanned_items,
             self._add_to_sprint,
             self._create_sprint,
+            self._start_sprint,
+            self._complete_sprint,
         ]
 
     def get_pm_tools(self) -> list:
@@ -497,6 +681,8 @@ Description:
             self._get_unplanned_items,
             self._add_to_sprint,
             self._create_sprint,
+            self._start_sprint,
+            self._complete_sprint,
         ]
 
     def get_sprint_planning_tools(self) -> list:
@@ -507,6 +693,8 @@ Description:
             self._get_unplanned_items,
             self._add_to_sprint,
             self._create_sprint,
+            self._start_sprint,
+            self._complete_sprint,
             self._get_backlog,
             self._add_comment,
         ]

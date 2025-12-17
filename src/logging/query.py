@@ -22,9 +22,21 @@ from .models import (
 class LogQueryService:
     """Service for querying log entries."""
 
+    # Timestamp fields that need UTC 'Z' suffix for JavaScript
+    _TIMESTAMP_FIELDS = {"timestamp", "started_at", "ended_at"}
+
     def __init__(self, db_path: str = "data/logs.db"):
         self._db_path = Path(db_path)
         self._ensure_schema()
+
+    def _ensure_utc_suffix(self, data: dict) -> dict:
+        """Ensure timestamp fields have 'Z' suffix so JS interprets as UTC."""
+        for field in self._TIMESTAMP_FIELDS:
+            if field in data and data[field]:
+                ts = data[field]
+                if isinstance(ts, str) and not ts.endswith("Z"):
+                    data[field] = ts + "Z"
+        return data
 
     def _ensure_schema(self):
         """Create database tables if they don't exist."""
@@ -82,6 +94,7 @@ class LogQueryService:
                 entry["total_input_tokens"] = entry.pop("computed_input_tokens", 0)
                 entry["total_output_tokens"] = entry.pop("computed_output_tokens", 0)
                 entry["llm_calls"] = entry.pop("computed_llm_calls", 0)
+                self._ensure_utc_suffix(entry)
                 results.append(entry)
 
             return results
@@ -97,7 +110,10 @@ class LogQueryService:
                 (session_id,),
             )
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if row:
+                entry = dict(row)
+                return self._ensure_utc_suffix(entry)
+            return None
         finally:
             conn.close()
 
@@ -118,6 +134,7 @@ class LogQueryService:
             )
             for row in cursor.fetchall():
                 entry = dict(row)
+                self._ensure_utc_suffix(entry)
                 timeline.append(entry)
 
             # Get Jira calls
@@ -130,6 +147,7 @@ class LogQueryService:
                 entry = dict(row)
                 if entry.get("parameters"):
                     entry["parameters"] = json.loads(entry["parameters"])
+                self._ensure_utc_suffix(entry)
                 timeline.append(entry)
 
             # Get orchestrator logs
@@ -146,6 +164,7 @@ class LogQueryService:
                     entry["planned_actions"] = json.loads(entry["planned_actions"])
                 if entry.get("action_result"):
                     entry["action_result"] = json.loads(entry["action_result"])
+                self._ensure_utc_suffix(entry)
                 timeline.append(entry)
 
             # Get agent decisions
@@ -160,6 +179,7 @@ class LogQueryService:
                     entry["alternatives_considered"] = json.loads(
                         entry["alternatives_considered"]
                     )
+                self._ensure_utc_suffix(entry)
                 timeline.append(entry)
 
             # Sort all entries by timestamp
@@ -194,6 +214,7 @@ class LogQueryService:
                 entry = dict(row)
                 entry["is_complex"] = bool(entry.get("is_complex"))
                 entry["success"] = bool(entry.get("success"))
+                self._ensure_utc_suffix(entry)
                 conversations.append(entry)
 
             return conversations
@@ -243,6 +264,7 @@ class LogQueryService:
                 entry = dict(row)
                 entry["is_complex"] = bool(entry.get("is_complex"))
                 entry["success"] = bool(entry.get("success"))
+                self._ensure_utc_suffix(entry)
                 results.append(entry)
 
             return results
@@ -293,6 +315,7 @@ class LogQueryService:
                 if entry.get("parameters"):
                     entry["parameters"] = json.loads(entry["parameters"])
                 entry["success"] = bool(entry.get("success"))
+                self._ensure_utc_suffix(entry)
                 results.append(entry)
 
             return results

@@ -57,30 +57,57 @@ class JiraClient:
 
         return self._client.search_issues(jql, maxResults=max_results)
 
-    def get_backlog_issues(self, max_results: int = 30) -> list[Issue]:
-        """Get issues in backlog (To Do status, not assigned to sprint)."""
-        jql = f"""
-            project = {self.project_key}
-            AND status = "To Do"
-            AND sprint IS EMPTY
-            ORDER BY priority DESC, created ASC
+    def get_backlog_issues(
+        self,
+        max_results: int = 30,
+        issue_types: Optional[list[str]] = None,
+    ) -> list[Issue]:
+        """Get issues in backlog (To Do status, not assigned to sprint).
+
+        Args:
+            max_results: Maximum number of issues to return
+            issue_types: Optional list of issue types to filter (e.g., ["Story", "Bug", "Task"])
         """
+        jql = f"project = {self.project_key} AND status = 'To Do' AND sprint IS EMPTY"
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+        jql += " ORDER BY priority DESC, created ASC"
         return self._client.search_issues(jql, maxResults=max_results)
 
-    def get_in_progress_issues(self, assignee: Optional[str] = None) -> list[Issue]:
-        """Get issues currently in progress."""
+    def get_in_progress_issues(
+        self,
+        assignee: Optional[str] = None,
+        issue_types: Optional[list[str]] = None,
+    ) -> list[Issue]:
+        """Get issues currently in progress.
+
+        Args:
+            assignee: Optional assignee account ID to filter by
+            issue_types: Optional list of issue types to filter (e.g., ["Story", "Bug", "Task"])
+        """
         jql = f'project = {self.project_key} AND status = "In Progress"'
         if assignee:
             jql += f" AND assignee = {assignee}"
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
         return self._client.search_issues(jql)
 
-    def get_issues_ready_for_testing(self) -> list[Issue]:
-        """Get issues waiting for QA."""
-        jql = f"""
-            project = {self.project_key}
-            AND status IN ("Ready for QA", "In Review", "Code Review")
-            ORDER BY updated ASC
+    def get_issues_ready_for_testing(
+        self,
+        issue_types: Optional[list[str]] = None,
+    ) -> list[Issue]:
+        """Get issues waiting for QA.
+
+        Args:
+            issue_types: Optional list of issue types to filter (e.g., ["Story", "Bug", "Task"])
         """
+        jql = f'project = {self.project_key} AND status IN ("Ready for QA", "In Review", "Code Review")'
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+        jql += " ORDER BY updated ASC"
         return self._client.search_issues(jql)
 
     def transition_issue(self, issue_key: str, transition_name: str) -> bool:
@@ -276,6 +303,48 @@ class JiraClient:
         except Exception:
             return None
 
+    def start_sprint(
+        self,
+        sprint_id: int,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> bool:
+        """
+        Activate a future sprint by setting state to 'active'.
+
+        Note: If another sprint is active, it will be auto-closed by Jira.
+        Requires start_date and end_date if not already set on the sprint.
+        """
+        try:
+            update_data = {"state": "active"}
+            if start_date:
+                update_data["startDate"] = start_date.isoformat()
+            if end_date:
+                update_data["endDate"] = end_date.isoformat()
+
+            self._client.update_sprint(sprint_id, **update_data)
+            return True
+        except Exception:
+            return False
+
+    def complete_sprint(
+        self,
+        sprint_id: int,
+        move_incomplete_to: Optional[int] = None,
+    ) -> bool:
+        """
+        Complete an active sprint by setting state to 'closed'.
+
+        Args:
+            sprint_id: The sprint to complete
+            move_incomplete_to: Optional sprint ID to move incomplete issues to
+        """
+        try:
+            self._client.update_sprint(sprint_id, state="closed")
+            return True
+        except Exception:
+            return False
+
     def get_issues_not_in_sprint(
         self, issue_types: Optional[list[str]] = None
     ) -> list[Issue]:
@@ -291,13 +360,10 @@ class JiraClient:
         """Check if an issue is in the currently active sprint."""
         try:
             issue = self._client.issue(issue_key)
+            # Try standard sprint field, then customfield_10020 (common sprint field)
             sprint_field = getattr(issue.fields, "sprint", None)
             if not sprint_field:
-                # Try custom field approach
-                for field_name in dir(issue.fields):
-                    if "sprint" in field_name.lower():
-                        sprint_field = getattr(issue.fields, field_name, None)
-                        break
+                sprint_field = getattr(issue.fields, "customfield_10020", None)
 
             if sprint_field:
                 # sprint_field can be a list of sprint objects
@@ -315,12 +381,10 @@ class JiraClient:
         """Get sprint information for an issue."""
         try:
             issue = self._client.issue(issue_key)
+            # Try standard sprint field, then customfield_10020 (common sprint field)
             sprint_field = getattr(issue.fields, "sprint", None)
             if not sprint_field:
-                for field_name in dir(issue.fields):
-                    if "sprint" in field_name.lower():
-                        sprint_field = getattr(issue.fields, field_name, None)
-                        break
+                sprint_field = getattr(issue.fields, "customfield_10020", None)
 
             if sprint_field:
                 if isinstance(sprint_field, list) and sprint_field:

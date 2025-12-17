@@ -9,6 +9,9 @@ from typing import Optional
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
 
+# Issue types that QA can work on (excludes Epics which are PM-only)
+QA_ALLOWED_ISSUE_TYPES = ["Story", "Bug", "Task"]
+
 
 class QAAgent(BaseAgent):
     """QA Engineer agent - tests and validates work."""
@@ -17,8 +20,10 @@ class QAAgent(BaseAgent):
         """Select a QA-appropriate action."""
         actions = []
 
-        # Get tickets ready for testing
-        ready_for_qa = self.jira.get_issues_ready_for_testing()
+        # Get tickets ready for testing (filtered to allowed issue types - no Epics)
+        ready_for_qa = self.jira.get_issues_ready_for_testing(
+            issue_types=QA_ALLOWED_ISSUE_TYPES
+        )
 
         if ready_for_qa:
             ticket = random.choice(ready_for_qa)

@@ -166,10 +166,9 @@ async def trigger_simulation():
         # Load current state
         state = load_state()
 
-        # Check if new day - reset counters and advance sprint
+        # Check if new day - advance day (resets counters and advances sprint)
         if state.is_new_day():
-            state.reset_daily_counters()
-            state.advance_sprint_day()
+            state.advance_day()
 
         # Determine intensity randomly
         intensity = determine_intensity()
@@ -201,8 +200,8 @@ async def trigger_simulation():
             settings=app.state.settings,
         )
 
-        # Inject log writer into orchestrator for event logging
-        orchestrator.log_writer = app.state.log_writer
+        # Set up comprehensive logging (CrewAI LLM calls, Jira API calls, events)
+        orchestrator.set_log_writer(app.state.log_writer)
 
         # Run the scenario orchestrator
         results = await orchestrator.run_tick(
@@ -293,6 +292,94 @@ async def reset_state():
     state = SimulationState()
     save_state(state)
     return {"message": "State reset successfully"}
+
+
+@app.post("/plan-sprint")
+async def force_sprint_planning():
+    """
+    Force sprint planning to run immediately.
+    This will have a PM add backlog items to the active sprint.
+    """
+    try:
+        state = load_state()
+
+        # Start a logging session for this action
+        session = app.state.log_writer.start_session(
+            intensity="normal",
+            simulation_day=state.simulation_day,
+            sprint_day=state.sprint.sprint_day,
+            sprint_number=state.sprint.sprint_number,
+        )
+
+        # Create logged services
+        logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
+        logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
+
+        # Create orchestrator
+        orchestrator = ScenarioOrchestrator(
+            jira_client=logged_jira,
+            llm_service=logged_llm,
+            personas=app.state.personas,
+            templates=app.state.templates,
+            settings=app.state.settings,
+        )
+        orchestrator.set_log_writer(app.state.log_writer)
+
+        # Get active sprint
+        active_sprint = logged_jira.get_active_sprint()
+        if not active_sprint:
+            app.state.log_writer.end_session(success=False, error_summary="No active sprint")
+            return {"success": False, "error": "No active sprint found"}
+
+        # Get unassigned backlog items (not in any sprint)
+        all_issues = logged_jira.get_project_issues(max_results=100)
+        unassigned_items = []
+        for issue in all_issues:
+            sprint_info = logged_jira.get_issue_sprint_info(issue.key)
+            # Check if issue is not in any sprint (sprint_info might be None or empty)
+            if not sprint_info or not sprint_info.get("current_sprint"):
+                # Not in any sprint - available for planning
+                unassigned_items.append({
+                    "key": issue.key,
+                    "summary": issue.fields.summary,
+                    "type": issue.fields.issuetype.name,
+                    "priority": getattr(issue.fields.priority, 'name', 'Medium') if issue.fields.priority else 'Medium',
+                    "status": issue.fields.status.name,
+                })
+
+        if not unassigned_items:
+            app.state.log_writer.end_session(success=True)
+            return {"success": True, "message": "No unassigned items to plan", "items_added": 0}
+
+        # Use alpha PM for planning
+        pm_id = "alpha_pm"
+        team = "alpha"
+
+        # Execute sprint planning
+        result = orchestrator.sprint_planning_crew.plan_current_sprint(
+            pm_id=pm_id,
+            team=team,
+            active_sprint=active_sprint,
+            unassigned_items=unassigned_items[:15],  # Limit to 15 items
+        )
+
+        # End session
+        app.state.log_writer.end_session(
+            success=True,
+            actions_completed=1,
+        )
+
+        return {
+            "success": True,
+            "sprint": active_sprint.get("name"),
+            "unassigned_items_available": len(unassigned_items),
+            "result": result,
+        }
+
+    except Exception as e:
+        if hasattr(app.state, 'log_writer') and app.state.log_writer.get_current_session():
+            app.state.log_writer.end_session(success=False, error_summary=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/agents")

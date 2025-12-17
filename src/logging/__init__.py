@@ -20,6 +20,7 @@ from .logged_llm_service import LoggedLLMService
 from .logged_jira_client import LoggedJiraClient
 from .query import LogQueryService
 from .api import router as logs_router
+from .crewai_callbacks import CrewAILoggingCallback, setup_crewai_logging
 
 __all__ = [
     # Models
@@ -41,4 +42,7 @@ __all__ = [
     "LogQueryService",
     # API Router
     "logs_router",
+    # CrewAI Integration
+    "CrewAILoggingCallback",
+    "setup_crewai_logging",
 ]

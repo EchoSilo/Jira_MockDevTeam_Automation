@@ -35,6 +35,8 @@ class SprintPlanningCrew(BaseCrew):
         """
         PM allocates items to the current sprint.
 
+        Directly adds items to the sprint via Jira API (no LLM needed for this).
+
         Args:
             pm_id: The PM agent ID
             team: Team name (alpha/beta)
@@ -53,47 +55,29 @@ class SprintPlanningCrew(BaseCrew):
             }
 
         persona = self.get_persona(pm_id)
-        agent = self.get_agent(pm_id, use_complex_llm=True)
-
-        # Format items for the prompt
-        items_summary = "\n".join([
-            f"- {item['key']}: {item['summary']} [{item['type']}] "
-            f"Priority: {item.get('priority', 'Medium')}"
-            for item in unassigned_items[:15]
-        ])
-
-        sprint_name = active_sprint.get("name", "Current Sprint")
         sprint_id = active_sprint.get("id")
+        sprint_name = active_sprint.get("name", "Current Sprint")
 
-        task = Task(
-            description=f"""You are {persona['display_name']} (PM) planning the sprint for Team {team.title()}.
+        # Get available developers for assignment
+        developers = self._get_available_developers()
 
-## Sprint: {sprint_name} (ID: {sprint_id})
+        # Select items to add (prioritize bugs and high priority)
+        items_to_add = self._select_items_for_sprint(unassigned_items, max_items=8)
 
-## Unassigned Items Available:
-{items_summary}
+        # Add items directly via Jira API and assign if unassigned
+        added_keys = []
+        dev_index = 0
+        for item in items_to_add:
+            success = self.jira_tools.jira.add_issue_to_sprint(sprint_id, [item["key"]])
+            if success:
+                added_keys.append(item["key"])
+                # Assign if unassigned (sprint items must have assignees)
+                if not item.get("assignee") and developers:
+                    dev = developers[dev_index % len(developers)]
+                    self.jira_tools.jira.assign_issue(item["key"], dev["account_id"])
+                    dev_index += 1
 
-## Your Task:
-1. Review these items and select 5-8 items appropriate for this sprint
-2. Consider team capacity (2 developers) and typical velocity
-3. Use 'Add Issue to Sprint' tool to assign selected items to sprint {sprint_id}
-4. Add a brief planning comment on the first item you add
-
-## Guidelines:
-- Prioritize bugs and high-priority stories first
-- Balance complexity across the sprint
-- Don't overcommit - leave buffer for unknowns
-- Select items that can realistically be completed in one week
-
-Your communication style: {persona.get('persona', '')}
-""",
-            expected_output=(
-                "Confirmation of items added to sprint with brief planning rationale"
-            ),
-            agent=agent,
-        )
-
-        result = self.execute_crew([agent], [task])
+        result = f"Added {len(added_keys)} items to {sprint_name}: {', '.join(added_keys)}"
 
         return {
             "action": "plan_current_sprint",
@@ -102,8 +86,40 @@ Your communication style: {persona.get('persona', '')}
             "team": team,
             "sprint_id": sprint_id,
             "sprint_name": sprint_name,
+            "items_added": len(added_keys),
+            "added_keys": added_keys,
             "result": result,
         }
+
+    def _get_available_developers(self) -> list[dict]:
+        """Get list of developers available for assignment."""
+        developers = []
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("role") == "developer":
+                developers.append({
+                    "agent_id": agent_id,
+                    "account_id": config.get("jira_account_id"),
+                    "name": config.get("display_name"),
+                    "team": config.get("team"),
+                })
+        return developers
+
+    def _select_items_for_sprint(
+        self,
+        items: list[dict],
+        max_items: int = 8,
+    ) -> list[dict]:
+        """Select items for sprint based on priority and type."""
+        # Sort: bugs first, then by priority
+        priority_order = {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}
+
+        def sort_key(item):
+            is_bug = 0 if item.get("type") == "Bug" else 1
+            priority = priority_order.get(item.get("priority", "Medium"), 2)
+            return (is_bug, priority)
+
+        sorted_items = sorted(items, key=sort_key)
+        return sorted_items[:max_items]
 
     def create_future_sprint(
         self,
@@ -125,27 +141,20 @@ Your communication style: {persona.get('persona', '')}
             Result dict with created sprint info
         """
         persona = self.get_persona(pm_id)
-        agent = self.get_agent(pm_id, use_complex_llm=False)
 
         # Calculate end date (7-day sprint)
         end_date = start_date + timedelta(days=6)
         sprint_name = f"Sprint {sprint_number}"
 
-        task = Task(
-            description=f"""You are {persona['display_name']} (PM) creating a future sprint.
-
-## Create Sprint:
-- Name: {sprint_name}
-- Start Date: {start_date.isoformat()}
-- End Date: {end_date.isoformat()}
-
-Use the 'Create Sprint' tool to create this sprint.
-""",
-            expected_output="Confirmation of sprint creation with sprint ID",
-            agent=agent,
+        # Create sprint directly via Jira API
+        sprint = self.jira_tools.jira.create_sprint(
+            sprint_name, start_date=start_date, end_date=end_date
         )
 
-        result = self.execute_crew([agent], [task])
+        if sprint:
+            result = f"Created sprint '{sprint['name']}' (ID: {sprint['id']})"
+        else:
+            result = "Failed to create sprint"
 
         return {
             "action": "create_future_sprint",
@@ -184,46 +193,28 @@ Use the 'Create Sprint' tool to create this sprint.
             }
 
         persona = self.get_persona(pm_id)
-        agent = self.get_agent(pm_id, use_complex_llm=True)
-
-        items_summary = "\n".join([
-            f"- {item['key']}: {item['summary']} [{item['type']}] "
-            f"Priority: {item.get('priority', 'Medium')}"
-            for item in backlog_items[:20]
-        ])
-
         sprint_name = sprint_info.get("name", "Future Sprint")
         sprint_id = sprint_info.get("id")
 
-        task = Task(
-            description=f"""You are {persona['display_name']} (PM) doing roadmap planning.
+        # Select items to add
+        items_to_add = self._select_items_for_sprint(backlog_items, max_items=5)
 
-## Planning for: {sprint_name} (ID: {sprint_id})
+        # Add items directly via Jira API
+        added_keys = []
+        for item in items_to_add:
+            success = self.jira_tools.jira.add_issue_to_sprint(sprint_id, [item["key"]])
+            if success:
+                added_keys.append(item["key"])
 
-## Backlog Items:
-{items_summary}
-
-## Your Task:
-1. Review items and select 3-5 items for this future sprint
-2. Consider dependencies and logical sequencing
-3. Use 'Add Issue to Sprint' tool to assign items to sprint {sprint_id}
-
-Focus on items that:
-- Have clear requirements
-- Align with the roadmap
-- Don't have blocking dependencies
-""",
-            expected_output="Confirmation of items allocated to future sprint",
-            agent=agent,
-        )
-
-        result = self.execute_crew([agent], [task])
+        result = f"Added {len(added_keys)} items to {sprint_name}: {', '.join(added_keys)}"
 
         return {
             "action": "allocate_to_future_sprint",
             "pm_id": pm_id,
             "pm_name": persona.get("display_name"),
             "sprint_name": sprint_name,
+            "items_added": len(added_keys),
+            "added_keys": added_keys,
             "result": result,
         }
 
@@ -290,3 +281,76 @@ Focus on items that:
         if days_ahead <= 0:
             days_ahead += 7
         return from_date + timedelta(days=days_ahead)
+
+    def start_sprint(
+        self,
+        pm_id: str,
+        sprint_id: int,
+        sprint_name: str,
+    ) -> dict:
+        """
+        PM activates a future sprint to make it the current active sprint.
+
+        Args:
+            pm_id: The PM agent ID
+            sprint_id: The ID of the future sprint to activate
+            sprint_name: The name of the sprint
+
+        Returns:
+            Result dict with sprint activation details
+        """
+        persona = self.get_persona(pm_id)
+
+        # Start sprint directly via Jira API
+        start_date = date.today()
+        end_date = start_date + timedelta(days=7)
+
+        success = self.jira_tools.jira.start_sprint(
+            sprint_id, start_date=start_date, end_date=end_date
+        )
+
+        result = f"Successfully activated {sprint_name}" if success else f"Failed to activate {sprint_name}"
+
+        return {
+            "action": "start_sprint",
+            "success": success,
+            "pm_id": pm_id,
+            "pm_name": persona.get("display_name"),
+            "sprint_id": sprint_id,
+            "sprint_name": sprint_name,
+            "result": result,
+        }
+
+    def complete_sprint(
+        self,
+        pm_id: str,
+        sprint_id: int,
+        sprint_name: str,
+    ) -> dict:
+        """
+        PM completes the active sprint, closing it out.
+
+        Args:
+            pm_id: The PM agent ID
+            sprint_id: The ID of the active sprint to complete
+            sprint_name: The name of the sprint
+
+        Returns:
+            Result dict with sprint completion details
+        """
+        persona = self.get_persona(pm_id)
+
+        # Complete sprint directly via Jira API
+        success = self.jira_tools.jira.complete_sprint(sprint_id)
+
+        result = f"Successfully completed {sprint_name}" if success else f"Failed to complete {sprint_name}"
+
+        return {
+            "action": "complete_sprint",
+            "success": success,
+            "pm_id": pm_id,
+            "pm_name": persona.get("display_name"),
+            "sprint_id": sprint_id,
+            "sprint_name": sprint_name,
+            "result": result,
+        }

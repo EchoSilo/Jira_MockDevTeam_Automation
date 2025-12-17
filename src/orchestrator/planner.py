@@ -157,6 +157,7 @@ class ScenarioPlanner:
         scenarios_summary = self._format_active_scenarios(state)
         opportunities_summary = self._format_opportunities(analysis.get("opportunities", []))
         recent_summary = self._format_recent_actions(state.recent_actions[-10:])
+        agents_summary = self._format_available_agents()
         metrics = analysis.get("metrics", {})
 
         return f"""You are the Scenario Orchestrator for a Jira team simulation.
@@ -173,6 +174,9 @@ Your job is to plan realistic team activity that creates meaningful patterns in 
 
 ## Recent Actions (last 10)
 {recent_summary}
+
+## Available Agents (use these exact agent_id values)
+{agents_summary}
 
 ## Current Metrics
 - Sprint Day: {metrics.get('sprint_day', 1)} / 14
@@ -241,7 +245,11 @@ Important:
         """Format board snapshot for prompt."""
         lines = []
 
-        for status, tickets in snapshot.items():
+        # Status keys that contain ticket lists (skip metadata like active_sprint)
+        status_keys = ["backlog", "in_progress", "code_review", "testing", "done"]
+
+        for status in status_keys:
+            tickets = snapshot.get(status, [])
             if not tickets:
                 lines.append(f"**{status.title()}:** (empty)")
                 continue
@@ -252,6 +260,11 @@ Important:
                 lines.append(f"  - {t['key']}: {t['summary'][:50]}... [{assignee}]")
             if len(tickets) > 5:
                 lines.append(f"  ... and {len(tickets) - 5} more")
+
+        # Add sprint info if available
+        sprint_info = snapshot.get("active_sprint")
+        if sprint_info and isinstance(sprint_info, dict):
+            lines.append(f"\n**Active Sprint:** {sprint_info.get('name', 'Unknown')} ({sprint_info.get('state', 'unknown')})")
 
         return "\n".join(lines)
 
@@ -317,6 +330,16 @@ Important:
 
         return "\n".join(lines)
 
+    def _format_available_agents(self) -> str:
+        """Format available agents for prompt."""
+        lines = []
+        for agent_id, config in self.personas.get("agents", {}).items():
+            role = config.get("role", "developer")
+            name = config.get("display_name", agent_id)
+            team = config.get("team", "unknown")
+            lines.append(f"- {agent_id}: {name} ({role}, Team {team.title()})")
+        return "\n".join(lines)
+
     def _parse_response(self, raw_response: str) -> dict:
         """Parse LLM response, handling various formats."""
         # Try to find JSON in the response
@@ -365,7 +388,10 @@ Important:
     ) -> str | None:
         """Look up issue type from board snapshot."""
         board_snapshot = analysis.get("board_snapshot", {})
-        for status, tickets in board_snapshot.items():
+        # Only check status keys that contain ticket lists
+        status_keys = ["backlog", "in_progress", "code_review", "testing", "done"]
+        for status in status_keys:
+            tickets = board_snapshot.get(status, [])
             for ticket in tickets:
                 if ticket.get("key") == ticket_key:
                     return ticket.get("type")

@@ -23,7 +23,14 @@
       "Bash(timeout:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(sqlite3:*)",
+      "Bash(pip show:*)",
+      "Bash(cmd /c \"taskkill /PID 44448 /F\")",
+      "Bash(cmd /c \"taskkill /PID 116408 /F\")",
+      "Bash(cmd /c:*)",
+      "Bash(ping:*)",
+      "Bash(docker exec:*)"
     ]
   }
 }

@@ -31,7 +31,7 @@ from .analyzer import ScenarioAnalyzer
 from .planner import ScenarioPlanner
 
 if TYPE_CHECKING:
-    from ..logging import AsyncLogWriter
+    from ..logging import AsyncLogWriter, CrewAILoggingCallback
 
 
 class ScenarioOrchestrator:
@@ -62,7 +62,10 @@ class ScenarioOrchestrator:
         # Optional log writer - injected by main.py
         self.log_writer: "AsyncLogWriter | None" = None
 
-        # Create shared JiraTools
+        # Optional CrewAI logging callback - set up when log_writer is injected
+        self.crewai_callback: "CrewAILoggingCallback | None" = None
+
+        # Create shared JiraTools (log_writer will be set later via set_log_writer)
         self.jira_tools = JiraTools(jira_client)
 
         # Create LLM config for crews
@@ -102,6 +105,38 @@ class ScenarioOrchestrator:
             "complete_fix",
             "verify_fix",
         }
+
+    def set_log_writer(self, log_writer: "AsyncLogWriter") -> None:
+        """
+        Set up comprehensive logging for the orchestrator and all crews.
+
+        This method:
+        1. Sets the log_writer on the orchestrator
+        2. Sets up CrewAI LLM logging callback
+        3. Passes the log_writer to JiraTools for Jira API logging
+        4. Passes the log_writer to the planner
+        5. Passes the callback to all crews for usage tracking
+        """
+        from ..logging import setup_crewai_logging
+
+        self.log_writer = log_writer
+
+        # Set up CrewAI LLM logging callback
+        self.crewai_callback = setup_crewai_logging(log_writer)
+
+        # Pass log_writer to JiraTools for Jira API call logging
+        self.jira_tools.log_writer = log_writer
+
+        # Pass log_writer to planner
+        self.planner.log_writer = log_writer
+
+        # Pass crewai_callback to all crews for usage metric logging
+        self.lifecycle_crew.crewai_callback = self.crewai_callback
+        self.blocker_crew.crewai_callback = self.crewai_callback
+        self.rework_crew.crewai_callback = self.crewai_callback
+        self.scope_creep_crew.crewai_callback = self.crewai_callback
+        self.dependency_crew.crewai_callback = self.crewai_callback
+        self.sprint_planning_crew.crewai_callback = self.crewai_callback
 
     def _log_event(
         self,
@@ -173,23 +208,57 @@ class ScenarioOrchestrator:
             # Phase 3: Execute
             for action in planned_actions:
                 try:
+                    # Set logging context for this action
+                    agent_id = action.get("agent_id")
+                    ticket_key = action.get("ticket_key")
+                    scenario_id = action.get("scenario_id")
+                    agent_name = None
+                    if agent_id:
+                        persona = self.personas.get("agents", {}).get(agent_id, {})
+                        agent_name = persona.get("display_name")
+
+                    # Set context on CrewAI callback and JiraTools
+                    action_type = action.get("type")
+                    if self.crewai_callback:
+                        self.crewai_callback.set_context(
+                            agent_id=agent_id,
+                            agent_name=agent_name,
+                            ticket_key=ticket_key,
+                            scenario_id=scenario_id,
+                            action_type=action_type,
+                        )
+                    self.jira_tools.set_context(
+                        agent_id=agent_id,
+                        ticket_key=ticket_key,
+                    )
+
                     action_result = await self._execute_action(action, state)
                     results["actions"].append(action_result)
+
+                    # Clear logging context after action
+                    if self.crewai_callback:
+                        self.crewai_callback.clear_context()
+                    self.jira_tools.clear_context()
 
                     # Log action execution
                     self._log_event(
                         "action_result",
                         action_type=action.get("type"),
                         action_result=action_result,
-                        ticket_key=action.get("ticket_key"),
-                        scenario_id=action.get("scenario_id"),
-                        agent_id=action.get("agent_id"),
+                        ticket_key=ticket_key,
+                        scenario_id=scenario_id,
+                        agent_id=agent_id,
                     )
 
                     # Phase 4: Update state
                     self._update_state_after_action(action, action_result, state)
 
                 except Exception as e:
+                    # Clear logging context on error
+                    if self.crewai_callback:
+                        self.crewai_callback.clear_context()
+                    self.jira_tools.clear_context()
+
                     error_info = {
                         "action": action,
                         "error": str(e),
@@ -233,6 +302,25 @@ class ScenarioOrchestrator:
         if not ticket_key:
             return True  # No ticket to validate
         return self.jira.is_issue_in_active_sprint(ticket_key)
+
+    def _get_next_available_developer(self) -> dict | None:
+        """Get the next available developer for assignment (round-robin)."""
+        developers = []
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("role") == "developer":
+                developers.append({
+                    "agent_id": agent_id,
+                    "account_id": config.get("jira_account_id"),
+                    "name": config.get("display_name"),
+                })
+        if not developers:
+            return None
+        # Simple round-robin using a class counter
+        if not hasattr(self, "_dev_assignment_index"):
+            self._dev_assignment_index = 0
+        dev = developers[self._dev_assignment_index % len(developers)]
+        self._dev_assignment_index += 1
+        return dev
 
     async def _execute_action(
         self,
@@ -490,6 +578,38 @@ class ScenarioOrchestrator:
                 except Exception as e:
                     result["error"] = f"Allocate to future sprint failed: {str(e)}"
 
+        elif action_type == "start_sprint":
+            pm_id = action.get("pm_id")
+            sprint_id = action.get("sprint_id")
+            sprint_name = action.get("sprint_name", f"Sprint {sprint_id}")
+
+            if pm_id and sprint_id:
+                try:
+                    crew_result = self.sprint_planning_crew.start_sprint(
+                        pm_id=pm_id,
+                        sprint_id=sprint_id,
+                        sprint_name=sprint_name,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Start sprint failed: {str(e)}"
+
+        elif action_type == "complete_sprint":
+            pm_id = action.get("pm_id")
+            sprint_id = action.get("sprint_id")
+            sprint_name = action.get("sprint_name", f"Sprint {sprint_id}")
+
+            if pm_id and sprint_id:
+                try:
+                    crew_result = self.sprint_planning_crew.complete_sprint(
+                        pm_id=pm_id,
+                        sprint_id=sprint_id,
+                        sprint_name=sprint_name,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Complete sprint failed: {str(e)}"
+
         # ========== Violation Fix Actions ==========
         elif action_type == "fix_sprint_violation":
             ticket_key = action.get("ticket_key")
@@ -551,6 +671,25 @@ class ScenarioOrchestrator:
                         result["error"] = "PM account ID not found"
                 except Exception as e:
                     result["error"] = f"Fix issue type violation failed: {str(e)}"
+
+        elif action_type == "fix_unassigned_sprint_item":
+            ticket_key = action.get("ticket_key")
+            if ticket_key:
+                try:
+                    # Find an available developer to assign
+                    developer = self._get_next_available_developer()
+                    if developer:
+                        self.jira.assign_issue(ticket_key, developer["account_id"])
+                        result.update({
+                            "success": True,
+                            "ticket_key": ticket_key,
+                            "assigned_to": developer["name"],
+                            "fix_type": "assigned_to_developer",
+                        })
+                    else:
+                        result["error"] = "No available developers found"
+                except Exception as e:
+                    result["error"] = f"Fix unassigned sprint item failed: {str(e)}"
 
         else:
             result["error"] = f"Unknown action type: {action_type}"

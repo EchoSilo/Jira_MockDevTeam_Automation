@@ -381,6 +381,10 @@ class SprintState(BaseModel):
         """Check if we're at the start of the sprint (first 2 days)."""
         return self.sprint_day <= 2
 
+    def is_sprint_complete_day(self) -> bool:
+        """Check if it's sprint completion day (last day of sprint)."""
+        return self.sprint_day == self.total_days  # day 7
+
 
 class ScenarioDistribution(BaseModel):
     """Track distribution of scenario types for balance."""

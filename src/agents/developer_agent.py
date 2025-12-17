@@ -9,6 +9,9 @@ from typing import Optional
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
 
+# Issue types that developers can work on (excludes Epics which are PM-only)
+DEVELOPER_ALLOWED_ISSUE_TYPES = ["Story", "Bug", "Task"]
+
 
 class DeveloperAgent(BaseAgent):
     """Developer agent - does the actual work."""
@@ -22,10 +25,12 @@ class DeveloperAgent(BaseAgent):
         """Select a developer-appropriate action."""
         actions = []
 
-        # Get my current assignments
+        # Get my current assignments (filtered to allowed issue types - no Epics)
         my_tickets = []
         try:
-            in_progress = self.jira.get_in_progress_issues()
+            in_progress = self.jira.get_in_progress_issues(
+                issue_types=DEVELOPER_ALLOWED_ISSUE_TYPES
+            )
             my_tickets = [
                 i for i in in_progress
                 if i.fields.assignee and i.fields.assignee.accountId == self.jira_account_id
@@ -33,8 +38,11 @@ class DeveloperAgent(BaseAgent):
         except Exception:
             pass
 
-        # Get backlog items I could pick up
-        backlog = self.jira.get_backlog_issues(max_results=15)
+        # Get backlog items I could pick up (filtered to allowed issue types - no Epics)
+        backlog = self.jira.get_backlog_issues(
+            max_results=15,
+            issue_types=DEVELOPER_ALLOWED_ISSUE_TYPES
+        )
 
         workload = state.get_agent_workload(self.agent_id)
 

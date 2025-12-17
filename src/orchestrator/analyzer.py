@@ -66,9 +66,12 @@ class ScenarioAnalyzer:
             "tech_lead": {"can_act_on": ["Story", "Bug", "Task"], "can_create": ["Bug"]},
         })
 
-    def get_board_snapshot(self) -> dict:
+    def get_board_snapshot(self, sprint_only: bool = True) -> dict:
         """
         Get current state of the Jira board organized by status.
+
+        Args:
+            sprint_only: If True, only include items in the active sprint (default True)
 
         Returns:
             Dict mapping status names to lists of ticket info
@@ -87,20 +90,16 @@ class ScenarioAnalyzer:
             active_sprint = self.jira.get_active_sprint()
             snapshot["active_sprint"] = active_sprint
 
-            # Get all project issues
-            all_issues = self.jira.get_project_issues(max_results=100)
+            # Get sprint issues directly if we only want sprint items
+            if sprint_only and active_sprint:
+                all_issues = self.jira.get_sprint_issues(active_sprint["id"])
+            else:
+                all_issues = self.jira.get_project_issues(max_results=100)
 
             for issue in all_issues:
                 status = issue.fields.status.name.lower()
                 assignee = issue.fields.assignee
                 issue_type = issue.fields.issuetype.name
-
-                # Get sprint info for this issue
-                sprint_info = self.jira.get_issue_sprint_info(issue.key)
-                in_active_sprint = (
-                    sprint_info is not None
-                    and sprint_info.get("state") == "active"
-                )
 
                 ticket_info = {
                     "key": issue.key,
@@ -113,8 +112,7 @@ class ScenarioAnalyzer:
                         issue.fields.priority.name if issue.fields.priority else "Medium"
                     ),
                     "created": str(issue.fields.created),
-                    "sprint": sprint_info,
-                    "in_active_sprint": in_active_sprint,
+                    "in_active_sprint": True if sprint_only else self._is_in_active_sprint(issue.key),
                 }
 
                 # Map to our categories
@@ -134,6 +132,11 @@ class ScenarioAnalyzer:
             pass
 
         return snapshot
+
+    def _is_in_active_sprint(self, issue_key: str) -> bool:
+        """Check if an issue is in the active sprint."""
+        sprint_info = self.jira.get_issue_sprint_info(issue_key)
+        return sprint_info is not None and sprint_info.get("state") == "active"
 
     def analyze(self, state: SimulationState) -> dict:
         """
@@ -214,6 +217,10 @@ class ScenarioAnalyzer:
                 # Determine what the next action should be
                 next_action = self._get_next_action_for_phase(scenario)
 
+                # Determine the appropriate agent based on the current phase
+                # This ensures proper role-based workflow: Developer → Tech Lead → QA
+                suggested_agent = self._get_agent_for_phase(scenario)
+
                 opportunities.append({
                     "type": "phase_advancement",
                     "priority": "high",
@@ -221,11 +228,56 @@ class ScenarioAnalyzer:
                     "ticket_key": scenario.ticket_key,
                     "current_phase": scenario.current_phase.value,
                     "suggested_action": next_action,
+                    "agent_id": suggested_agent,
                     "description": f"{scenario.ticket_key} ready to advance from {scenario.current_phase.value}",
                     "days_in_phase": round(scenario.get_days_in_current_phase(), 1),
                 })
 
         return opportunities
+
+    def _get_agent_for_phase(self, scenario: ActiveScenario) -> Optional[str]:
+        """
+        Get the appropriate agent for the next phase action.
+
+        Ensures proper role-based workflow:
+        - Developer phases: assigned developer handles (backlog, in_progress, fixing)
+        - Code review phases: tech lead reviews
+        - Testing phases: QA tests
+        """
+        if not scenario.assigned_agent:
+            return None
+
+        # Get team from assigned developer
+        dev_persona = self.personas.get("agents", {}).get(scenario.assigned_agent, {})
+        team = dev_persona.get("team", "alpha")
+        team_agents = self._get_team_agents(team)
+
+        phase = scenario.current_phase
+
+        # Developer-owned phases
+        if phase in [
+            ScenarioPhase.BACKLOG,
+            ScenarioPhase.ASSIGNED,
+            ScenarioPhase.IN_PROGRESS,
+            ScenarioPhase.REJECTED,
+            ScenarioPhase.FIXING,
+            ScenarioPhase.BLOCKED,
+            ScenarioPhase.BLOCKER_DISCUSSED,
+        ]:
+            return scenario.assigned_agent
+
+        # Tech lead reviews code
+        if phase in [ScenarioPhase.IN_REVIEW, ScenarioPhase.RE_REVIEW]:
+            tech_lead = team_agents.get("tech_lead")
+            return tech_lead if tech_lead else scenario.assigned_agent
+
+        # QA tests
+        if phase in [ScenarioPhase.IN_TESTING, ScenarioPhase.RE_TESTING]:
+            qa = team_agents.get("qa")
+            return qa if qa else scenario.assigned_agent
+
+        # Default to assigned developer
+        return scenario.assigned_agent
 
     def _get_next_action_for_phase(self, scenario: ActiveScenario) -> str:
         """Determine the next action based on current phase."""
@@ -659,27 +711,60 @@ class ScenarioAnalyzer:
         Detect when sprint planning activities are needed.
 
         Triggers on:
-        - Sprint planning day (Monday / day 1)
+        - No active sprint (need to start one) - checked always
+        - Sprint completion day (day 7) - complete active sprint
+        - Sprint planning day (Monday / day 1) - allocate items
         - When future sprints < 2
-        - When unassigned items need sprint allocation
         """
         opportunities = []
 
-        # Only trigger on sprint planning day (day 1)
-        if not state.sprint.is_sprint_planning_day():
-            return opportunities
-
         try:
-            # Get sprint info
+            # Get sprint info from Jira (source of truth)
             active_sprint = board_snapshot.get("active_sprint")
             future_sprints = self.jira.get_future_sprints(max_results=4)
+
+            # CRITICAL: Start sprint if no active sprint exists (check always)
+            if not active_sprint and future_sprints:
+                pm_id = self._get_team_agents("alpha").get("pm")
+                if pm_id:
+                    next_sprint = future_sprints[0]
+                    opportunities.append({
+                        "type": "start_sprint",
+                        "priority": "critical",
+                        "pm_id": pm_id,
+                        "sprint_id": next_sprint["id"],
+                        "sprint_name": next_sprint["name"],
+                        "description": (
+                            f"No active sprint - need to start {next_sprint['name']}"
+                        ),
+                    })
+
+            # Complete sprint on last day (day 7)
+            if state.sprint.is_sprint_complete_day() and active_sprint:
+                pm_id = self._get_team_agents("alpha").get("pm")
+                if pm_id:
+                    opportunities.append({
+                        "type": "complete_sprint",
+                        "priority": "high",
+                        "pm_id": pm_id,
+                        "sprint_id": active_sprint.get("id"),
+                        "sprint_name": active_sprint.get("name"),
+                        "description": (
+                            f"Sprint day 7 - time to complete "
+                            f"{active_sprint.get('name')}"
+                        ),
+                    })
+
+            # Only do planning activities on sprint planning day (day 1)
+            if not state.sprint.is_sprint_planning_day():
+                return opportunities
 
             # Get unassigned items (not in any sprint)
             unassigned_items = self.jira.get_issues_not_in_sprint(
                 issue_types=["Story", "Bug", "Task"]
             )
 
-            # Opportunity 1: Plan current sprint if there are unassigned items
+            # Opportunity: Plan current sprint if there are unassigned items
             if active_sprint and unassigned_items:
                 for team in ["alpha", "beta"]:
                     pm_id = self._get_team_agents(team).get("pm")
@@ -699,7 +784,7 @@ class ScenarioAnalyzer:
                         })
                         break  # Only one PM needs to do planning
 
-            # Opportunity 2: Create future sprints if < 2 exist
+            # Opportunity: Create future sprints if < 2 exist
             future_sprint_count = len(future_sprints)
             target_future_sprints = self.settings.get("sprint", {}).get(
                 "future_sprints_to_maintain", 2
@@ -741,6 +826,7 @@ class ScenarioAnalyzer:
         violations = []
 
         violations.extend(self._detect_sprint_violations(board_snapshot))
+        violations.extend(self._detect_unassigned_sprint_items(board_snapshot))
         violations.extend(self._detect_issue_type_violations(board_snapshot))
 
         return violations
@@ -778,6 +864,35 @@ class ScenarioAnalyzer:
                             "Added to active sprint - items being worked "
                             "must be in a sprint for proper tracking."
                         ),
+                    })
+
+        return violations
+
+    def _detect_unassigned_sprint_items(self, board_snapshot: dict) -> list[dict]:
+        """
+        Detect sprint items without assignees.
+
+        All items in the active sprint must have an assignee.
+        """
+        violations = []
+
+        # Check all statuses except done
+        for status_key in ["backlog", "in_progress", "code_review", "testing"]:
+            for ticket in board_snapshot.get(status_key, []):
+                if ticket.get("in_active_sprint") and not ticket.get("assignee"):
+                    pm_id = self._get_team_agents("alpha").get("pm")
+
+                    violations.append({
+                        "type": "fix_unassigned_sprint_item",
+                        "priority": "high",
+                        "ticket_key": ticket["key"],
+                        "ticket_status": ticket["status"],
+                        "violation_type": "unassigned_sprint_item",
+                        "pm_id": pm_id,
+                        "description": (
+                            f"{ticket['key']} is in active sprint but has no assignee"
+                        ),
+                        "fix_action": "assign_to_developer",
                     })
 
         return violations

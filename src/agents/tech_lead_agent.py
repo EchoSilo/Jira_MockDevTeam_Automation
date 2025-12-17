@@ -9,6 +9,9 @@ from typing import Optional
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
 
+# Issue types that tech leads can work on (excludes Epics which are PM-only)
+TECH_LEAD_ALLOWED_ISSUE_TYPES = ["Story", "Bug", "Task"]
+
 
 class TechLeadAgent(BaseAgent):
     """Tech Lead agent - technical oversight and guidance."""
@@ -17,18 +20,21 @@ class TechLeadAgent(BaseAgent):
         """Select a tech lead appropriate action."""
         actions = []
 
-        # Get items in code review
+        # Get items in code review (filtered to allowed issue types - no Epics)
         in_review = []
         try:
             in_review = self.jira.get_project_issues(
                 statuses=["Code Review", "In Review"],
+                issue_types=TECH_LEAD_ALLOWED_ISSUE_TYPES,
                 max_results=10,
             )
         except Exception:
             pass
 
-        # Get items in progress (for architectural review)
-        in_progress = self.jira.get_in_progress_issues()
+        # Get items in progress (for architectural review, filtered - no Epics)
+        in_progress = self.jira.get_in_progress_issues(
+            issue_types=TECH_LEAD_ALLOWED_ISSUE_TYPES
+        )
 
         # Review code
         if in_review:
@@ -57,8 +63,11 @@ class TechLeadAgent(BaseAgent):
                 "weight": 1,
             })
 
-        # Technical notes on backlog items
-        backlog = self.jira.get_backlog_issues(max_results=10)
+        # Technical notes on backlog items (filtered - no Epics)
+        backlog = self.jira.get_backlog_issues(
+            max_results=10,
+            issue_types=TECH_LEAD_ALLOWED_ISSUE_TYPES
+        )
         if backlog:
             actions.append({
                 "type": "add_technical_notes",

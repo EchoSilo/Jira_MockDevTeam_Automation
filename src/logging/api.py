@@ -339,7 +339,43 @@ HTML_VIEWER = """
 </head>
 <body>
     <div class="container">
-        <h1>Jira Team Simulator - Log Viewer</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="margin: 0;">Jira Team Simulator - Log Viewer</h1>
+            <div style="display: flex; gap: 10px;">
+                <button id="plan-sprint-btn" onclick="planSprint()" style="
+                    padding: 10px 20px;
+                    background: #7c3aed;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                ">
+                    <span id="plan-icon">&#128197;</span>
+                    <span id="plan-text">Plan Sprint</span>
+                </button>
+                <button id="trigger-btn" onclick="triggerSimulation()" style="
+                    padding: 10px 20px;
+                    background: #2563eb;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                ">
+                    <span id="trigger-icon">&#9654;</span>
+                    <span id="trigger-text">Trigger Simulation</span>
+                </button>
+            </div>
+        </div>
 
         <div class="stats-bar" id="stats">
             <div class="stat">
@@ -616,15 +652,132 @@ HTML_VIEWER = """
             return div.innerHTML;
         }
 
+        // Trigger simulation
+        async function triggerSimulation() {
+            const btn = document.getElementById('trigger-btn');
+            const icon = document.getElementById('trigger-icon');
+            const text = document.getElementById('trigger-text');
+
+            // Disable button and show loading state
+            btn.disabled = true;
+            btn.style.background = '#6b7280';
+            btn.style.cursor = 'wait';
+            icon.innerHTML = '&#8987;';  // Hourglass
+            text.textContent = 'Running...';
+
+            try {
+                const resp = await fetch('/trigger', { method: 'POST' });
+                const data = await resp.json();
+
+                // Show result briefly
+                if (data.success) {
+                    icon.innerHTML = '&#10003;';  // Checkmark
+                    text.textContent = `Done! ${data.actions_taken} actions`;
+                    btn.style.background = '#16a34a';
+                } else {
+                    icon.innerHTML = '&#10007;';  // X mark
+                    text.textContent = `Error: ${data.errors?.length || 0} errors`;
+                    btn.style.background = '#dc2626';
+                }
+
+                // Refresh the sessions list
+                loadStats();
+                loadSessions();
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.style.background = '#2563eb';
+                    btn.style.cursor = 'pointer';
+                    icon.innerHTML = '&#9654;';
+                    text.textContent = 'Trigger Simulation';
+                }, 3000);
+
+            } catch (e) {
+                console.error('Trigger failed:', e);
+                icon.innerHTML = '&#10007;';
+                text.textContent = 'Failed!';
+                btn.style.background = '#dc2626';
+
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.style.background = '#2563eb';
+                    btn.style.cursor = 'pointer';
+                    icon.innerHTML = '&#9654;';
+                    text.textContent = 'Trigger Simulation';
+                }, 3000);
+            }
+        }
+
+        // Plan sprint
+        async function planSprint() {
+            const btn = document.getElementById('plan-sprint-btn');
+            const icon = document.getElementById('plan-icon');
+            const text = document.getElementById('plan-text');
+
+            // Disable button and show loading state
+            btn.disabled = true;
+            btn.style.background = '#6b7280';
+            btn.style.cursor = 'wait';
+            icon.innerHTML = '&#8987;';  // Hourglass
+            text.textContent = 'Planning...';
+
+            try {
+                const resp = await fetch('/plan-sprint', { method: 'POST' });
+                const data = await resp.json();
+
+                // Show result briefly
+                if (data.success) {
+                    icon.innerHTML = '&#10003;';  // Checkmark
+                    const msg = data.result?.items_added
+                        ? `Added ${data.result.items_added} items`
+                        : (data.message || 'Done!');
+                    text.textContent = msg;
+                    btn.style.background = '#16a34a';
+                } else {
+                    icon.innerHTML = '&#10007;';  // X mark
+                    text.textContent = data.error || 'Failed';
+                    btn.style.background = '#dc2626';
+                }
+
+                // Refresh the sessions list
+                loadStats();
+                loadSessions();
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.style.background = '#7c3aed';
+                    btn.style.cursor = 'pointer';
+                    icon.innerHTML = '&#128197;';
+                    text.textContent = 'Plan Sprint';
+                }, 3000);
+
+            } catch (e) {
+                console.error('Plan sprint failed:', e);
+                icon.innerHTML = '&#10007;';
+                text.textContent = 'Failed!';
+                btn.style.background = '#dc2626';
+
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.style.background = '#7c3aed';
+                    btn.style.cursor = 'pointer';
+                    icon.innerHTML = '&#128197;';
+                    text.textContent = 'Plan Sprint';
+                }, 3000);
+            }
+        }
+
         // Initialize
         loadStats();
         loadSessions();
 
-        // Auto-refresh every 30 seconds
+        // Auto-refresh every 10 seconds for faster feedback
         setInterval(() => {
             loadStats();
             loadSessions();
-        }, 30000);
+        }, 10000);
     </script>
 </body>
 </html>

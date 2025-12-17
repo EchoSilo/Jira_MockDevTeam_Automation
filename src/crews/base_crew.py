@@ -2,12 +2,16 @@
 Base Crew class with shared functionality for all scenario crews.
 """
 
-from typing import Optional
+import time
+from typing import Optional, TYPE_CHECKING
 from crewai import Crew, Task, Process
 
 from ..agents import create_agent
 from ..tools.jira_tools import JiraTools
 from ..state import ActiveScenario, SimulationState
+
+if TYPE_CHECKING:
+    from ..logging import CrewAILoggingCallback
 
 
 class BaseCrew:
@@ -38,6 +42,9 @@ class BaseCrew:
         self.personas = personas
         self.jira_tools = jira_tools
         self.llm_config = llm_config
+
+        # Optional CrewAI logging callback - set by orchestrator
+        self.crewai_callback: "CrewAILoggingCallback | None" = None
 
         # Cache for created agents
         self._agent_cache: dict = {}
@@ -140,8 +147,39 @@ class BaseCrew:
             verbose=verbose,
         )
 
+        # Track execution time
+        start_time = time.time()
         result = crew.kickoff()
-        return str(result)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        result_str = str(result)
+
+        # Log usage metrics if callback is available
+        if self.crewai_callback:
+            try:
+                usage_metrics = crew.calculate_usage_metrics()
+                # Convert UsageMetrics to dict
+                metrics_dict = {
+                    "total_tokens": getattr(usage_metrics, "total_tokens", 0),
+                    "prompt_tokens": getattr(usage_metrics, "prompt_tokens", 0),
+                    "completion_tokens": getattr(usage_metrics, "completion_tokens", 0),
+                }
+                # Get model from first agent if available
+                model = "unknown"
+                if agents and hasattr(agents[0], "llm"):
+                    model = str(agents[0].llm) if agents[0].llm else "unknown"
+
+                self.crewai_callback.log_crew_usage(
+                    usage_metrics=metrics_dict,
+                    model=model,
+                    duration_ms=duration_ms,
+                    crew_output=result_str[:2000],
+                )
+            except Exception:
+                # Don't let logging errors break the flow
+                pass
+
+        return result_str
 
     def create_simple_task(
         self,
