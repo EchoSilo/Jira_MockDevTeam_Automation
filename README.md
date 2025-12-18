@@ -1,128 +1,279 @@
-# Jira Team Simulator
+# 🎭 Jira Team Simulator
 
-A multi-agent simulation system that generates realistic development team activity in Jira for productivity analytics testing.
+> Generate realistic development team activity in Jira for analytics testing and team dynamics simulation
 
-## Overview
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.9+-green.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-00a393.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev)
+[![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)](#)
 
-This tool simulates two development teams (9 agents total) working on a Jira project, generating:
-- Status transitions
-- Contextual comments (LLM-generated)
-- New stories and bugs
-- Work logs
-- Realistic team dynamics (blockers, QA rejections, cross-team dependencies)
+---
 
-## Architecture
+## 🚀 What is This?
+
+A multi-agent simulation that creates **9 realistic developers** across **2 teams** working on your Jira project. Perfect for testing productivity dashboards, analytics pipelines, and workflow automation without needing to manually create tickets.
+
+**What gets generated:**
+- ✅ Status transitions through your workflow
+- 💬 AI-generated contextual comments
+- 📝 New stories and bug reports
+- ⏱️ Work time logs
+- 🔗 Realistic team dynamics (blockers, rework, dependencies)
+
+---
+
+## 📊 Dashboard Preview
+
+![Jira Simulator Dashboard](screenshot.png)
+
+**Live visualization includes:**
+- Real-time sprint progress and metrics
+- Team workload distribution
+- Active scenarios and blockers
+- Velocity trends and burndown charts
+- Interactive PM chat interface
+
+---
+
+## 🏗️ System Architecture
 
 ```
-n8n (scheduler) → FastAPI endpoint → Orchestrator → Agents → Jira API
-                                          ↓
-                                    State (JSON)
+┌──────────────────┐
+│  React Frontend  │ (Dashboard, Chat, Settings)
+│   Port: 5173     │
+└────────┬─────────┘
+         │ HTTP
+         ↓
+┌──────────────────┐
+│  FastAPI Backend │
+│   Port: 8000     │
+└────┬────────┬────┘
+     │        │
+     ↓        ↓
+┌────────────────────┐
+│ Orchestrator       │ ← Agents (PM, Dev, QA, TL)
+│ State Management   │
+└────────┬───────────┘
+         │
+         ↓
+    Jira API
 ```
 
-## Quick Start
+**Trigger Flow:** n8n → `/trigger` → Orchestrator → Agents → Jira
 
-### 1. Configure Environment
+---
 
-Copy `.env.example` to `.env` and fill in:
+## ⚡ Quick Start
+
+### 1️⃣ Prerequisites
+
+- Docker & Docker Compose
+- Jira Cloud account with API token
+- Anthropic API key (for Claude LLM)
+
+### 2️⃣ Configuration
 
 ```bash
-JIRA_URL=https://yoursite.atlassian.net
-JIRA_EMAIL=your-email@domain.com
-JIRA_API_TOKEN=your-api-token
-PROJECT_KEY=YOUR_PROJECT_KEY
-ANTHROPIC_API_KEY=your-anthropic-api-key
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your credentials:
+# JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, ANTHROPIC_API_KEY
 ```
 
-### 2. Configure Agent Accounts
+### 3️⃣ Map Agent Accounts
 
-Edit `config/personas.yaml` and replace `jira_account_id` for each agent with actual Jira account IDs from your 9 user accounts.
+Edit `config/personas.yaml` and add Jira account IDs for all 9 agents:
 
-### 3. Build and Run
+```yaml
+agents:
+  alpha_pm:
+    jira_account_id: "557058:12a3b4c5-d6e7-4f8g-9h0i-1j2k3l4m5n6o"
+    # ... more agents
+```
+
+### 4️⃣ Deploy
 
 ```bash
+# Start the full stack (backend + frontend + database)
 docker-compose up --build
+
+# Backend: http://localhost:8000
+# Frontend: http://localhost:5173
 ```
 
-The API will be available at `http://localhost:8000`
+### 5️⃣ Configure Trigger (Optional)
 
-### 4. Configure n8n Trigger
+Create an n8n workflow:
+- **Trigger:** Cron `0 */45 9-17 * * 1-5` (every 45 min, M-F 9-5)
+- **Action:** POST to `http://jira-simulator:8000/trigger`
 
-Create a workflow in n8n:
-1. **Cron Node**: `0 */45 9-17 * * 1-5` (every ~45 min, M-F, 9-5)
-2. **HTTP Request Node**: POST to `http://jira-simulator:8000/trigger`
+---
 
-## API Endpoints
+## 🎮 Usage
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check and Jira connectivity |
-| `/trigger` | POST | Run one simulation tick |
-| `/state` | GET | View current simulation state |
-| `/reset` | POST | Reset simulation state |
-| `/agents` | GET | List configured agents |
+### Via Frontend Dashboard
 
-### Trigger Request Body
+1. **Visit** `http://localhost:5173`
+2. **View** real-time sprint metrics and team activity
+3. **Filter** by team (Alpha/Beta)
+4. **Chat** with PMs to query sprint activity
+5. **Toggle** dark mode and theme
 
-```json
-{
-  "intensity": "normal",  // "light", "normal", or "busy"
-  "force_agents": null    // Optional: ["alpha_pm", "beta_dev_senior"]
-}
+### Via API
+
+```bash
+# Trigger one simulation tick
+curl -X POST http://localhost:8000/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"intensity": "normal"}'
+
+# View current state
+curl http://localhost:8000/state
+
+# Reset simulation
+curl -X POST http://localhost:8000/reset
 ```
 
-## Team Structure
+### API Intensity Levels
 
-### Team Alpha (5 agents)
-- **Sarah Chen** - PM
-- **Marcus Johnson** - Tech Lead
-- **Elena Rodriguez** - Senior Developer
-- **James Park** - Mid Developer
-- **Priya Sharma** - QA
+| Level | Actions/Tick | Probability | Use Case |
+|-------|-------------|-------------|----------|
+| **light** | 1-2 | 20% | Slow day, meetings |
+| **normal** | 2-4 | 60% | Regular work day |
+| **busy** | 4-6 | 20% | Sprint deadline |
 
-### Team Beta (4 agents)
-- **David Kim** - PM
-- **Ana Costa** - Senior Developer
-- **Tyler Brooks** - Junior Developer
-- **Rachel Green** - QA
+---
 
-## Configuration
+## 👥 Team Structure
 
-### settings.yaml
-- Work hours and timezone
-- Agents per tick (min/max)
-- Action weights
-- Cycle time targets
-- LLM model selection
+### Team Alpha
+| Role | Agent |
+|------|-------|
+| 👔 Product Manager | Sarah Chen |
+| 👨‍💼 Tech Lead | Marcus Johnson |
+| 🚀 Senior Dev | Elena Rodriguez |
+| 👨‍💻 Mid Dev | James Park |
+| 🧪 QA Engineer | Priya Sharma |
 
-### personas.yaml
-- Agent definitions
-- Jira account mappings
-- Personality descriptions
-- Behavior lists
+### Team Beta
+| Role | Agent |
+|------|-------|
+| 👔 Product Manager | David Kim |
+| 👨‍💻 Senior Dev | Ana Costa |
+| 🎓 Junior Dev | Tyler Brooks |
+| 🧪 QA Engineer | Rachel Green |
 
-### templates.yaml
-- Comment templates for routine actions
-- Reduces LLM costs for simple actions
+---
 
-## Cost Estimation
+## 📚 What's Simulated
 
-- **LLM**: ~$0.50-1.50/day (Haiku for routine, Sonnet for complex)
-- **Jira**: Free tier (10 users)
-- **Infrastructure**: Docker on local machine
+### Normal Workflow (60%)
+```
+Backlog → In Progress → Code Review → Testing → Done
+```
+**Timeline:** 3-7 days for stories
 
-## Development
+### Blockers (15%)
+```
+In Progress → BLOCKED → Discussion → Unblocked → Continue
+```
+**Causes:** External API, design clarification, dependencies
+
+### Rework (15%)
+```
+Testing → REJECTED → In Progress → Testing → Done
+```
+**Reason:** QA finds issues, especially with junior devs
+
+### Sprint Planning & Scope Creep (10%)
+```
+Mid-sprint story creation → Team discussion → Added to sprint
+```
+
+---
+
+## 🛠️ Development
+
+### Backend
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Run locally
+# Run with hot reload
 uvicorn src.main:app --reload
 
 # Run tests
 pytest tests/ -v
 ```
 
-## License
+### Frontend
 
-MIT
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Lint and format
+npm run lint
+```
+
+---
+
+## 📋 Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `config/settings.yaml` | Simulation parameters, LLM models, cycle times |
+| `config/personas.yaml` | Agent definitions and Jira account mappings |
+| `config/templates.yaml` | Comment templates (reduces LLM costs) |
+| `.env` | API keys and credentials |
+
+---
+
+## 💰 Cost Estimation
+
+- **LLM:** ~$0.50-1.50/day (Haiku for routine, Sonnet for complex)
+- **Jira:** Free tier (10 users)
+- **Infrastructure:** Docker (local or cloud)
+
+---
+
+## 📖 Documentation
+
+- **[How It Works](docs/how-it-works.md)** - Deep dive into agent behaviors and scenarios
+- **[CLAUDE.md](CLAUDE.md)** - Development guidance and architecture details
+- **[Frontend Plan](docs/frontend-plan.md)** - UI/UX design and features
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+---
+
+## 📄 License
+
+MIT - Use freely for testing and analytics
+
+---
+
+## 🎯 Next Steps
+
+- Deploy frontend to production
+- Add WebSocket support for real-time chat
+- Integrate with more Jira projects
+- Expand agent personalities and behaviors
+
