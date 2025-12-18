@@ -222,6 +222,79 @@ class LogQueryService:
         finally:
             conn.close()
 
+    def get_session_errors(self, session_id: str) -> List[dict]:
+        """
+        Get all errors for a session from all log tables.
+        Aggregates errors from sessions, llm_calls, jira_calls, and orchestrator_logs.
+        """
+        conn = self._get_connection()
+        try:
+            errors = []
+
+            # Session-level error summary
+            cursor = conn.execute(
+                "SELECT error_summary, errors FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            if row and row["error_summary"]:
+                errors.append({
+                    "source": "session",
+                    "timestamp": None,
+                    "error": row["error_summary"],
+                    "context": f"{row['errors']} total errors in session",
+                })
+
+            # LLM call errors
+            cursor = conn.execute(
+                """SELECT timestamp, action_type, agent_name, ticket_key, error
+                   FROM llm_calls
+                   WHERE session_id = ? AND error IS NOT NULL AND error != ''
+                   ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                entry["source"] = "llm_call"
+                self._ensure_utc_suffix(entry)
+                errors.append(entry)
+
+            # Jira call errors
+            cursor = conn.execute(
+                """SELECT timestamp, method, ticket_key, error
+                   FROM jira_calls
+                   WHERE session_id = ? AND (error IS NOT NULL AND error != '')
+                   ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                entry["source"] = "jira_call"
+                self._ensure_utc_suffix(entry)
+                errors.append(entry)
+
+            # Orchestrator errors
+            cursor = conn.execute(
+                """SELECT timestamp, phase, action_type, ticket_key, error
+                   FROM orchestrator_logs
+                   WHERE session_id = ? AND error IS NOT NULL AND error != ''
+                   ORDER BY timestamp""",
+                (session_id,),
+            )
+            for row in cursor.fetchall():
+                entry = dict(row)
+                entry["source"] = "orchestrator"
+                self._ensure_utc_suffix(entry)
+                errors.append(entry)
+
+            # Sort all errors by timestamp (session-level errors without timestamp go first)
+            errors.sort(key=lambda x: x.get("timestamp") or "")
+
+            return errors
+
+        finally:
+            conn.close()
+
     def get_llm_calls(
         self,
         session_id: Optional[str] = None,

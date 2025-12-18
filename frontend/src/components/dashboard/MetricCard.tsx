@@ -11,6 +11,7 @@ interface MetricCardProps {
     isPositive: boolean;
   };
   status?: 'default' | 'success' | 'warning' | 'error';
+  compact?: boolean;
 }
 
 export function MetricCard({
@@ -20,6 +21,7 @@ export function MetricCard({
   icon,
   trend,
   status = 'default',
+  compact = false,
 }: MetricCardProps) {
   const statusColors = {
     default: 'text-[var(--color-primary)]',
@@ -29,23 +31,33 @@ export function MetricCard({
   };
 
   return (
-    <div className="card">
+    <div className={cn('card', compact && 'py-3 px-4')}>
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-[var(--color-text-muted)]">
+          <span className={cn(
+            'font-medium text-[var(--color-text-muted)]',
+            compact ? 'text-xs' : 'text-sm'
+          )}>
             {title}
           </span>
-          <span className={cn('text-2xl font-semibold', statusColors[status])}>
+          <span className={cn(
+            'font-semibold',
+            compact ? 'text-lg' : 'text-2xl',
+            statusColors[status]
+          )}>
             {value}
           </span>
           {subtitle && (
-            <span className="text-xs text-[var(--color-text-muted)]">
+            <span className={cn(
+              'text-[var(--color-text-muted)]',
+              compact ? 'text-xs' : 'text-xs'
+            )}>
               {subtitle}
             </span>
           )}
         </div>
 
-        {icon && (
+        {icon && !compact && (
           <div
             className={cn(
               'flex h-10 w-10 items-center justify-center rounded-lg',
@@ -58,7 +70,7 @@ export function MetricCard({
         )}
       </div>
 
-      {trend && (
+      {trend && !compact && (
         <div className="mt-3 flex items-center gap-1">
           <span
             className={cn(

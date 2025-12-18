@@ -41,8 +41,13 @@
       "mcp__playwright",
       "mcp__puppeteer_evaluate",
       "mcp__puppeteer_screenshot",
+      "mcp__browser-tools__getConsoleErrors",
+      "mcp__puppeteer__puppeteer_navigate",
       "Bash(docker-compose build:*)",
-      "Bash(git push)"
+      "Bash(git push)",
+      "Bash(powershell -Command \"$input | Select-String -Pattern ''error|exception|traceback'' -CaseSensitive:$false | Select-Object -First 30\")",
+      "Bash(python3 -c:*)",
+      "Bash(pkill:*)"
     ]
   }
 }

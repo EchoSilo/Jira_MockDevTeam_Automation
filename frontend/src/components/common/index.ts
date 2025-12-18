@@ -3,3 +3,4 @@ export { Sidebar } from './Sidebar';
 export { Header } from './Header';
 export { ThemeToggle } from './ThemeToggle';
 export { TeamFilter } from './TeamFilter';
+export { Tabs, TabsContent } from './Tabs';

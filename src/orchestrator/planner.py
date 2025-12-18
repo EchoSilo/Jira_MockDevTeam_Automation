@@ -6,12 +6,15 @@ based on the current board state and detected opportunities.
 """
 
 import json
+import logging
 import time
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from ..services.llm_service import LLMService
 from ..state import SimulationState, ScenarioType
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..logging import AsyncLogWriter
@@ -117,11 +120,34 @@ class ScenarioPlanner:
             # Store reasoning
             self.last_reasoning = result.get("reasoning", "")
 
-            # Validate and return actions
-            actions = result.get("actions", [])
-            validated_actions = self._validate_actions(actions, analysis, state)
-
-            return validated_actions[:target_actions]
+            # Validate and return actions - with extra safety for slice operation
+            try:
+                actions = result.get("actions", [])
+                validated_actions = self._validate_actions(actions, analysis, state)
+                # Ensure we have a list before slicing
+                if not isinstance(validated_actions, list):
+                    validated_actions = list(validated_actions) if validated_actions else []
+                return validated_actions[:target_actions]
+            except Exception as action_error:
+                # Log the specific action parsing error but don't fail
+                if self.log_writer:
+                    self.log_writer.log_llm_call(
+                        model=self.llm.complex_model,
+                        action_type="scenario_planning_fallback",
+                        prompt="[action parsing failed, using fallback]",
+                        response=str(action_error),
+                        input_tokens=0,
+                        output_tokens=0,
+                        duration_ms=0,
+                        agent_id=None,
+                        agent_name="Orchestrator",
+                        ticket_key=None,
+                        scenario_id=None,
+                        is_complex=True,
+                        error=f"Action parsing failed: {action_error}",
+                    )
+                # Fall back to basic plan to keep workflow running
+                return self._fallback_plan(analysis, state, target_actions)
 
         except Exception as e:
             # Log failed LLM call
@@ -217,28 +243,48 @@ Plan {target_actions} actions for this tick. Consider:
 - Stories: 3-7 days total
 - Complex features: 7-14 days total
 
-## Output Format
-Return ONLY valid JSON in this format:
+## Output Format - Explicit JSON Schema
+
+**CRITICAL:** You MUST return ONLY valid JSON. Do NOT invent agent IDs.
+
+Valid agent_ids (from Available Agents list above): {', '.join(sorted(self.personas.get('agents', {}).keys()))}
+
+Required response structure:
 ```json
 {{
-  "reasoning": "Brief explanation of your planning logic (2-3 sentences)",
+  "reasoning": "string - your strategic reasoning for this tick's actions",
   "actions": [
     {{
-      "type": "progress_to_review|complete_review|qa_approve|qa_reject|inject_blocker|discuss_blocker|resolve_blocker|pick_up_task|add_progress_comment|create_scope_creep|identify_dependency",
-      "scenario_id": "existing scenario ID or null for new scenarios",
-      "ticket_key": "PROJ-123",
-      "agent_id": "alpha_dev_senior",
-      "details": "Any specific context for this action"
+      "type": "pick_up_task | progress_to_review | complete_review | qa_approve | qa_reject | inject_blocker | discuss_blocker | resolve_blocker | add_progress_comment | create_scope_creep | identify_dependency",
+      "ticket_key": "PROJ-XXX",
+      "agent_id": "MUST BE EXACTLY ONE OF: {', '.join(sorted(self.personas.get('agents', {}).keys()))}",
+      "scenario_id": "scenario_id_string or null",
+      "details": "string - context for the action"
     }}
   ]
 }}
 ```
 
-Important:
+Example responses showing different scenarios:
+
+1. Developer picking up work and progressing:
+{{"reasoning": "Sprint is early, developers should pick up backlog items. Alex is available and PROJ-101 is ready.", "actions": [{{"type": "pick_up_task", "ticket_key": "PROJ-101", "agent_id": "alpha_dev_senior", "scenario_id": null, "details": "Starting work on user auth feature"}}, {{"type": "add_progress_comment", "ticket_key": "PROJ-98", "agent_id": "alpha_dev_mid", "scenario_id": "sc-abc123", "details": "Implemented core logic, working on edge cases"}}]}}
+
+2. QA activity and blocker injection:
+{{"reasoning": "Several items ready for QA. Also injecting a blocker to maintain realistic scenario distribution.", "actions": [{{"type": "qa_approve", "ticket_key": "PROJ-95", "agent_id": "alpha_qa", "scenario_id": "sc-def456", "details": "All test cases passed"}}, {{"type": "inject_blocker", "ticket_key": "PROJ-102", "agent_id": "beta_dev_senior", "scenario_id": "sc-ghi789", "details": "Blocked waiting for API documentation from external team"}}]}}
+
+3. Code review and completion:
+{{"reasoning": "PROJ-88 has been in review long enough, moving forward. PROJ-92 ready for testing.", "actions": [{{"type": "complete_review", "ticket_key": "PROJ-88", "agent_id": "alpha_tech_lead", "scenario_id": "sc-jkl012", "details": "Code looks good, approved"}}, {{"type": "progress_to_review", "ticket_key": "PROJ-92", "agent_id": "beta_dev_senior", "scenario_id": "sc-mno345", "details": "Ready for code review"}}]}}
+
+4. Minimal activity (light intensity):
+{{"reasoning": "Light activity day, just one small update.", "actions": [{{"type": "add_progress_comment", "ticket_key": "PROJ-100", "agent_id": "beta_dev_junior", "scenario_id": "sc-pqr678", "details": "Researching approach"}}]}}
+
+Remember:
+- actions MUST be an array/list, even if empty: {{"reasoning": "...", "actions": []}}
+- agent_id MUST be one of the valid values listed in the schema above - NEVER invent or guess
+- scenario_id is null for new work, or the existing scenario ID when advancing a scenario
+- details provides context for the action
 - Return ONLY the JSON, no markdown code blocks, no other text
-- Each action must have type, ticket_key (if applicable), and agent_id
-- Use scenario_id when advancing existing scenarios
-- Details field is for context like blocker reasons, rejection reasons, etc.
 """
 
     def _format_board_snapshot(self, snapshot: dict) -> str:
@@ -256,8 +302,11 @@ Important:
 
             lines.append(f"**{status.title()}:** ({len(tickets)} items)")
             for t in tickets[:5]:  # Limit per status
-                assignee = t.get("assignee", "Unassigned")
-                lines.append(f"  - {t['key']}: {t['summary'][:50]}... [{assignee}]")
+                assignee_name = t.get("assignee", "Unassigned")
+                assignee_jira_id = t.get("assignee_id")
+                agent_id = self._get_agent_id_by_jira_account_id(assignee_jira_id) if assignee_jira_id else None
+                assignee_display = f"{assignee_name} / {agent_id}" if agent_id else assignee_name
+                lines.append(f"  - {t['key']}: {t['summary'][:50]}... [{assignee_display}]")
             if len(tickets) > 5:
                 lines.append(f"  ... and {len(tickets) - 5} more")
 
@@ -340,8 +389,17 @@ Important:
             lines.append(f"- {agent_id}: {name} ({role}, Team {team.title()})")
         return "\n".join(lines)
 
+    def _get_agent_id_by_jira_account_id(self, jira_account_id: str) -> str:
+        """Map Jira account ID to agent_id for display purposes."""
+        if not jira_account_id:
+            return None
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("jira_account_id") == jira_account_id:
+                return agent_id
+        return None
+
     def _parse_response(self, raw_response: str) -> dict:
-        """Parse LLM response, handling various formats."""
+        """Parse LLM response, handling various formats. Forgiving approach."""
         # Try to find JSON in the response
         text = raw_response.strip()
 
@@ -355,21 +413,45 @@ Important:
                 lines = lines[:-1]
             text = "\n".join(lines)
 
+        parsed = None
+
         # Try to parse as JSON
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
             # Try to find JSON object in text
             start = text.find("{")
             end = text.rfind("}") + 1
             if start >= 0 and end > start:
                 try:
-                    return json.loads(text[start:end])
+                    parsed = json.loads(text[start:end])
                 except json.JSONDecodeError:
                     pass
 
-        # Return empty result on parse failure
-        return {"reasoning": "Failed to parse LLM response", "actions": []}
+        # If parsing failed, return empty result
+        if parsed is None:
+            return {"reasoning": "Failed to parse LLM response", "actions": []}
+
+        # Ensure parsed is a dict
+        if not isinstance(parsed, dict):
+            return {"reasoning": "Response was not a JSON object", "actions": []}
+
+        # Be forgiving with the actions field - ensure it's always a list
+        if "actions" not in parsed:
+            parsed["actions"] = []
+        elif not isinstance(parsed["actions"], list):
+            # If it's a single action dict, wrap it in a list
+            if isinstance(parsed["actions"], dict):
+                parsed["actions"] = [parsed["actions"]]
+            else:
+                # Unknown type, default to empty list
+                parsed["actions"] = []
+
+        # Ensure reasoning exists
+        if "reasoning" not in parsed:
+            parsed["reasoning"] = ""
+
+        return parsed
 
     def _get_agent_role(self, agent_id: str) -> str:
         """Get the role for an agent."""
@@ -406,14 +488,25 @@ Important:
         """Validate and clean up planned actions."""
         validated = []
         used_agents = set()
+        valid_agent_ids = set(self.personas.get("agents", {}).keys())
+
+        logger.debug(f"Validating {len(actions)} actions. Valid agent IDs: {sorted(valid_agent_ids)}")
 
         for action in actions:
             # Must have a type
             if not action.get("type"):
                 continue
 
-            # Agent can only act once per tick
+            # Agent ID must be valid
             agent_id = action.get("agent_id")
+            if agent_id and agent_id not in valid_agent_ids:
+                logger.warning(
+                    f"VALIDATION BLOCKED: Invalid agent_id '{agent_id}' in action (type: {action.get('type')}, "
+                    f"ticket: {action.get('ticket_key')}). Valid IDs: {', '.join(sorted(valid_agent_ids))}. Skipping action."
+                )
+                continue
+
+            # Agent can only act once per tick
             if agent_id and agent_id in used_agents:
                 continue
 

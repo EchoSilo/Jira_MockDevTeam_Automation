@@ -125,3 +125,38 @@ body {
   border-radius: 12px;
   padding: 24px;
 }
+
+/* Masonry layout styles */
+.masonry-grid {
+  display: flex;
+  margin-left: -24px; /* gap-6 = 1.5rem = 24px */
+  width: auto;
+}
+
+.masonry-column {
+  padding-left: 24px; /* gap-6 = 1.5rem = 24px */
+  background-clip: padding-box;
+}
+
+.masonry-column > * {
+  margin-bottom: 24px; /* gap-6 = 1.5rem = 24px */
+}
+
+.masonry-column > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Tab and badge styles */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background-color: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-radius: 10px;
+}

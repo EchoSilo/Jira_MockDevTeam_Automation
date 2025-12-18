@@ -1,10 +1,14 @@
 import { TicketCheck, AlertTriangle, Activity, RefreshCw, WifiOff } from 'lucide-react';
-import { Header } from '@/components/common';
+import Masonry from 'react-masonry-css';
+import { Header, Tabs, TabsContent } from '@/components/common';
 import {
   MetricCard,
   SprintStatusCard,
   StatusBreakdownChart,
   ScenarioDistributionChart,
+  ActiveScenariosCard,
+  SprintOverviewCard,
+  SprintHealthCard,
   WorkloadCard,
   VelocityChart,
   BurndownChart,
@@ -28,6 +32,13 @@ import {
   mockBurndownData,
 } from '@/lib/mockData';
 import { cn } from '@/lib/utils';
+
+// Masonry breakpoint configuration for responsive layout
+const breakpointColumns = {
+  default: 3,  // Desktop: 3 columns
+  1024: 2,     // Tablet: 2 columns
+  640: 1,      // Mobile: 1 column
+};
 
 export function DashboardPage() {
   const { selectedTeam } = useDashboardStore();
@@ -164,61 +175,78 @@ export function DashboardPage() {
           {isLoading ? 'Refreshing...' : 'Auto-refresh: 15s'}
         </div>
 
-        {/* Top metric cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard
-            title="Sprint Progress"
-            value={`${sprintProgress}%`}
-            subtitle={`${completedItems} of ${totalItems} items`}
-            icon={<TicketCheck className="h-5 w-5" />}
-            status={sprintProgress >= 80 ? 'success' : sprintProgress >= 50 ? 'default' : 'warning'}
+        {/* Top metric cards - 5 cards with Sprint Overview + Health */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <SprintOverviewCard
+            sprint={sprint}
+            completedItems={completedItems}
+            totalItems={totalItems}
+            progress={sprintProgress}
+            compact
           />
           <MetricCard
-            title="Active Scenarios"
-            value={activeScenarioCount}
-            subtitle="Items in progress"
-            icon={<Activity className="h-5 w-5" />}
+            title="Completion"
+            value={`${completedItems}/${totalItems}`}
+            subtitle="items"
+            compact
           />
           <MetricCard
             title="Blockers"
             value={blockedItems}
-            subtitle="Items blocked"
-            icon={<AlertTriangle className="h-5 w-5" />}
             status={blockedItems > 0 ? 'warning' : 'success'}
+            compact
           />
           <MetricCard
             title="Team Size"
             value={filteredAgents.length}
             subtitle={`${overloadedCount} overloaded`}
             status={overloadedCount > 0 ? 'warning' : 'default'}
+            compact
+          />
+          <SprintHealthCard
+            progress={sprintProgress}
+            currentDay={sprint.day}
+            totalDays={sprint.totalDays}
+            compact
           />
         </div>
 
-        {/* Main dashboard grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left column - Sprint and Status */}
-          <div className="space-y-6">
-            <SprintStatusCard sprint={sprint} />
-            <ScenarioDistributionChart data={scenarioDistribution} />
-          </div>
+        {/* Tab-based view for Sprint and Simulation data */}
+        <Tabs
+          tabs={[
+            { value: 'sprint', label: 'Sprint View' },
+            { value: 'simulation', label: 'Simulation', badge: activeScenarioCount }
+          ]}
+          defaultValue="sprint"
+          className="space-y-6"
+        >
+          {/* Sprint View - Focus on real sprint data */}
+          <TabsContent value="sprint" className="space-y-6">
+            <Masonry
+              breakpointCols={breakpointColumns}
+              className="masonry-grid"
+              columnClassName="masonry-column"
+            >
+              <BurndownChart data={mockBurndownData} sprintName={sprint.name} />
+              <VelocityChart data={mockVelocityData} />
+              <WorkloadCard agents={filteredAgents} />
+              <StatusBreakdownChart data={statusBreakdown} />
+            </Masonry>
+          </TabsContent>
 
-          {/* Middle column - Charts */}
-          <div className="space-y-6">
-            <StatusBreakdownChart data={statusBreakdown} />
-            <VelocityChart data={mockVelocityData} />
-          </div>
-
-          {/* Right column - Workload */}
-          <div className="space-y-6">
-            <WorkloadCard agents={filteredAgents} />
-          </div>
-        </div>
-
-        {/* Bottom row - Burndown and Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <BurndownChart data={mockBurndownData} sprintName={sprint.name} />
-          <ActivityFeed activities={recentActivities} />
-        </div>
+          {/* Simulation View - Focus on simulation diagnostics */}
+          <TabsContent value="simulation" className="space-y-6">
+            <Masonry
+              breakpointCols={breakpointColumns}
+              className="masonry-grid"
+              columnClassName="masonry-column"
+            >
+              <ActiveScenariosCard data={scenarioDistribution} />
+              <ScenarioDistributionChart data={scenarioDistribution} />
+              <ActivityFeed activities={recentActivities} />
+            </Masonry>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

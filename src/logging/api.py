@@ -64,6 +64,13 @@ async def get_session_conversation(session_id: str):
     return {"conversation": query.get_conversation_view(session_id)}
 
 
+@router.get("/sessions/{session_id}/errors")
+async def get_session_errors(session_id: str):
+    """Get all errors for a session from all log tables."""
+    query = LogQueryService()
+    return {"errors": query.get_session_errors(session_id)}
+
+
 @router.get("/llm-calls")
 async def list_llm_calls(
     session_id: Optional[str] = None,
@@ -335,6 +342,33 @@ HTML_VIEWER = """
             border-radius: 6px;
             font-size: 14px;
         }
+
+        .error-item {
+            padding: 15px;
+            background: #fef2f2;
+            border-left: 3px solid #dc2626;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+        .error-source {
+            font-size: 11px;
+            color: #991b1b;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .error-message {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            font-size: 13px;
+            color: #7f1d1d;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .error-context {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+        }
     </style>
 </head>
 <body>
@@ -412,6 +446,7 @@ HTML_VIEWER = """
                 <div class="tabs">
                     <button class="tab active" data-tab="conversation">Conversation</button>
                     <button class="tab" data-tab="timeline">Timeline</button>
+                    <button class="tab" data-tab="errors" id="errors-tab" style="display: none;">Errors</button>
                 </div>
 
                 <div id="conversation-view">
@@ -420,6 +455,10 @@ HTML_VIEWER = """
 
                 <div id="timeline-view" style="display: none;">
                     <div class="empty-state">Select a session to view its timeline</div>
+                </div>
+
+                <div id="errors-view" style="display: none;">
+                    <div class="empty-state">Select a session to view its errors</div>
                 </div>
             </div>
         </div>
@@ -513,6 +552,9 @@ HTML_VIEWER = """
 
             // Load timeline view
             loadTimeline(sessionId);
+
+            // Load errors view
+            loadErrors(sessionId);
         }
 
         // Load conversation
@@ -629,6 +671,53 @@ HTML_VIEWER = """
             }
         }
 
+        // Load errors
+        async function loadErrors(sessionId) {
+            const container = document.getElementById('errors-view');
+            container.innerHTML = '<div class="loading">Loading errors...</div>';
+
+            try {
+                const resp = await fetch(`/logs/sessions/${sessionId}/errors`);
+                const data = await resp.json();
+
+                // Show/hide errors tab based on whether there are errors
+                const errorsTab = document.getElementById('errors-tab');
+                if (data.errors.length > 0) {
+                    errorsTab.style.display = 'block';
+                    errorsTab.textContent = `Errors (${data.errors.length})`;
+                } else {
+                    errorsTab.style.display = 'none';
+                }
+
+                if (data.errors.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No errors in this session</div>';
+                    return;
+                }
+
+                container.innerHTML = data.errors.map(e => {
+                    const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+                    const context = [];
+                    if (e.action_type) context.push(`Action: ${e.action_type}`);
+                    if (e.method) context.push(`Method: ${e.method}`);
+                    if (e.phase) context.push(`Phase: ${e.phase}`);
+                    if (e.ticket_key) context.push(`Ticket: ${e.ticket_key}`);
+                    if (e.agent_name) context.push(`Agent: ${e.agent_name}`);
+
+                    return `
+                        <div class="error-item">
+                            <div class="error-source">${e.source} ${time ? '@ ' + time : ''}</div>
+                            <div class="error-message">${escapeHtml(e.error)}</div>
+                            ${context.length > 0 ? `<div class="error-context">${context.join(' | ')}</div>` : ''}
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (e) {
+                console.error('Failed to load errors:', e);
+                container.innerHTML = '<div class="empty-state">Failed to load errors</div>';
+            }
+        }
+
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -641,6 +730,8 @@ HTML_VIEWER = """
                     currentTab === 'conversation' ? 'block' : 'none';
                 document.getElementById('timeline-view').style.display =
                     currentTab === 'timeline' ? 'block' : 'none';
+                document.getElementById('errors-view').style.display =
+                    currentTab === 'errors' ? 'block' : 'none';
             });
         });
 
