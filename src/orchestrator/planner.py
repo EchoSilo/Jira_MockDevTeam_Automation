@@ -490,8 +490,6 @@ Remember:
         used_agents = set()
         valid_agent_ids = set(self.personas.get("agents", {}).keys())
 
-        logger.debug(f"Validating {len(actions)} actions. Valid agent IDs: {sorted(valid_agent_ids)}")
-
         for action in actions:
             # Must have a type
             if not action.get("type"):
@@ -500,9 +498,10 @@ Remember:
             # Agent ID must be valid
             agent_id = action.get("agent_id")
             if agent_id and agent_id not in valid_agent_ids:
+                valid_ids_str = ", ".join(sorted(valid_agent_ids))
                 logger.warning(
                     f"VALIDATION BLOCKED: Invalid agent_id '{agent_id}' in action (type: {action.get('type')}, "
-                    f"ticket: {action.get('ticket_key')}). Valid IDs: {', '.join(sorted(valid_agent_ids))}. Skipping action."
+                    f"ticket: {action.get('ticket_key')}). Valid IDs: {valid_ids_str}. Skipping action."
                 )
                 continue
 
