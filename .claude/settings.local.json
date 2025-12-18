@@ -41,7 +41,8 @@
       "mcp__playwright",
       "mcp__puppeteer_evaluate",
       "mcp__puppeteer_screenshot",
-      "Bash(docker-compose build:*)"
+      "Bash(docker-compose build:*)",
+      "Bash(git push)"
     ]
   }
 }

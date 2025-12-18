@@ -25,7 +25,7 @@ A multi-agent simulation that creates **9 realistic developers** across **2 team
 
 ## 📊 Dashboard Preview
 
-![Jira Simulator Dashboard](screenshot.png)
+![Jira Simulator Dashboard](/docs/images/Jira_Sim_screenshot.png)
 
 **Live visualization includes:**
 - Real-time sprint progress and metrics
