@@ -373,6 +373,56 @@ QA creates bugs:
 
 ---
 
+## Web Dashboard
+
+A React-based frontend provides real-time visibility into the simulation:
+
+### Pages
+
+**Dashboard** (/)
+- Real-time metrics: active tickets, blockers, overloaded agents
+- Sprint status and progress tracking
+- Team-filtered activity with workload distribution
+- 5 visualization charts:
+  - Burndown chart (sprint progress)
+  - Velocity chart (story points/sprint trends)
+  - Status breakdown (ticket status distribution)
+  - Scenario distribution (normal flow vs rework vs blockers)
+  - Agent workload distribution
+- Live activity feed of recent team actions
+- 15-second auto-refresh from backend
+
+**Chat with PM** (/chat)
+- Interactive chat interface to query PMs about sprint activity
+- PM selector to choose which PM to ask (Sarah Chen or David Kim)
+- Suggested questions for common queries
+- Integrates with backend via WebSocket
+
+**Settings** (/settings)
+- Theme toggle (light/dark mode)
+- Simulation controls (trigger manual run, reset state)
+- Team filtering preferences
+
+### Architecture
+
+- **Framework:** React 19 + TypeScript + Vite
+- **Styling:** TailwindCSS with Radix UI components
+- **State Management:** Zustand (theme, dashboard, chat)
+- **Charts:** Recharts for data visualization
+- **Routing:** React Router v7
+- **API Client:** Custom hooks for backend integration
+
+### Features
+
+- Real-time data fetching with 15-second refresh intervals
+- Responsive design works on desktop and tablet
+- Error states when backend is unavailable
+- Team-based filtering (Team Alpha vs Team Beta)
+- Persistent theme preference
+- Accessibility-first UI components
+
+---
+
 ## State Persistence
 
 The simulator maintains state between runs:

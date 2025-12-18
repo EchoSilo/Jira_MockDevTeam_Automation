@@ -30,7 +30,18 @@
       "Bash(cmd /c \"taskkill /PID 116408 /F\")",
       "Bash(cmd /c:*)",
       "Bash(ping:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(node ./node_modules/tailwindcss/lib/cli.js:*)",
+      "Bash(npm ls:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "mcp__sequential-thinking",
+      "mcp__playwright",
+      "mcp__puppeteer_evaluate",
+      "mcp__puppeteer_screenshot",
+      "Bash(docker-compose build:*)"
     ]
   }
 }

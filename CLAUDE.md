@@ -9,26 +9,52 @@ Jira Team Simulator - a multi-agent system that generates realistic development 
 ## Common Commands
 
 ```bash
-# Install dependencies
+# Backend setup
 pip install -r requirements.txt
 
-# Run locally
+# Run backend locally
 uvicorn src.main:app --reload
 
 # Run tests
 pytest tests/ -v
 
-# Build and run with Docker
+# Frontend setup
+cd frontend
+npm install
+
+# Run frontend dev server
+npm run dev
+
+# Build frontend for production
+npm run build
+
+# Build and run entire stack with Docker
 docker-compose up --build
 ```
 
 ## Architecture
 
 ```
-n8n (cron scheduler) → POST /trigger → FastAPI → Orchestrator → Agents → Jira API
-                                                      ↓
-                                              State (data/state.json)
+                                    ┌─────────────────────┐
+                                    │  React Frontend     │
+                                    │  (Dashboard, Chat)  │
+                                    └──────────┬──────────┘
+                                               │ HTTP
+                                               ↓
+n8n (cron scheduler) → POST /trigger → FastAPI Backend
+                                          │      ↓
+                                Orchestrator  JiraClient
+                                   ↓              ↓
+                                Agents ────→ Jira API
+                                   ↓
+                            State (data/state.json)
 ```
+
+**Frontend to Backend:**
+- React frontend at `http://localhost:5173` (dev) or served from backend in production
+- REST API calls to backend (`http://localhost:8000/api/*`)
+- 15-second polling for real-time dashboard updates
+- WebSocket for interactive chat features
 
 **Key flow:**
 1. n8n triggers `/trigger` endpoint on schedule (every ~45 min, M-F, 9-5)
@@ -74,17 +100,73 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 
 ## API Endpoints
 
+### Simulation Control
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check and Jira connectivity |
 | `/trigger` | POST | Run one simulation tick |
 | `/state` | GET | View current simulation state |
 | `/reset` | POST | Reset simulation state |
+
+### Agent & Activity
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/agents` | GET | List configured agents |
 | `/scenarios` | GET | List active scenarios |
+
+### Observability
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/logs/viewer` | GET | HTML log viewer UI |
 | `/logs/sessions` | GET | List simulation sessions |
 | `/logs/stats` | GET | Token usage statistics |
+
+### Frontend Integration
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/dashboard` | GET | Combined data for dashboard (state + agents + scenarios) |
+| `/api/dashboard?team=alpha` | GET | Filter by team (alpha or beta) |
+| `/ws/chat` | WebSocket | Chat interface with PMs |
+
+## Frontend
+
+**Location:** `frontend/` directory
+
+**Tech Stack:**
+- React 19 with TypeScript
+- Vite for bundling
+- TailwindCSS + Radix UI for styling
+- Zustand for state management
+- Recharts for visualizations
+- React Router for navigation
+
+**Key Directories:**
+- `src/pages/` - Page components (Dashboard, Chat, Settings)
+- `src/components/` - Reusable components (common, dashboard, chat)
+- `src/store/` - Zustand stores (theme, dashboard, chat)
+- `src/hooks/` - Custom hooks for data fetching
+- `src/lib/` - Utilities and transformers
+
+**Running Frontend:**
+```bash
+cd frontend
+npm install           # First time only
+npm run dev          # Dev server at http://localhost:5173
+npm run build        # Production build
+npm run lint         # Check code quality
+```
+
+**Features:**
+- Real-time dashboard with 15s auto-refresh
+- Interactive PM chat interface
+- Team filtering (Alpha/Beta)
+- Light/dark theme support
+- Responsive design
+- Error boundaries for backend unavailability
 
 ## State Management
 

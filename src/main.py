@@ -8,11 +8,14 @@ This version uses the scenario-driven CrewAI orchestration system.
 """
 
 import random
+import time
+import threading
 from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yaml
 
@@ -20,6 +23,77 @@ from .state import load_state, save_state, SimulationState, sync_state_with_jira
 from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
+
+
+# ============ Caching for Performance ============
+# These caches prevent repeated expensive operations during dashboard polling
+
+class CachedHealthCheck:
+    """Cache Jira connection status to avoid repeated API calls."""
+
+    def __init__(self, ttl_seconds: int = 60):
+        self.ttl = ttl_seconds
+        self._jira_connected: bool = False
+        self._last_check: float = 0
+        self._lock = threading.Lock()
+
+    def check(self, jira_client: JiraClient) -> bool:
+        """Check Jira connection, using cache if fresh."""
+        now = time.time()
+        with self._lock:
+            if now - self._last_check < self.ttl:
+                return self._jira_connected
+
+            # Cache expired, do actual check
+            try:
+                jira_client.get_current_user()
+                self._jira_connected = True
+            except Exception:
+                self._jira_connected = False
+
+            self._last_check = now
+            return self._jira_connected
+
+    def invalidate(self):
+        """Force next check to actually call Jira."""
+        with self._lock:
+            self._last_check = 0
+
+
+class CachedState:
+    """Cache simulation state to avoid repeated file reads."""
+
+    def __init__(self, ttl_seconds: int = 5):
+        self.ttl = ttl_seconds
+        self._state: Optional[SimulationState] = None
+        self._last_load: float = 0
+        self._lock = threading.Lock()
+
+    def get(self) -> SimulationState:
+        """Get state, reloading from disk if cache expired."""
+        now = time.time()
+        with self._lock:
+            if self._state is None or now - self._last_load >= self.ttl:
+                self._state = load_state()
+                self._last_load = now
+            return self._state
+
+    def invalidate(self):
+        """Force next get() to reload from disk."""
+        with self._lock:
+            self._state = None
+            self._last_load = 0
+
+    def update(self, state: SimulationState):
+        """Update cache with new state (call after save_state)."""
+        with self._lock:
+            self._state = state
+            self._last_load = time.time()
+
+
+# Global caches
+_health_cache = CachedHealthCheck(ttl_seconds=60)  # Check Jira every 60s
+_state_cache = CachedState(ttl_seconds=5)  # Reload state every 5s
 
 
 # Load configuration at startup
@@ -78,6 +152,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Configure CORS for frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+        "http://127.0.0.1:5177",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Include the logs API router
 app.include_router(logs_router)
 
@@ -124,16 +218,9 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Check application health and Jira connectivity."""
-    state = load_state()
-
-    # Test Jira connection
-    jira_ok = False
-    try:
-        app.state.jira.get_current_user()
-        jira_ok = True
-    except Exception:
-        pass
+    """Check application health and Jira connectivity (cached for performance)."""
+    state = _state_cache.get()
+    jira_ok = _health_cache.check(app.state.jira)
 
     return HealthResponse(
         status="healthy" if jira_ok else "degraded",
@@ -209,8 +296,10 @@ async def trigger_simulation():
             intensity=intensity,
         )
 
-        # Save updated state
+        # Save updated state and refresh cache
         save_state(state)
+        _state_cache.update(state)
+        _health_cache.invalidate()  # Re-check Jira after trigger
 
         # End logging session with stats
         app.state.log_writer.end_session(
@@ -252,17 +341,22 @@ async def trigger_simulation():
 
 @app.get("/state")
 async def get_state():
-    """Get current simulation state (for debugging)."""
-    state = load_state()
+    """Get current simulation state (cached for dashboard performance)."""
+    state = _state_cache.get()
     return state.model_dump(mode="json")
 
 
 @app.get("/scenarios")
 async def get_scenarios():
-    """Get active scenarios and their status."""
-    state = load_state()
+    """Get active scenarios and their status (cached for dashboard performance)."""
+    state = _state_cache.get()
     scenarios = []
     for scenario_id, scenario in state.active_scenarios.items():
+        # Compute is_blocked from phase
+        is_blocked = scenario.current_phase.value in ["blocked", "blocker_discussed", "waiting_on_dependency"]
+        # Compute is_rejected from phase
+        is_rejected = scenario.current_phase.value in ["rejected", "fixing", "re_review", "re_testing"]
+
         scenarios.append({
             "id": scenario_id,
             "ticket_key": scenario.ticket_key,
@@ -270,13 +364,13 @@ async def get_scenarios():
             "current_phase": scenario.current_phase.value,
             "assigned_agent": scenario.assigned_agent,
             "complexity": scenario.complexity.value,
-            "is_blocked": scenario.is_blocked,
+            "is_blocked": is_blocked,
             "blocker_reason": scenario.blocker_reason,
-            "is_rejected": scenario.is_rejected,
+            "is_rejected": is_rejected,
             "rejection_reason": scenario.rejection_reason,
-            "rework_count": scenario.rework_count,
-            "started_at": scenario.started_at.isoformat() if scenario.started_at else None,
-            "target_end": scenario.target_end.isoformat() if scenario.target_end else None,
+            "rework_count": scenario.times_rejected,
+            "started_at": scenario.started.isoformat() if scenario.started else None,
+            "target_end": scenario.target_completion.isoformat() if scenario.target_completion else None,
         })
 
     return {
@@ -291,6 +385,7 @@ async def reset_state():
     """Reset simulation state (for testing)."""
     state = SimulationState()
     save_state(state)
+    _state_cache.update(state)  # Update cache with new state
     return {"message": "State reset successfully"}
 
 
@@ -384,11 +479,11 @@ async def force_sprint_planning():
 
 @app.get("/agents")
 async def list_agents():
-    """List configured agents and their current state."""
-    state = load_state()
+    """List configured agents and their current state (cached for dashboard performance)."""
+    state = _state_cache.get()
     agents = []
     for agent_id, config in app.state.personas.get("agents", {}).items():
-        agent_state = state.agent_states.get(agent_id)
+        agent_state = state.agents.get(agent_id)
         agents.append({
             "id": agent_id,
             "name": config.get("display_name"),
@@ -396,6 +491,126 @@ async def list_agents():
             "role": config.get("role"),
             "assigned_tickets": agent_state.assigned_tickets if agent_state else [],
             "current_workload": agent_state.current_workload if agent_state else 0,
-            "daily_actions": agent_state.daily_action_count if agent_state else 0,
+            "daily_actions": agent_state.actions_today if agent_state else 0,
         })
     return {"agents": agents}
+
+
+class ChatRequest(BaseModel):
+    """Request model for PM chat."""
+    pm_id: str
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """Response model for PM chat."""
+    pm_id: str
+    pm_name: str
+    response: str
+    tickets_mentioned: list[str] = []
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_with_pm(request: ChatRequest):
+    """
+    Chat with a PM agent about sprint status, workload, blockers, etc.
+    The PM will respond based on current simulation state and their persona.
+    """
+    pm_id = request.pm_id
+    user_message = request.message
+
+    # Get PM config
+    pm_config = app.state.personas.get("agents", {}).get(pm_id)
+    if not pm_config or pm_config.get("role") != "pm":
+        raise HTTPException(status_code=400, detail=f"Invalid PM ID: {pm_id}")
+
+    # Get current state for context (cached for performance)
+    state = _state_cache.get()
+
+    # Build context about the current sprint/team
+    team = pm_config.get("team")
+    team_agents = [
+        (aid, cfg) for aid, cfg in app.state.personas.get("agents", {}).items()
+        if cfg.get("team") == team
+    ]
+
+    # Get team workload info
+    team_workload = []
+    for aid, cfg in team_agents:
+        agent_state = state.agents.get(aid)
+        if agent_state:
+            team_workload.append(f"- {cfg.get('display_name')} ({cfg.get('role')}): {agent_state.current_workload} tickets assigned")
+
+    # Get active scenarios for this team
+    team_scenarios = []
+    blocked_items = []
+    for scenario in state.active_scenarios.values():
+        if scenario.assigned_agent and any(scenario.assigned_agent == aid for aid, _ in team_agents):
+            phase = scenario.current_phase.value
+            team_scenarios.append(f"- {scenario.ticket_key}: {phase}")
+            if phase in ["blocked", "blocker_discussed", "waiting_on_dependency"]:
+                blocked_items.append(f"{scenario.ticket_key} ({scenario.blocker_reason or 'unknown reason'})")
+
+    # Get recent actions
+    recent = [
+        f"- {a.agent_name}: {a.action_type} on {a.ticket_key}"
+        for a in state.recent_actions[-5:]
+        if any(a.agent_id == aid for aid, _ in team_agents)
+    ]
+
+    # Build the prompt
+    context = f"""Current Sprint: Sprint {state.sprint.sprint_number}, Day {state.sprint.sprint_day} of {state.sprint.total_days}
+
+Team {team.title()} Workload:
+{chr(10).join(team_workload) if team_workload else "No workload data"}
+
+Active Items ({len(team_scenarios)} total):
+{chr(10).join(team_scenarios[:10]) if team_scenarios else "No active items"}
+
+Blocked Items:
+{chr(10).join(blocked_items) if blocked_items else "None"}
+
+Recent Activity:
+{chr(10).join(recent) if recent else "No recent activity"}
+"""
+
+    prompt = f"""You are {pm_config.get('display_name')}, a Product Manager for Team {team.title()}.
+
+Your persona:
+{pm_config.get('persona', 'Professional and collaborative PM.')}
+
+Current project context:
+{context}
+
+The user is asking you a question or making a request. Respond naturally as this PM would.
+- Be helpful and informative
+- Reference specific tickets, team members, or sprint data when relevant
+- Keep responses concise (2-4 sentences usually)
+- Don't be overly formal or use corporate jargon
+- If asked to do something (create story, etc), explain that you can't directly take actions in chat but can discuss
+
+User message: {user_message}
+
+Respond as {pm_config.get('display_name')}:"""
+
+    # Generate response using LLM
+    try:
+        response = app.state.llm.client.messages.create(
+            model=app.state.llm.complex_model,  # Use Sonnet for chat
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        pm_response = response.content[0].text.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    # Extract any ticket keys mentioned in the response
+    import re
+    tickets_mentioned = list(set(re.findall(r'[A-Z]+-\d+', pm_response)))
+
+    return ChatResponse(
+        pm_id=pm_id,
+        pm_name=pm_config.get('display_name'),
+        response=pm_response,
+        tickets_mentioned=tickets_mentioned,
+    )
