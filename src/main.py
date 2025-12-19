@@ -14,12 +14,15 @@ from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file before other imports
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yaml
 
-from .state import load_state, save_state, SimulationState, sync_state_with_jira
+from .state import load_state, save_state, SimulationState, sync_state_with_jira, validate_state_agent_ids
 from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
@@ -278,6 +281,9 @@ async def trigger_simulation():
         except Exception as sync_error:
             print(f"Warning: State sync failed: {sync_error}")
 
+        # Validate and clean up any invalid agent_ids in state
+        state = validate_state_agent_ids(state, app.state.personas)
+
         # Create orchestrator with logged services for this tick
         orchestrator = ScenarioOrchestrator(
             jira_client=logged_jira,
@@ -343,7 +349,133 @@ async def trigger_simulation():
 async def get_state():
     """Get current simulation state (cached for dashboard performance)."""
     state = _state_cache.get()
-    return state.model_dump(mode="json")
+    state_dict = state.model_dump(mode="json")
+
+    # Add real Jira sprint data
+    try:
+        jira_sprint = app.state.jira.get_active_sprint()
+        if jira_sprint:
+            # Get sprint issues count
+            sprint_issues = app.state.jira.get_sprint_issues(jira_sprint["id"])
+            done_count = sum(1 for issue in sprint_issues if issue.fields.status.name.lower() == "done")
+
+            state_dict["jira_sprint"] = {
+                "id": jira_sprint["id"],
+                "name": jira_sprint["name"],
+                "state": jira_sprint["state"],
+                "start_date": jira_sprint["start_date"],
+                "end_date": jira_sprint["end_date"],
+                "total_issues": len(sprint_issues),
+                "done_issues": done_count,
+            }
+    except Exception:
+        # Fallback to local sprint data if Jira unavailable
+        pass
+
+    return state_dict
+
+
+@app.get("/api/sprint-data")
+async def get_sprint_data():
+    """Get comprehensive sprint data from Jira for dashboard charts."""
+    try:
+        jira = app.state.jira
+
+        # Get active sprint
+        active_sprint = jira.get_active_sprint()
+        if not active_sprint:
+            return {"error": "No active sprint found"}
+
+        sprint_id = active_sprint["id"]
+        sprint_issues = jira.get_sprint_issues(sprint_id)
+
+        # Calculate status breakdown from real Jira statuses
+        status_counts = {
+            "backlog": 0,
+            "inProgress": 0,
+            "codeReview": 0,
+            "testing": 0,
+            "done": 0,
+        }
+
+        for issue in sprint_issues:
+            status = issue.fields.status.name.lower()
+            if status in ["to do", "backlog", "open"]:
+                status_counts["backlog"] += 1
+            elif status in ["in progress", "in development"]:
+                status_counts["inProgress"] += 1
+            elif status in ["code review", "in review", "review"]:
+                status_counts["codeReview"] += 1
+            elif status in ["ready for qa", "testing", "qa", "in testing"]:
+                status_counts["testing"] += 1
+            elif status in ["done", "closed", "resolved"]:
+                status_counts["done"] += 1
+            else:
+                # Default unknown statuses to in progress
+                status_counts["inProgress"] += 1
+
+        # Calculate burndown data
+        from datetime import datetime, timedelta
+
+        start_date = datetime.fromisoformat(active_sprint["start_date"].replace("Z", "+00:00")) if active_sprint["start_date"] else datetime.utcnow()
+        end_date = datetime.fromisoformat(active_sprint["end_date"].replace("Z", "+00:00")) if active_sprint["end_date"] else start_date + timedelta(days=7)
+        total_days = max(1, (end_date - start_date).days)
+        total_items = len(sprint_issues)
+        done_items = status_counts["done"]
+        remaining = total_items - done_items
+
+        burndown_data = []
+        for day in range(total_days + 1):
+            day_label = f"Day {day + 1}" if day < total_days else "End"
+            ideal = max(0, total_items - (total_items * day / total_days))
+            # For past days, show actual; for future, show 0 (unknown)
+            current_day = (datetime.utcnow() - start_date.replace(tzinfo=None)).days
+            actual = remaining if day <= current_day else 0
+            burndown_data.append({
+                "day": day_label,
+                "ideal": round(ideal),
+                "actual": actual if day <= current_day else None,
+            })
+
+        # Get velocity from closed sprints
+        velocity_data = []
+        try:
+            closed_sprints = jira._client.sprints(4, state="closed")  # Board ID 4
+            for sprint in closed_sprints[-5:]:  # Last 5 sprints
+                sprint_num = int(''.join(filter(str.isdigit, sprint.name)) or '0')
+                # Count done issues in this sprint
+                done_count = 0
+                try:
+                    sprint_issues_closed = jira.get_sprint_issues(sprint.id)
+                    done_count = sum(1 for i in sprint_issues_closed if i.fields.status.name.lower() in ["done", "closed", "resolved"])
+                except Exception:
+                    pass
+                velocity_data.append({
+                    "sprintNumber": sprint_num,
+                    "sprintName": sprint.name,
+                    "completedItems": done_count,
+                })
+        except Exception:
+            pass
+
+        # Add current sprint to velocity if has completed items
+        if done_items > 0 or not velocity_data:
+            sprint_num = int(''.join(filter(str.isdigit, active_sprint["name"])) or '0')
+            velocity_data.append({
+                "sprintNumber": sprint_num,
+                "sprintName": active_sprint["name"],
+                "completedItems": done_items,
+            })
+
+        return {
+            "statusBreakdown": status_counts,
+            "burndownData": burndown_data,
+            "velocityData": velocity_data,
+            "sprint": active_sprint,
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/scenarios")
@@ -397,6 +529,9 @@ async def force_sprint_planning():
     """
     try:
         state = load_state()
+
+        # Validate and clean up any invalid agent_ids in state
+        state = validate_state_agent_ids(state, app.state.personas)
 
         # Start a logging session for this action
         session = app.state.log_writer.start_session(

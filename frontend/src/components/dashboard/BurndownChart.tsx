@@ -19,9 +19,10 @@ interface BurndownChartProps {
 
 export function BurndownChart({ data, sprintName }: BurndownChartProps) {
   // Calculate if on track (actual <= ideal for current day)
-  const currentDay = data.filter((d) => d.actual > 0).length;
-  const currentPoint = data[currentDay - 1];
-  const isOnTrack = currentPoint ? currentPoint.actual <= currentPoint.ideal : true;
+  // null means future day, so we filter for days with actual values
+  const daysWithActual = data.filter((d) => d.actual !== null);
+  const currentPoint = daysWithActual[daysWithActual.length - 1];
+  const isOnTrack = currentPoint ? (currentPoint.actual ?? 0) <= currentPoint.ideal : true;
 
   return (
     <div className="card">

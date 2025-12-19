@@ -577,6 +577,10 @@ HTML_VIEWER = """
                         const modelBadge = c.is_complex ?
                             '<span class="badge badge-busy">Sonnet</span>' :
                             '<span class="badge badge-light">Haiku</span>';
+                        const configInfo = [
+                            `max_tokens: ${c.max_tokens || 'N/A'}`,
+                            c.stop_reason ? `stop: ${c.stop_reason}` : null
+                        ].filter(Boolean).join(' | ');
 
                         return `
                             <div class="message message-prompt expandable" onclick="this.classList.toggle('expanded')">
@@ -584,6 +588,7 @@ HTML_VIEWER = """
                                     <div class="message-meta">
                                         <strong>PROMPT</strong>
                                         ${modelBadge}
+                                        <span style="font-family: monospace; font-size: 11px; color: #666;">${c.model}</span>
                                         <span>${c.action_type}</span>
                                         ${c.agent_name ? `<span>Agent: ${c.agent_name}</span>` : ''}
                                         ${c.ticket_key ? `<span>Ticket: ${c.ticket_key}</span>` : ''}
@@ -603,6 +608,7 @@ HTML_VIEWER = """
                                     <div class="message-meta">
                                         <strong>RESPONSE</strong>
                                         <span>${c.duration_ms}ms</span>
+                                        <span style="font-size: 11px; color: #666;">${configInfo}</span>
                                     </div>
                                     <div class="message-meta">
                                         <span class="token-count">${c.output_tokens} tokens</span>

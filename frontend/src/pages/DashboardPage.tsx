@@ -1,9 +1,8 @@
-import { TicketCheck, AlertTriangle, Activity, RefreshCw, WifiOff } from 'lucide-react';
+import { AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
 import Masonry from 'react-masonry-css';
 import { Header, Tabs, TabsContent } from '@/components/common';
 import {
   MetricCard,
-  SprintStatusCard,
   StatusBreakdownChart,
   ScenarioDistributionChart,
   ActiveScenariosCard,
@@ -13,24 +12,20 @@ import {
   VelocityChart,
   BurndownChart,
   ActivityFeed,
+  ScenarioTimeline,
 } from '@/components/dashboard';
 import { useDashboardStore } from '@/store';
 import { useDashboardData } from '@/hooks/useApi';
 import {
   transformSprint,
   transformAgents,
-  calculateStatusBreakdown,
   transformScenarioDistribution,
   transformRecentActions,
   countBlockers,
   countOverloadedAgents,
-  getSprintProgress,
+  getTodayActivityCount,
   filterScenariosByTeam,
 } from '@/lib/transformers';
-import {
-  mockVelocityData,
-  mockBurndownData,
-} from '@/lib/mockData';
 import { cn } from '@/lib/utils';
 
 // Masonry breakpoint configuration for responsive layout
@@ -48,7 +43,7 @@ export function DashboardPage() {
     refetchInterval: 15000,
   });
 
-  const { state, agents, scenarios } = data;
+  const { state, agents, scenarios, sprintData } = data;
 
   // Show error state if backend is unavailable
   if (error && !state) {
@@ -122,9 +117,9 @@ export function DashboardPage() {
     ? filterScenariosByTeam(scenarios, agents, selectedTeam)
     : null;
 
-  const statusBreakdown = state
-    ? calculateStatusBreakdown(state)
-    : { backlog: 0, inProgress: 0, codeReview: 0, testing: 0, done: 0 };
+  // Use real Jira status breakdown when available
+  const statusBreakdown = sprintData?.statusBreakdown
+    ?? { backlog: 0, inProgress: 0, codeReview: 0, testing: 0, done: 0 };
 
   const scenarioDistribution = filteredScenarios
     ? transformScenarioDistribution(filteredScenarios)
@@ -136,13 +131,14 @@ export function DashboardPage() {
 
   const recentActivities = state ? transformRecentActions(state) : [];
 
-  // Calculate metrics
-  const totalItems = Object.values(statusBreakdown).reduce((a, b) => a + b, 0);
-  const completedItems = statusBreakdown.done;
-  const sprintProgress = state ? getSprintProgress(state) : 0;
+  // Calculate metrics - prefer real Jira sprint data when available
+  const totalItems = sprint.totalItems ?? Object.values(statusBreakdown).reduce((a, b) => a + b, 0);
+  const completedItems = sprint.doneItems ?? statusBreakdown.done;
+  const sprintProgress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
   const activeScenarioCount = filteredScenarios?.active_count || 0;
   const blockedItems = filteredScenarios ? countBlockers(filteredScenarios) : 0;
   const overloadedCount = state ? countOverloadedAgents(state) : 0;
+  const todayActions = agents ? getTodayActivityCount(agents, selectedTeam) : 0;
 
   return (
     <div className="min-h-screen">
@@ -185,9 +181,9 @@ export function DashboardPage() {
             compact
           />
           <MetricCard
-            title="Completion"
-            value={`${completedItems}/${totalItems}`}
-            subtitle="items"
+            title="Today's Activity"
+            value={todayActions}
+            subtitle="actions"
             compact
           />
           <MetricCard
@@ -227,8 +223,8 @@ export function DashboardPage() {
               className="masonry-grid"
               columnClassName="masonry-column"
             >
-              <BurndownChart data={mockBurndownData} sprintName={sprint.name} />
-              <VelocityChart data={mockVelocityData} />
+              <BurndownChart data={sprintData?.burndownData ?? []} sprintName={sprint.name} />
+              <VelocityChart data={sprintData?.velocityData ?? []} />
               <WorkloadCard agents={filteredAgents} />
               <StatusBreakdownChart data={statusBreakdown} />
             </Masonry>
@@ -241,6 +237,9 @@ export function DashboardPage() {
               className="masonry-grid"
               columnClassName="masonry-column"
             >
+              <ScenarioTimeline
+                scenarios={state ? Object.values(state.active_scenarios) : []}
+              />
               <ActiveScenariosCard data={scenarioDistribution} />
               <ScenarioDistributionChart data={scenarioDistribution} />
               <ActivityFeed activities={recentActivities} />

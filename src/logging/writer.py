@@ -144,6 +144,8 @@ class AsyncLogWriter:
         scenario_id: Optional[str] = None,
         error: Optional[str] = None,
         is_complex: bool = False,
+        max_tokens: int = 0,
+        stop_reason: Optional[str] = None,
     ) -> None:
         """Convenience method to log an LLM call."""
         if self._current_session is None:
@@ -157,9 +159,11 @@ class AsyncLogWriter:
             is_complex=is_complex,
             prompt=prompt,
             response=response,
+            max_tokens=max_tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
+            stop_reason=stop_reason,
             agent_id=agent_id,
             agent_name=agent_name,
             ticket_key=ticket_key,

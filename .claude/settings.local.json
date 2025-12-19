@@ -47,7 +47,9 @@
       "Bash(git push)",
       "Bash(powershell -Command \"$input | Select-String -Pattern ''error|exception|traceback'' -CaseSensitive:$false | Select-Object -First 30\")",
       "Bash(python3 -c:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(powershell -Command \"Get-Process -Id 44448,140292,116408 -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host ''Processes killed''\")",
+      "Bash(npx tsc --noEmit)"
     ]
   }
 }

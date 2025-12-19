@@ -221,17 +221,20 @@ class ScenarioAnalyzer:
                 # This ensures proper role-based workflow: Developer → Tech Lead → QA
                 suggested_agent = self._get_agent_for_phase(scenario)
 
-                opportunities.append({
-                    "type": "phase_advancement",
-                    "priority": "high",
-                    "scenario_id": scenario.scenario_id,
-                    "ticket_key": scenario.ticket_key,
-                    "current_phase": scenario.current_phase.value,
-                    "suggested_action": next_action,
-                    "agent_id": suggested_agent,
-                    "description": f"{scenario.ticket_key} ready to advance from {scenario.current_phase.value}",
-                    "days_in_phase": round(scenario.get_days_in_current_phase(), 1),
-                })
+                # Only include opportunity if we have a valid agent
+                valid_agent = self._get_valid_agent_id(suggested_agent)
+                if valid_agent:
+                    opportunities.append({
+                        "type": "phase_advancement",
+                        "priority": "high",
+                        "scenario_id": scenario.scenario_id,
+                        "ticket_key": scenario.ticket_key,
+                        "current_phase": scenario.current_phase.value,
+                        "suggested_action": next_action,
+                        "agent_id": valid_agent,
+                        "description": f"{scenario.ticket_key} ready to advance from {scenario.current_phase.value}",
+                        "days_in_phase": round(scenario.get_days_in_current_phase(), 1),
+                    })
 
         return opportunities
 
@@ -317,14 +320,17 @@ class ScenarioAnalyzer:
             ):
                 # Random chance based on config
                 if random.random() < self.probabilities.get("blocker_probability", 0.15):
-                    opportunities.append({
-                        "type": "inject_blocker",
-                        "priority": "medium",
-                        "scenario_id": scenario.scenario_id,
-                        "ticket_key": scenario.ticket_key,
-                        "description": f"Opportunity to inject blocker on {scenario.ticket_key}",
-                        "agent_id": scenario.assigned_agent,
-                    })
+                    # Only include if we have a valid agent
+                    valid_agent = self._get_valid_agent_id(scenario.assigned_agent)
+                    if valid_agent:
+                        opportunities.append({
+                            "type": "inject_blocker",
+                            "priority": "medium",
+                            "scenario_id": scenario.scenario_id,
+                            "ticket_key": scenario.ticket_key,
+                            "description": f"Opportunity to inject blocker on {scenario.ticket_key}",
+                            "agent_id": valid_agent,
+                        })
 
         return opportunities
 
@@ -349,14 +355,17 @@ class ScenarioAnalyzer:
                 rejection_prob = self._get_rejection_probability(scenario.assigned_agent)
 
                 if random.random() < rejection_prob:
-                    opportunities.append({
-                        "type": "inject_rework",
-                        "priority": "medium",
-                        "scenario_id": scenario.scenario_id,
-                        "ticket_key": scenario.ticket_key,
-                        "description": f"Opportunity to reject {scenario.ticket_key} in QA",
-                        "assigned_agent": scenario.assigned_agent,
-                    })
+                    # Only include if we have a valid agent
+                    valid_agent = self._get_valid_agent_id(scenario.assigned_agent)
+                    if valid_agent:
+                        opportunities.append({
+                            "type": "inject_rework",
+                            "priority": "medium",
+                            "scenario_id": scenario.scenario_id,
+                            "ticket_key": scenario.ticket_key,
+                            "description": f"Opportunity to reject {scenario.ticket_key} in QA",
+                            "assigned_agent": valid_agent,
+                        })
 
         return opportunities
 
@@ -443,6 +452,18 @@ class ScenarioAnalyzer:
         for agent_id, config in self.personas.get("agents", {}).items():
             if config.get("jira_account_id") == account_id:
                 return agent_id
+        return None
+
+    def _is_valid_agent_id(self, agent_id: Optional[str]) -> bool:
+        """Check if an agent_id exists in personas config."""
+        if not agent_id:
+            return False
+        return agent_id in self.personas.get("agents", {})
+
+    def _get_valid_agent_id(self, agent_id: Optional[str]) -> Optional[str]:
+        """Return agent_id only if it's valid, otherwise None."""
+        if self._is_valid_agent_id(agent_id):
+            return agent_id
         return None
 
     def _detect_scope_creep_opportunities(

@@ -20,6 +20,7 @@ from .simulation_state import (
     save_state,
     sync_state_with_jira,
     get_scenario_opportunities,
+    validate_state_agent_ids,
 )
 
 __all__ = [
@@ -44,4 +45,5 @@ __all__ = [
     "save_state",
     "sync_state_with_jira",
     "get_scenario_opportunities",
+    "validate_state_agent_ids",
 ]

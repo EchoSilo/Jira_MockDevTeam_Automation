@@ -200,9 +200,9 @@ class LogQueryService:
             cursor = conn.execute(
                 """SELECT
                     id, timestamp, model, action_type, is_complex,
-                    prompt, response, input_tokens, output_tokens, total_tokens,
-                    agent_id, agent_name, ticket_key, scenario_id,
-                    duration_ms, error, success
+                    prompt, response, max_tokens, input_tokens, output_tokens,
+                    total_tokens, agent_id, agent_name, ticket_key, scenario_id,
+                    duration_ms, error, success, stop_reason
                 FROM llm_calls
                 WHERE session_id = ?
                 ORDER BY timestamp""",

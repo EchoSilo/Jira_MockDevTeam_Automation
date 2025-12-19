@@ -48,9 +48,11 @@ export function WorkloadCard({ agents }: WorkloadCardProps) {
       </div>
 
       <div className="space-y-2 max-h-72 overflow-y-auto">
-        {agents.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} />
-        ))}
+        {[...agents]
+          .sort((a, b) => b.assignedTickets - a.assignedTickets)
+          .map((agent) => (
+            <AgentCard key={agent.id} agent={agent} />
+          ))}
       </div>
     </div>
   );

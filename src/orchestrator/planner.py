@@ -147,7 +147,8 @@ class ScenarioPlanner:
                         error=f"Action parsing failed: {action_error}",
                     )
                 # Fall back to basic plan to keep workflow running
-                return self._fallback_plan(analysis, state, target_actions)
+                fallback_actions = self._fallback_plan(analysis, state, target_actions)
+                return self._validate_actions(fallback_actions, analysis, state)[:target_actions]
 
         except Exception as e:
             # Log failed LLM call
@@ -169,7 +170,8 @@ class ScenarioPlanner:
                     error=str(e),
                 )
             # On error, fall back to basic actions
-            return self._fallback_plan(analysis, state, target_actions)
+            fallback_actions = self._fallback_plan(analysis, state, target_actions)
+            return self._validate_actions(fallback_actions, analysis, state)[:target_actions]
 
     def _build_planning_prompt(
         self,

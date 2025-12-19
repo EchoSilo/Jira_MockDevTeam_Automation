@@ -40,10 +40,16 @@ class LLMCallLog(BaseModel):
     prompt: str
     response: str
 
+    # Request config
+    max_tokens: int = 0
+
     # Token usage
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+
+    # Response metadata
+    stop_reason: Optional[str] = None  # e.g., "end_turn", "max_tokens"
 
     # Context
     agent_id: Optional[str] = None

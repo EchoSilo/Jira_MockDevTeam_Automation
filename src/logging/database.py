@@ -153,6 +153,8 @@ class LogDatabase:
                 CREATE INDEX IF NOT EXISTS idx_orchestrator_session ON orchestrator_logs(session_id);
             """
             )
+            # Run migrations for existing tables
+            self._run_migrations(conn)
 
     @contextmanager
     def _get_connection(self):
@@ -164,6 +166,24 @@ class LogDatabase:
             conn.commit()
         finally:
             conn.close()
+
+    def _run_migrations(self, conn) -> None:
+        """Run database migrations for schema updates."""
+        # Check existing columns in llm_calls table
+        cursor = conn.execute("PRAGMA table_info(llm_calls)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Migration: Add max_tokens column
+        if "max_tokens" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE llm_calls ADD COLUMN max_tokens INTEGER DEFAULT 0"
+            )
+
+        # Migration: Add stop_reason column
+        if "stop_reason" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE llm_calls ADD COLUMN stop_reason TEXT"
+            )
 
     def insert_session(self, session: SessionLog) -> None:
         """Insert a session log entry."""
@@ -240,10 +260,11 @@ class LogDatabase:
                 """
                 INSERT INTO llm_calls (
                     id, timestamp, session_id, tick_id, model, action_type,
-                    is_complex, prompt, response, input_tokens, output_tokens,
-                    total_tokens, agent_id, agent_name, ticket_key, scenario_id,
-                    duration_ms, error, success
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_complex, prompt, response, max_tokens, input_tokens,
+                    output_tokens, total_tokens, agent_id, agent_name,
+                    ticket_key, scenario_id, duration_ms, error, success,
+                    stop_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     log.id,
@@ -255,6 +276,7 @@ class LogDatabase:
                     1 if log.is_complex else 0,
                     log.prompt,
                     log.response,
+                    log.max_tokens,
                     log.input_tokens,
                     log.output_tokens,
                     log.total_tokens,
@@ -265,6 +287,7 @@ class LogDatabase:
                     log.duration_ms,
                     log.error,
                     1 if log.success else 0,
+                    log.stop_reason,
                 ),
             )
 

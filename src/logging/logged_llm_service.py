@@ -106,12 +106,13 @@ Just write the comment text directly, nothing else."""
 
         model = self._get_model(action_type)
         is_complex = model == self.complex_model
+        max_tokens = 200
         start_time = time.time()
 
         try:
             response = self.client.messages.create(
                 model=model,
-                max_tokens=200,
+                max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -132,6 +133,8 @@ Just write the comment text directly, nothing else."""
                 ticket_key=ticket_key,
                 scenario_id=self._current_scenario_id,
                 is_complex=is_complex,
+                max_tokens=max_tokens,
+                stop_reason=response.stop_reason,
             )
 
             return response_text
@@ -151,6 +154,7 @@ Just write the comment text directly, nothing else."""
                 ticket_key=ticket_key,
                 scenario_id=self._current_scenario_id,
                 is_complex=is_complex,
+                max_tokens=max_tokens,
                 error=str(e),
             )
             raise
@@ -206,12 +210,13 @@ Respond in this exact JSON format:
 Just the JSON, nothing else."""
 
         model = self.complex_model
+        max_tokens = 500
         start_time = time.time()
 
         try:
             response = self.client.messages.create(
                 model=model,
-                max_tokens=500,
+                max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -232,6 +237,8 @@ Just the JSON, nothing else."""
                 ticket_key=self._current_ticket_key,
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
+                max_tokens=max_tokens,
+                stop_reason=response.stop_reason,
             )
 
             import json
@@ -251,6 +258,7 @@ Just the JSON, nothing else."""
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
                 is_complex=True,
+                max_tokens=max_tokens,
                 error=str(e),
             )
             raise
@@ -288,12 +296,13 @@ Respond in this exact JSON format:
 Just the JSON, nothing else."""
 
         model = self.complex_model
+        max_tokens = 500
         start_time = time.time()
 
         try:
             response = self.client.messages.create(
                 model=model,
-                max_tokens=500,
+                max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -314,6 +323,8 @@ Just the JSON, nothing else."""
                 ticket_key=related_ticket.get("key"),
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
+                max_tokens=max_tokens,
+                stop_reason=response.stop_reason,
             )
 
             import json
@@ -333,6 +344,7 @@ Just the JSON, nothing else."""
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
                 is_complex=True,
+                max_tokens=max_tokens,
                 error=str(e),
             )
             raise
@@ -376,12 +388,13 @@ Write a realistic technical comment (2-4 sentences) that:
 No fluff, no AI-speak. Just the comment."""
 
         model = self.complex_model
+        max_tokens = 300
         start_time = time.time()
 
         try:
             response = self.client.messages.create(
                 model=model,
-                max_tokens=300,
+                max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -402,6 +415,8 @@ No fluff, no AI-speak. Just the comment."""
                 ticket_key=ticket_key,
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
+                max_tokens=max_tokens,
+                stop_reason=response.stop_reason,
             )
 
             return response_text
@@ -421,6 +436,7 @@ No fluff, no AI-speak. Just the comment."""
                 ticket_key=ticket_key,
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
+                max_tokens=max_tokens,
                 error=str(e),
             )
             raise

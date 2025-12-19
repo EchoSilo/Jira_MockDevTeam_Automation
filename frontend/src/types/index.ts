@@ -23,6 +23,10 @@ export interface Sprint {
   day: number;
   totalDays: number;
   startDate: string;
+  endDate?: string;
+  totalItems?: number;
+  doneItems?: number;
+  isFromJira?: boolean;  // Indicates if this is real Jira data
 }
 
 // Status breakdown
@@ -98,5 +102,5 @@ export interface VelocityDataPoint {
 export interface BurndownDataPoint {
   day: string;
   ideal: number;
-  actual: number;
+  actual: number | null;  // null for future days
 }

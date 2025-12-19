@@ -250,6 +250,64 @@ def _find_agent_by_jira_account(state: SimulationState, account_id: Optional[str
     return None
 
 
+def validate_state_agent_ids(state: SimulationState, personas: dict) -> SimulationState:
+    """
+    Validate and clean up agent_ids in state against personas config.
+
+    This prevents runtime errors from invalid agent_ids that may have been
+    persisted from previous runs or LLM hallucinations.
+
+    Args:
+        state: The simulation state to validate
+        personas: The personas config containing valid agent IDs
+
+    Returns:
+        The cleaned state with invalid agent_ids removed or replaced
+    """
+    valid_agent_ids = set(personas.get("agents", {}).keys())
+
+    # Clean up active scenarios
+    scenarios_to_clean = []
+    for scenario_id, scenario in state.active_scenarios.items():
+        needs_cleaning = False
+
+        # Check assigned_agent
+        if scenario.assigned_agent and scenario.assigned_agent not in valid_agent_ids:
+            # Try to find a valid agent from actions_taken
+            valid_agent = None
+            for action in scenario.actions_taken:
+                if action.get("agent_id") in valid_agent_ids:
+                    valid_agent = action.get("agent_id")
+                    break
+
+            if valid_agent:
+                scenario.assigned_agent = valid_agent
+            else:
+                scenario.assigned_agent = None
+            needs_cleaning = True
+
+        # Clean involved_agents list
+        original_involved = scenario.involved_agents.copy()
+        scenario.involved_agents = [
+            a for a in scenario.involved_agents if a in valid_agent_ids
+        ]
+        if scenario.involved_agents != original_involved:
+            needs_cleaning = True
+
+        if needs_cleaning:
+            scenarios_to_clean.append(scenario_id)
+
+    # Clean up agent states - remove any with invalid IDs
+    invalid_agents = [
+        agent_id for agent_id in state.agents.keys()
+        if agent_id not in valid_agent_ids
+    ]
+    for agent_id in invalid_agents:
+        del state.agents[agent_id]
+
+    return state
+
+
 def get_scenario_opportunities(state: SimulationState) -> list[dict]:
     """
     Analyze state and return opportunities for scenario actions.

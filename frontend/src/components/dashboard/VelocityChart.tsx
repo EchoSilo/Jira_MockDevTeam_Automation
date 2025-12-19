@@ -23,14 +23,14 @@ export function VelocityChart({ data }: VelocityChartProps) {
 
   // Calculate trend
   const lastTwo = data.slice(-2);
-  const trend =
-    lastTwo.length === 2
-      ? Math.round(
-          ((lastTwo[1].completedItems - lastTwo[0].completedItems) /
-            lastTwo[0].completedItems) *
-            100
-        )
-      : 0;
+  let trend = 0;
+  if (lastTwo.length === 2 && lastTwo[0].completedItems > 0) {
+    trend = Math.round(
+      ((lastTwo[1].completedItems - lastTwo[0].completedItems) /
+        lastTwo[0].completedItems) *
+        100
+    );
+  }
 
   return (
     <div className="card">

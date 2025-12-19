@@ -6,6 +6,7 @@ import api, {
   type HealthResponse,
   type SessionsResponse,
   type TokenStats,
+  type SprintDataResponse,
   ApiError,
 } from '@/lib/api';
 
@@ -110,6 +111,10 @@ export function useScenarios(options?: UseQueryOptions) {
   return useQuery<ScenariosResponse>(() => api.getScenarios(), options);
 }
 
+export function useSprintData(options?: UseQueryOptions) {
+  return useQuery<SprintDataResponse>(() => api.getSprintData(), options);
+}
+
 export function useSessions(
   params?: { limit?: number; offset?: number },
   options?: UseQueryOptions
@@ -130,6 +135,7 @@ export interface DashboardData {
   state: SimulationState | null;
   agents: AgentsResponse | null;
   scenarios: ScenariosResponse | null;
+  sprintData: SprintDataResponse | null;
 }
 
 export function useDashboardData(options?: { refetchInterval?: number }) {
@@ -139,11 +145,12 @@ export function useDashboardData(options?: { refetchInterval?: number }) {
   const state = useSimulationState({ refetchInterval });
   const agents = useAgents({ refetchInterval });
   const scenarios = useScenarios({ refetchInterval });
+  const sprintData = useSprintData({ refetchInterval });
 
   const isLoading =
-    health.isLoading || state.isLoading || agents.isLoading || scenarios.isLoading;
+    health.isLoading || state.isLoading || agents.isLoading || scenarios.isLoading || sprintData.isLoading;
 
-  const error = health.error || state.error || agents.error || scenarios.error;
+  const error = health.error || state.error || agents.error || scenarios.error || sprintData.error;
 
   // Store refetch functions in refs to avoid dependency changes
   const healthRefetchRef = useRef(health.refetch);
@@ -154,6 +161,8 @@ export function useDashboardData(options?: { refetchInterval?: number }) {
   agentsRefetchRef.current = agents.refetch;
   const scenariosRefetchRef = useRef(scenarios.refetch);
   scenariosRefetchRef.current = scenarios.refetch;
+  const sprintDataRefetchRef = useRef(sprintData.refetch);
+  sprintDataRefetchRef.current = sprintData.refetch;
 
   const refetch = useCallback(async () => {
     await Promise.all([
@@ -161,6 +170,7 @@ export function useDashboardData(options?: { refetchInterval?: number }) {
       stateRefetchRef.current(),
       agentsRefetchRef.current(),
       scenariosRefetchRef.current(),
+      sprintDataRefetchRef.current(),
     ]);
   }, []);
 
@@ -170,6 +180,7 @@ export function useDashboardData(options?: { refetchInterval?: number }) {
       state: state.data,
       agents: agents.data,
       scenarios: scenarios.data,
+      sprintData: sprintData.data,
     },
     isLoading,
     error,

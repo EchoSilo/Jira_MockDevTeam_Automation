@@ -46,7 +46,7 @@ export function StatusBreakdownChart({ data }: StatusBreakdownChartProps) {
           <BarChart
             data={chartData}
             layout="vertical"
-            margin={{ top: 0, right: 0, bottom: 0, left: 80 }}
+            margin={{ top: 0, right: 10, bottom: 0, left: 0 }}
           >
             <XAxis
               type="number"
@@ -59,8 +59,8 @@ export function StatusBreakdownChart({ data }: StatusBreakdownChartProps) {
               dataKey="name"
               axisLine={false}
               tickLine={false}
-              tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
-              width={75}
+              tick={{ fill: 'var(--color-text-secondary)', fontSize: 12, textAnchor: 'end' }}
+              width={80}
             />
             <Tooltip
               contentStyle={{

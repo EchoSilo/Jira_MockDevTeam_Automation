@@ -10,3 +10,4 @@ export { WorkloadCard } from './WorkloadCard';
 export { VelocityChart } from './VelocityChart';
 export { BurndownChart } from './BurndownChart';
 export { ActivityFeed } from './ActivityFeed';
+export { ScenarioTimeline } from './ScenarioTimeline';
