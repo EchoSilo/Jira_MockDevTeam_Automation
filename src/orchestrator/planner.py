@@ -188,6 +188,35 @@ class ScenarioPlanner:
         agents_summary = self._format_available_agents()
         metrics = analysis.get("metrics", {})
 
+        # Calculate advancement requirements
+        advancement_summary = self._get_advancement_summary(state, analysis)
+        ready_count = advancement_summary["ready_count"]
+        min_advancements = min(ready_count, max(1, int(target_actions * 0.6))) if ready_count > 0 else 0
+
+        # Build mandatory requirements section if there are ready scenarios
+        mandatory_section = ""
+        if ready_count > 0:
+            mandatory_section = f"""
+## MANDATORY REQUIREMENTS (YOU MUST FOLLOW THESE)
+
+There are {ready_count} scenarios OVERDUE and past their target completion time.
+
+**These tickets MUST be advanced THIS tick:**
+{self._format_required_advancements(advancement_summary["ready_scenarios"])}
+
+**BINDING RULES:**
+1. At least {min_advancements} of your {target_actions} actions MUST be advancement actions
+2. Advancement actions include: complete_review, qa_approve, qa_test, verify_fix, progress_to_review
+3. DO NOT plan "pick_up_task" when the above items are waiting for review or QA
+4. If you choose "pick_up_task" over advancing overdue items, your plan is INVALID
+
+"""
+
+        # Build warning if items are overdue
+        overdue_warning = ""
+        if ready_count > 0:
+            overdue_warning = f"**WARNING:** {ready_count} items are OVERDUE and MUST be prioritized over new work!\n\n"
+
         return f"""You are the Scenario Orchestrator for a Jira team simulation.
 Your job is to plan realistic team activity that creates meaningful patterns in the data.
 
@@ -221,24 +250,25 @@ Your job is to plan realistic team activity that creates meaningful patterns in 
 - Rework (QA rejection): 15%
 - Scope creep: 5%
 - Dependencies: 5%
-
+{mandatory_section}
 ## Your Task
-Plan {target_actions} actions for this tick. Consider:
+Plan {target_actions} actions for this tick.
 
-1. **Priority order:**
-   - Advance scenarios that are ready (high priority opportunities)
-   - Inject new scenarios to maintain balance (medium priority)
-   - Pick up backlog items if developers are available
+{overdue_warning}**Action Selection Priority (STRICTLY FOLLOW THIS ORDER):**
+1. **FIRST**: {"Advance the " + str(ready_count) + " overdue scenarios listed above" if ready_count > 0 else "Advance scenarios that are ready (high priority)"}
+2. **SECOND**: Inject new scenarios to maintain balance (medium priority)
+3. **LAST**: Pick up backlog items ONLY if no items need advancement
 
-2. **Realism:**
-   - Don't rush tickets through too fast (realistic cycle times)
-   - Vary the types of actions (not all the same)
-   - Consider the time of sprint (early = more pickup, late = more completion)
+**Realism Considerations:**
+- Don't rush tickets through too fast (respect cycle times)
+- Vary the types of actions (not all the same)
+- Consider the time of sprint (early = more pickup, late = more completion)
 
-3. **Avoid:**
-   - Same agent acting multiple times
-   - Repetitive actions (check recent actions)
-   - Unrealistic patterns (5 blockers at once, etc.)
+**Avoid:**
+- Same agent acting multiple times
+- Repetitive actions (check recent actions)
+- Unrealistic patterns (5 blockers at once, etc.)
+- {"Picking up new work when " + str(ready_count) + " items are waiting for advancement!" if ready_count > 0 else ""}
 
 ## Cycle Time Guidelines
 - Bugs: 1-3 days total
@@ -400,6 +430,52 @@ Remember:
                 return agent_id
         return None
 
+    def _get_advancement_summary(self, state: SimulationState, analysis: dict) -> dict:
+        """Get summary of scenarios ready for advancement with specific actions needed."""
+        summary = {
+            "ready_count": 0,
+            "ready_scenarios": [],
+            "by_action": {}
+        }
+
+        opportunities = analysis.get("opportunities", [])
+        phase_advancements = [
+            o for o in opportunities
+            if o.get("type") == "phase_advancement"
+            and o.get("priority") == "high"
+        ]
+
+        for opp in phase_advancements:
+            action = opp.get("suggested_action", "unknown")
+            summary["ready_count"] += 1
+            summary["ready_scenarios"].append({
+                "ticket_key": opp.get("ticket_key"),
+                "action": action,
+                "agent_id": opp.get("agent_id"),
+                "days_waiting": opp.get("days_in_phase", 0),
+                "scenario_id": opp.get("scenario_id")
+            })
+            summary["by_action"][action] = summary["by_action"].get(action, 0) + 1
+
+        return summary
+
+    def _format_required_advancements(self, ready_scenarios: list) -> str:
+        """Format the list of required advancement actions."""
+        if not ready_scenarios:
+            return "None currently"
+
+        lines = []
+        for s in ready_scenarios[:5]:  # Limit to 5 most urgent
+            lines.append(
+                f"  - {s['ticket_key']}: Needs '{s['action']}' by {s['agent_id']} "
+                f"(waiting {s['days_waiting']:.1f} days)"
+            )
+
+        if len(ready_scenarios) > 5:
+            lines.append(f"  ... and {len(ready_scenarios) - 5} more")
+
+        return "\n".join(lines)
+
     def _parse_response(self, raw_response: str) -> dict:
         """Parse LLM response, handling various formats. Forgiving approach."""
         # Try to find JSON in the response
@@ -532,6 +608,39 @@ Remember:
             if agent_id:
                 used_agents.add(agent_id)
 
+        # Safety net: Ensure at least one phase advancement if any are available
+        advancement_action_types = {
+            "complete_review", "qa_approve", "qa_test", "verify_fix",
+            "progress_to_review", "resolve_blocker", "complete_fix"
+        }
+        has_advancement = any(a.get("type") in advancement_action_types for a in validated)
+
+        if not has_advancement:
+            # Check if there are ready-to-advance scenarios we should inject
+            phase_advancements = [
+                o for o in analysis.get("opportunities", [])
+                if o.get("type") == "phase_advancement"
+                and o.get("priority") == "high"
+                and o.get("agent_id") not in used_agents
+            ]
+
+            if phase_advancements:
+                # Inject the most urgent one at the front of the action list
+                opp = phase_advancements[0]
+                injected_action = {
+                    "type": opp.get("suggested_action", "unknown"),
+                    "scenario_id": opp.get("scenario_id"),
+                    "ticket_key": opp.get("ticket_key"),
+                    "agent_id": opp.get("agent_id"),
+                    "details": "Validator-injected: overdue item prioritized",
+                }
+                validated.insert(0, injected_action)
+                used_agents.add(opp.get("agent_id"))
+                logger.info(
+                    f"Validator injected advancement for {opp.get('ticket_key')} - "
+                    f"planner overlooked {len(phase_advancements)} ready scenarios"
+                )
+
         return validated
 
     def _fallback_plan(
@@ -540,22 +649,75 @@ Remember:
         state: SimulationState,
         target_actions: int,
     ) -> list[dict]:
-        """Create a basic fallback plan when LLM fails."""
+        """Create a fallback plan with guaranteed minimum phase advancements."""
         actions = []
+        used_agents = set()
         opportunities = analysis.get("opportunities", [])
 
-        # Sort by priority
-        high_priority = [o for o in opportunities if o.get("priority") == "high"]
+        # PRIORITY 1: Phase advancements (at least 60% of actions when available)
+        phase_advancements = [
+            o for o in opportunities
+            if o.get("type") == "phase_advancement"
+            and o.get("priority") == "high"
+        ]
 
-        # Take high priority opportunities
-        for opp in high_priority[:target_actions]:
-            action = {
-                "type": opp.get("suggested_action", opp.get("type", "unknown")),
-                "scenario_id": opp.get("scenario_id"),
-                "ticket_key": opp.get("ticket_key"),
-                "agent_id": opp.get("agent_id"),
-                "details": opp.get("description", ""),
-            }
-            actions.append(action)
+        # Calculate minimum advancements: 60% of target, or all available, whichever is less
+        min_advancements = min(
+            len(phase_advancements),
+            max(1, int(target_actions * 0.6))
+        ) if phase_advancements else 0
 
+        for opp in phase_advancements[:min_advancements]:
+            agent_id = opp.get("agent_id")
+            if agent_id and agent_id not in used_agents:
+                actions.append({
+                    "type": opp.get("suggested_action", "unknown"),
+                    "scenario_id": opp.get("scenario_id"),
+                    "ticket_key": opp.get("ticket_key"),
+                    "agent_id": agent_id,
+                    "details": f"Fallback: advancing {opp.get('ticket_key')} from {opp.get('current_phase', 'unknown')}",
+                })
+                used_agents.add(agent_id)
+
+        # PRIORITY 2: Other high priority opportunities (violations, sprints, etc.)
+        remaining_slots = target_actions - len(actions)
+        other_high = [
+            o for o in opportunities
+            if o.get("priority") == "high"
+            and o.get("type") != "phase_advancement"
+            and o.get("agent_id") not in used_agents
+        ]
+
+        for opp in other_high[:remaining_slots]:
+            agent_id = opp.get("agent_id") or opp.get("pm_id")
+            if agent_id and agent_id not in used_agents:
+                actions.append({
+                    "type": opp.get("suggested_action", opp.get("type", "unknown")),
+                    "scenario_id": opp.get("scenario_id"),
+                    "ticket_key": opp.get("ticket_key") or opp.get("epic_key"),
+                    "agent_id": agent_id,
+                    "details": opp.get("description", ""),
+                })
+                used_agents.add(agent_id)
+
+        # PRIORITY 3: Medium priority opportunities to fill remaining slots
+        remaining_slots = target_actions - len(actions)
+        if remaining_slots > 0:
+            medium = [
+                o for o in opportunities
+                if o.get("priority") == "medium"
+            ]
+            for opp in medium[:remaining_slots]:
+                agent_id = opp.get("agent_id") or opp.get("pm_id")
+                if agent_id and agent_id not in used_agents:
+                    actions.append({
+                        "type": opp.get("suggested_action", opp.get("type", "unknown")),
+                        "scenario_id": opp.get("scenario_id"),
+                        "ticket_key": opp.get("ticket_key"),
+                        "agent_id": agent_id,
+                        "details": opp.get("description", ""),
+                    })
+                    used_agents.add(agent_id)
+
+        logger.info(f"Fallback plan: {len(actions)} actions ({min_advancements} forced advancements)")
         return actions

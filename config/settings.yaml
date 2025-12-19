@@ -98,8 +98,8 @@ cycle_times:
 
 # LLM configuration
 llm:
-  routine_model: "claude-3-haiku-20240307"
-  complex_model: "claude-sonnet-4-20250514"
+  routine_model: "claude-haiku-4-5"
+  complex_model: "claude-sonnet-4-5"
 
   # Temperature settings
   planning_temperature: 0.7   # Higher for creative scenario decisions

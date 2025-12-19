@@ -432,6 +432,10 @@ HTML_VIEWER = """
                 <div class="stat-value" id="stat-avg-time">-</div>
                 <div class="stat-label">Avg Duration</div>
             </div>
+            <div class="stat">
+                <div class="stat-value" id="stat-cost">-</div>
+                <div class="stat-label">Total Cost</div>
+            </div>
         </div>
 
         <div style="display: flex; gap: 20px;">
@@ -468,6 +472,19 @@ HTML_VIEWER = """
         let currentSession = null;
         let currentTab = 'conversation';
 
+        // Cost calculation helpers
+        // Pricing: Sonnet (complex) $3/$15, Haiku (routine) $1/$5 per MTok
+        function calculateCost(isComplex, inputTokens, outputTokens) {
+            const inputRate = isComplex ? 3 : 1;
+            const outputRate = isComplex ? 15 : 5;
+            return (inputTokens * inputRate + outputTokens * outputRate) / 1000000;
+        }
+
+        function formatCost(cost) {
+            if (cost === 0) return '$0.00';
+            return cost < 0.01 ? '<$0.01' : '$' + cost.toFixed(2);
+        }
+
         // Load stats
         async function loadStats() {
             try {
@@ -484,6 +501,11 @@ HTML_VIEWER = """
                     stats.routine_calls.toLocaleString();
                 document.getElementById('stat-avg-time').textContent =
                     stats.avg_duration_ms.toFixed(0) + 'ms';
+
+                // Calculate and display total cost
+                const totalCost = calculateCost(true, stats.complex_input_tokens || 0, stats.complex_output_tokens || 0)
+                                + calculateCost(false, stats.routine_input_tokens || 0, stats.routine_output_tokens || 0);
+                document.getElementById('stat-cost').textContent = formatCost(totalCost);
             } catch (e) {
                 console.error('Failed to load stats:', e);
             }
@@ -508,6 +530,8 @@ HTML_VIEWER = """
                                       s.intensity === 'busy' ? 'badge-busy' : 'badge-normal';
                     const errorBadge = s.errors > 0 ?
                         `<span class="badge badge-error">${s.errors} errors</span>` : '';
+                    const sessionCost = calculateCost(true, s.complex_input_tokens || 0, s.complex_output_tokens || 0)
+                                      + calculateCost(false, s.routine_input_tokens || 0, s.routine_output_tokens || 0);
 
                     return `
                         <div class="session-item" data-session="${s.session_id}">
@@ -520,7 +544,7 @@ HTML_VIEWER = """
                             <div class="session-stats">
                                 <span class="badge ${badgeClass}">${s.intensity}</span>
                                 ${errorBadge}
-                                <span class="token-count">${s.total_input_tokens + s.total_output_tokens} tokens</span>
+                                <span class="token-count">${s.total_input_tokens + s.total_output_tokens} tok | ${formatCost(sessionCost)}</span>
                             </div>
                         </div>
                     `;
@@ -581,6 +605,8 @@ HTML_VIEWER = """
                             `max_tokens: ${c.max_tokens || 'N/A'}`,
                             c.stop_reason ? `stop: ${c.stop_reason}` : null
                         ].filter(Boolean).join(' | ');
+                        const inputCost = calculateCost(c.is_complex, c.input_tokens, 0);
+                        const outputCost = calculateCost(c.is_complex, 0, c.output_tokens);
 
                         return `
                             <div class="message message-prompt expandable" onclick="this.classList.toggle('expanded')">
@@ -594,7 +620,7 @@ HTML_VIEWER = """
                                         ${c.ticket_key ? `<span>Ticket: ${c.ticket_key}</span>` : ''}
                                     </div>
                                     <div class="message-meta">
-                                        <span class="token-count">${c.input_tokens} tokens</span>
+                                        <span class="token-count">${c.input_tokens} tok (${formatCost(inputCost)})</span>
                                         <span>${time}</span>
                                     </div>
                                 </div>
@@ -611,7 +637,7 @@ HTML_VIEWER = """
                                         <span style="font-size: 11px; color: #666;">${configInfo}</span>
                                     </div>
                                     <div class="message-meta">
-                                        <span class="token-count">${c.output_tokens} tokens</span>
+                                        <span class="token-count">${c.output_tokens} tok (${formatCost(outputCost)})</span>
                                     </div>
                                 </div>
                                 <div class="message-content">${escapeHtml(c.response)}</div>

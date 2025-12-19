@@ -232,18 +232,25 @@ export function DashboardPage() {
 
           {/* Simulation View - Focus on simulation diagnostics */}
           <TabsContent value="simulation" className="space-y-6">
-            <Masonry
-              breakpointCols={breakpointColumns}
-              className="masonry-grid"
-              columnClassName="masonry-column"
-            >
-              <ScenarioTimeline
-                scenarios={state ? Object.values(state.active_scenarios) : []}
-              />
-              <ActiveScenariosCard data={scenarioDistribution} />
-              <ScenarioDistributionChart data={scenarioDistribution} />
-              <ActivityFeed activities={recentActivities} />
-            </Masonry>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Column 1: Active Scenarios + Scenario Distribution */}
+              <div className="space-y-6">
+                <ActiveScenariosCard data={scenarioDistribution} />
+                <ScenarioDistributionChart data={scenarioDistribution} />
+              </div>
+
+              {/* Column 2: Scenario Timeline */}
+              <div>
+                <ScenarioTimeline
+                  scenarios={state ? Object.values(state.active_scenarios) : []}
+                />
+              </div>
+
+              {/* Column 3: Recent Activity */}
+              <div>
+                <ActivityFeed activities={recentActivities} />
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

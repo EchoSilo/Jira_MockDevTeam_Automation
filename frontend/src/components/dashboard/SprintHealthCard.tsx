@@ -53,8 +53,8 @@ export function SprintHealthCard({
         </span>
 
         <span className={cn(
-          'font-semibold',
-          compact ? 'text-lg' : 'text-2xl',
+          'font-bold',
+          compact ? 'text-2xl' : 'text-3xl',
           statusColor[status]
         )}>
           {healthLabels[health]}

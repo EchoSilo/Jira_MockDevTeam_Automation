@@ -66,7 +66,11 @@ class LogQueryService:
                     s.*,
                     COALESCE(SUM(l.input_tokens), 0) as computed_input_tokens,
                     COALESCE(SUM(l.output_tokens), 0) as computed_output_tokens,
-                    COUNT(l.id) as computed_llm_calls
+                    COUNT(l.id) as computed_llm_calls,
+                    COALESCE(SUM(CASE WHEN l.is_complex = 1 THEN l.input_tokens ELSE 0 END), 0) as complex_input_tokens,
+                    COALESCE(SUM(CASE WHEN l.is_complex = 1 THEN l.output_tokens ELSE 0 END), 0) as complex_output_tokens,
+                    COALESCE(SUM(CASE WHEN l.is_complex = 0 THEN l.input_tokens ELSE 0 END), 0) as routine_input_tokens,
+                    COALESCE(SUM(CASE WHEN l.is_complex = 0 THEN l.output_tokens ELSE 0 END), 0) as routine_output_tokens
                 FROM sessions s
                 LEFT JOIN llm_calls l ON s.session_id = l.session_id
                 WHERE 1=1
@@ -412,7 +416,11 @@ class LogQueryService:
                     SUM(total_tokens) as total_tokens,
                     AVG(duration_ms) as avg_duration_ms,
                     SUM(CASE WHEN is_complex = 1 THEN 1 ELSE 0 END) as complex_calls,
-                    SUM(CASE WHEN is_complex = 0 THEN 1 ELSE 0 END) as routine_calls
+                    SUM(CASE WHEN is_complex = 0 THEN 1 ELSE 0 END) as routine_calls,
+                    SUM(CASE WHEN is_complex = 1 THEN input_tokens ELSE 0 END) as complex_input_tokens,
+                    SUM(CASE WHEN is_complex = 1 THEN output_tokens ELSE 0 END) as complex_output_tokens,
+                    SUM(CASE WHEN is_complex = 0 THEN input_tokens ELSE 0 END) as routine_input_tokens,
+                    SUM(CASE WHEN is_complex = 0 THEN output_tokens ELSE 0 END) as routine_output_tokens
                 FROM llm_calls
                 WHERE 1=1
             """
@@ -438,6 +446,10 @@ class LogQueryService:
                     "avg_duration_ms": round(row["avg_duration_ms"] or 0, 2),
                     "complex_calls": row["complex_calls"] or 0,
                     "routine_calls": row["routine_calls"] or 0,
+                    "complex_input_tokens": row["complex_input_tokens"] or 0,
+                    "complex_output_tokens": row["complex_output_tokens"] or 0,
+                    "routine_input_tokens": row["routine_input_tokens"] or 0,
+                    "routine_output_tokens": row["routine_output_tokens"] or 0,
                 }
 
             return {
@@ -448,6 +460,10 @@ class LogQueryService:
                 "avg_duration_ms": 0,
                 "complex_calls": 0,
                 "routine_calls": 0,
+                "complex_input_tokens": 0,
+                "complex_output_tokens": 0,
+                "routine_input_tokens": 0,
+                "routine_output_tokens": 0,
             }
 
         finally:

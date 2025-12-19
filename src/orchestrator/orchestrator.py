@@ -69,8 +69,8 @@ class ScenarioOrchestrator:
         self.jira_tools = JiraTools(jira_client)
 
         # Create LLM config for crews
-        routine = settings.get("llm", {}).get("routine_model", "claude-3-haiku-20240307")
-        complex_m = settings.get("llm", {}).get("complex_model", "claude-sonnet-4-20250514")
+        routine = settings.get("llm", {}).get("routine_model", "claude-haiku-4-5")
+        complex_m = settings.get("llm", {}).get("complex_model", "claude-sonnet-4-5")
         self.llm_config = {
             "routine_model": routine,
             "complex_model": complex_m,

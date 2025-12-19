@@ -1,4 +1,5 @@
 import { User, Bot } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { cn } from '@/lib/utils';
 import type { ChatMessage as ChatMessageType } from '@/types';
 
@@ -13,26 +14,29 @@ function formatTime(timestamp: string): string {
   });
 }
 
-// Simple ticket link detection and rendering
-function renderContent(content: string): React.ReactNode {
-  // Match ticket keys like PROJ-123, ABC-456
+// Custom component to render ticket links within text
+function TicketLink({ text }: { text: string }) {
   const ticketRegex = /([A-Z]+-\d+)/g;
-  const parts = content.split(ticketRegex);
+  const parts = text.split(ticketRegex);
 
-  return parts.map((part, index) => {
-    if (ticketRegex.test(part)) {
-      ticketRegex.lastIndex = 0; // Reset regex state
-      return (
-        <span
-          key={index}
-          className="text-[var(--color-primary)] font-mono text-sm cursor-pointer hover:underline"
-        >
-          {part}
-        </span>
-      );
-    }
-    return part;
-  });
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (ticketRegex.test(part)) {
+          ticketRegex.lastIndex = 0;
+          return (
+            <span
+              key={index}
+              className="text-[var(--color-primary)] font-mono cursor-pointer hover:underline"
+            >
+              {part}
+            </span>
+          );
+        }
+        return part;
+      })}
+    </>
+  );
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {
@@ -81,9 +85,17 @@ export function ChatMessage({ message }: ChatMessageProps) {
               : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)] rounded-bl-sm'
           )}
         >
-          <p className="text-sm whitespace-pre-wrap">
-            {renderContent(message.content)}
-          </p>
+          <div className="text-sm [&_p]:my-1 [&_ul]:my-2 [&_ul]:pl-4 [&_ul]:list-disc [&_li]:my-0.5 [&_strong]:font-semibold">
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => <p className="my-1"><TicketLink text={String(children)} /></p>,
+                li: ({ children }) => <li><TicketLink text={String(children)} /></li>,
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
         </div>
         <span className="text-xs text-[var(--color-text-muted)] mt-1">
           {formatTime(message.timestamp)}

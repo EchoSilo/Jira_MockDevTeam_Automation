@@ -41,8 +41,8 @@ export function MetricCard({
             {title}
           </span>
           <span className={cn(
-            'font-semibold',
-            compact ? 'text-lg' : 'text-2xl',
+            'font-bold',
+            compact ? 'text-3xl' : 'text-4xl',
             statusColors[status]
           )}>
             {value}

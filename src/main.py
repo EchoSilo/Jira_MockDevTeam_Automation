@@ -483,6 +483,16 @@ async def get_scenarios():
     """Get active scenarios and their status (cached for dashboard performance)."""
     state = _state_cache.get()
     scenarios = []
+
+    # Compute distribution from active scenarios (not stored totals)
+    active_distribution = {
+        "normal_flow": 0,
+        "blocker": 0,
+        "rework": 0,
+        "scope_creep": 0,
+        "dependency": 0,
+    }
+
     for scenario_id, scenario in state.active_scenarios.items():
         # Compute is_blocked from phase
         is_blocked = scenario.current_phase.value in ["blocked", "blocker_discussed", "waiting_on_dependency"]
@@ -505,10 +515,15 @@ async def get_scenarios():
             "target_end": scenario.target_completion.isoformat() if scenario.target_completion else None,
         })
 
+        # Count by scenario type for active distribution
+        scenario_type = scenario.scenario_type.value
+        if scenario_type in active_distribution:
+            active_distribution[scenario_type] += 1
+
     return {
         "active_count": len(scenarios),
         "scenarios": scenarios,
-        "distribution": state.scenario_distribution.model_dump() if state.scenario_distribution else {},
+        "distribution": active_distribution,
     }
 
 
