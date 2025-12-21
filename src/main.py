@@ -17,8 +17,11 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file before other imports
 
-from fastapi import FastAPI, HTTPException
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yaml
 
@@ -764,3 +767,28 @@ Respond as {pm_config.get('display_name')}:"""
         response=pm_response,
         tickets_mentioned=tickets_mentioned,
     )
+
+
+# ============ Frontend Static Files ============
+# Serve the built React frontend (must be after all API routes)
+
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIR.exists():
+    # Mount static assets (js, css, images, etc.)
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+
+    # Serve index.html for root and all non-API routes (SPA routing)
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Catch-all route for SPA - serve index.html for client-side routing."""
+        # If the path points to an actual file, serve it
+        file_path = FRONTEND_DIR / path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise serve index.html for client-side routing
+        return FileResponse(FRONTEND_DIR / "index.html")
