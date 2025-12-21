@@ -646,7 +646,19 @@ async def list_agents():
             "current_workload": agent_state.current_workload if agent_state else 0,
             "daily_actions": agent_state.actions_today if agent_state else 0,
         })
-    return {"agents": agents}
+
+    # Get schedule config for dashboard context
+    schedule_config = app.state.settings.get("schedule", {})
+
+    return {
+        "agents": agents,
+        "last_run": state.last_run.isoformat() if state.last_run else None,
+        "schedule": {
+            "days": schedule_config.get("days", [1, 2, 3, 4, 5]),
+            "start_hour": schedule_config.get("start_hour", 9),
+            "end_hour": schedule_config.get("end_hour", 17),
+        }
+    }
 
 
 class ChatRequest(BaseModel):

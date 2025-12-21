@@ -23,7 +23,7 @@ import {
   transformRecentActions,
   countBlockers,
   countOverloadedAgents,
-  getTodayActivityCount,
+  getActivityContext,
   filterScenariosByTeam,
 } from '@/lib/transformers';
 import { cn } from '@/lib/utils';
@@ -138,7 +138,9 @@ export function DashboardPage() {
   const activeScenarioCount = filteredScenarios?.active_count || 0;
   const blockedItems = filteredScenarios ? countBlockers(filteredScenarios) : 0;
   const overloadedCount = state ? countOverloadedAgents(state) : 0;
-  const todayActions = agents ? getTodayActivityCount(agents, selectedTeam) : 0;
+  const activityContext = agents
+    ? getActivityContext(agents, selectedTeam)
+    : { count: 0, subtitle: 'actions', isStaleData: false };
 
   return (
     <div className="min-h-screen">
@@ -182,8 +184,8 @@ export function DashboardPage() {
           />
           <MetricCard
             title="Today's Activity"
-            value={todayActions}
-            subtitle="actions"
+            value={activityContext.count}
+            subtitle={activityContext.subtitle}
             compact
           />
           <MetricCard
