@@ -18,6 +18,47 @@ from ..state import ActiveScenario, ScenarioPhase
 class TicketLifecycleCrew(BaseCrew):
     """Crew for progressing tickets through normal workflow."""
 
+    def _detect_jira_success(self, result: str) -> bool:
+        """
+        Parse crew result to determine if Jira transition succeeded.
+
+        Returns True if transition succeeded, False if it failed.
+        Defaults to True if we can't determine (optimistic).
+        """
+        result_str = str(result).lower()
+
+        # Failure indicators
+        failure_indicators = [
+            "could not transition",
+            "failed to transition",
+            "transition failed",
+            "error transitioning",
+            "no valid transition",
+            "not a valid transition",
+            "available transitions:",
+            "cannot transition",
+        ]
+
+        for indicator in failure_indicators:
+            if indicator in result_str:
+                return False
+
+        # Success indicators (optional but good to check)
+        success_indicators = [
+            "transitioned",
+            "successfully",
+            "moved to",
+            "changed to",
+        ]
+
+        # If we find explicit success, return True
+        for indicator in success_indicators:
+            if indicator in result_str:
+                return True
+
+        # Default to True (optimistic) if we can't determine
+        return True
+
     def pick_up_from_backlog(
         self,
         scenario: ActiveScenario,
@@ -57,6 +98,7 @@ Keep the comment brief and natural - something like "Picking this up" or "Starti
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def progress_to_review(
@@ -104,6 +146,7 @@ Important: Your comment should sound like a real developer, not AI. Be brief and
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def complete_code_review(
@@ -166,6 +209,7 @@ Be specific and technical in your feedback. Reference actual aspects of the tick
             "ticket": scenario.ticket_key,
             "agent": tech_lead_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def qa_approve(
@@ -228,6 +272,7 @@ Keep it brief - something like "Tested and verified. All acceptance criteria met
             "ticket": scenario.ticket_key,
             "agent": qa_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def add_progress_comment(
@@ -272,4 +317,5 @@ Sound natural - this is just a status update, not a formal report.
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": True,  # Comment-only action, no transition to fail
         }

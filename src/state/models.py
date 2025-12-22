@@ -95,6 +95,16 @@ class ActionRecord(BaseModel):
     details: Optional[str] = None
 
 
+class PlannedAction(BaseModel):
+    """A single action in a scenario script (pre-planned journey)."""
+    type: str
+    target_status: Optional[str] = None
+    role: Optional[str] = None
+    optional: bool = False
+    executed: bool = False
+    context: Optional[str] = None  # Additional context (e.g., "scope_discussion")
+
+
 class ActiveScenario(BaseModel):
     """A scenario in progress on a specific ticket."""
     scenario_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -123,6 +133,10 @@ class ActiveScenario(BaseModel):
     actions_taken: list[ActionRecord] = Field(default_factory=list)
     comments_added: int = 0
     times_rejected: int = 0
+
+    # Pre-planned action script (sequence only, no timing)
+    action_script: list[PlannedAction] = Field(default_factory=list)
+    script_index: int = 0  # Current position in script
 
     @classmethod
     def create_normal_flow(
@@ -268,6 +282,81 @@ class ActiveScenario(BaseModel):
         """Get total days since scenario started."""
         delta = datetime.utcnow() - self.started
         return delta.total_seconds() / 86400
+
+    # ========== Script Management ==========
+
+    def get_next_script_action(self) -> Optional[PlannedAction]:
+        """Get next unexecuted action from script."""
+        for i, action in enumerate(self.action_script[self.script_index:], self.script_index):
+            if not action.executed:
+                return action
+        return None
+
+    def get_script_progress(self) -> tuple[int, int]:
+        """Get (current_index, total_actions) for progress tracking."""
+        executed = sum(1 for a in self.action_script if a.executed)
+        return (executed, len(self.action_script))
+
+    def advance_script(self) -> None:
+        """Mark current script action as executed and advance index."""
+        if self.script_index < len(self.action_script):
+            self.action_script[self.script_index].executed = True
+            self.script_index += 1
+
+    def is_script_complete(self) -> bool:
+        """Check if all script actions have been executed."""
+        return all(a.executed for a in self.action_script)
+
+    def inject_disruption(self, disruption_actions: list[dict]) -> None:
+        """
+        Inject disruption actions (blocker/rework) at current position.
+
+        The disruption actions are inserted AFTER the current position,
+        so the next action will be the first disruption action.
+        """
+        # Convert dicts to PlannedAction if needed
+        new_actions = []
+        for action in disruption_actions:
+            if isinstance(action, dict):
+                new_actions.append(PlannedAction(**action))
+            else:
+                new_actions.append(action)
+
+        # Insert disruption actions after current position
+        insert_pos = self.script_index + 1
+        self.action_script = (
+            self.action_script[:insert_pos]
+            + new_actions
+            + self.action_script[insert_pos:]
+        )
+
+    def replace_remaining_script(self, new_actions: list[dict]) -> None:
+        """
+        Replace remaining (unexecuted) script actions with new actions.
+
+        Used when Jira state diverges and pathfinder recalculates.
+        """
+        # Keep executed actions, replace the rest
+        executed = [a for a in self.action_script if a.executed]
+
+        # Convert dicts to PlannedAction
+        new_planned = []
+        for action in new_actions:
+            if isinstance(action, dict):
+                new_planned.append(PlannedAction(**action))
+            else:
+                new_planned.append(action)
+
+        self.action_script = executed + new_planned
+        self.script_index = len(executed)
+
+    def set_script(self, actions: list[dict]) -> None:
+        """Set the action script (used at scenario creation)."""
+        self.action_script = [
+            PlannedAction(**a) if isinstance(a, dict) else a
+            for a in actions
+        ]
+        self.script_index = 0
 
 
 class AgentState(BaseModel):

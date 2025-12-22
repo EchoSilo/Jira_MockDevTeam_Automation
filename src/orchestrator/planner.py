@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from ..services.llm_service import LLMService
-from ..state import SimulationState, ScenarioType
+from ..state import SimulationState, ScenarioType, PlannedAction
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,17 @@ class ScenarioPlanner:
         self.last_reasoning = ""
         self.last_raw_response = ""
 
+        # Map action types to their target Jira status for transition validation
+        self.action_target_status = {
+            "pick_up_task": "In Progress",
+            "progress_to_review": "Code Review",
+            "complete_review": "Testing",
+            "qa_approve": "Done",
+            "qa_reject": "In Progress",
+            "resolve_blocker": "In Progress",
+            "inject_blocker": "Blocked",
+        }
+
     def plan_tick(
         self,
         analysis: dict,
@@ -61,6 +72,10 @@ class ScenarioPlanner:
     ) -> list[dict]:
         """
         Plan actions for this simulation tick.
+
+        Planning is now script-aware:
+        1. First, get actions from scenario scripts that are ready
+        2. Then, use LLM to fill remaining slots with new work
 
         Args:
             analysis: Analysis dict from ScenarioAnalyzer
@@ -79,8 +94,24 @@ class ScenarioPlanner:
         multiplier = intensity_multipliers.get(intensity, 1.0)
         target_actions = max(2, int(self.max_actions_per_tick * multiplier))
 
-        # Build the planning prompt
-        prompt = self._build_planning_prompt(analysis, state, target_actions)
+        # Phase 1: Get script-based actions first (these take priority)
+        script_actions = self._get_script_based_actions(state)
+
+        # Track agents used by script actions
+        script_agent_ids = {a.get("agent_id") for a in script_actions if a.get("agent_id")}
+
+        # If scripts filled all slots, just return those
+        if len(script_actions) >= target_actions:
+            logger.info(f"Scripts provided all {len(script_actions)} actions, skipping LLM planning")
+            return self._validate_actions(script_actions, analysis, state)[:target_actions]
+
+        # Phase 2: Use LLM for remaining slots
+        remaining_slots = target_actions - len(script_actions)
+
+        # Build the planning prompt (with awareness of script actions)
+        prompt = self._build_planning_prompt(
+            analysis, state, remaining_slots, script_agent_ids
+        )
 
         try:
             # Call LLM with timing
@@ -122,12 +153,15 @@ class ScenarioPlanner:
 
             # Validate and return actions - with extra safety for slice operation
             try:
-                actions = result.get("actions", [])
-                validated_actions = self._validate_actions(actions, analysis, state)
+                llm_actions = result.get("actions", [])
+                validated_llm_actions = self._validate_actions(llm_actions, analysis, state)
                 # Ensure we have a list before slicing
-                if not isinstance(validated_actions, list):
-                    validated_actions = list(validated_actions) if validated_actions else []
-                return validated_actions[:target_actions]
+                if not isinstance(validated_llm_actions, list):
+                    validated_llm_actions = list(validated_llm_actions) if validated_llm_actions else []
+
+                # Combine script actions (first) with LLM actions
+                all_actions = script_actions + validated_llm_actions[:remaining_slots]
+                return all_actions[:target_actions]
             except Exception as action_error:
                 # Log the specific action parsing error but don't fail
                 if self.log_writer:
@@ -147,8 +181,11 @@ class ScenarioPlanner:
                         error=f"Action parsing failed: {action_error}",
                     )
                 # Fall back to basic plan to keep workflow running
-                fallback_actions = self._fallback_plan(analysis, state, target_actions)
-                return self._validate_actions(fallback_actions, analysis, state)[:target_actions]
+                fallback_actions = self._fallback_plan(analysis, state, remaining_slots)
+                validated_fallback = self._validate_actions(fallback_actions, analysis, state)
+                # Combine script actions with fallback
+                all_actions = script_actions + validated_fallback[:remaining_slots]
+                return all_actions[:target_actions]
 
         except Exception as e:
             # Log failed LLM call
@@ -170,18 +207,25 @@ class ScenarioPlanner:
                     error=str(e),
                 )
             # On error, fall back to basic actions
-            fallback_actions = self._fallback_plan(analysis, state, target_actions)
-            return self._validate_actions(fallback_actions, analysis, state)[:target_actions]
+            fallback_actions = self._fallback_plan(analysis, state, remaining_slots)
+            validated_fallback = self._validate_actions(fallback_actions, analysis, state)
+            # Combine script actions with fallback
+            all_actions = script_actions + validated_fallback[:remaining_slots]
+            return all_actions[:target_actions]
 
     def _build_planning_prompt(
         self,
         analysis: dict,
         state: SimulationState,
         target_actions: int,
+        excluded_agent_ids: set = None,
     ) -> str:
         """Build the LLM prompt for scenario planning."""
+        excluded_agent_ids = excluded_agent_ids or set()
 
-        board_summary = self._format_board_snapshot(analysis.get("board_snapshot", {}))
+        board_snapshot = analysis.get("board_snapshot", {})
+        board_summary = self._format_board_snapshot(board_snapshot)
+        workflow_context = self._format_workflow_context(board_snapshot)
         scenarios_summary = self._format_active_scenarios(state)
         opportunities_summary = self._format_opportunities(analysis.get("opportunities", []))
         recent_summary = self._format_recent_actions(state.recent_actions[-10:])
@@ -223,6 +267,8 @@ Your job is to plan realistic team activity that creates meaningful patterns in 
 ## Current Board State
 {board_summary}
 
+{workflow_context}
+
 ## Active Scenarios ({len(state.active_scenarios)} total)
 {scenarios_summary}
 
@@ -234,6 +280,7 @@ Your job is to plan realistic team activity that creates meaningful patterns in 
 
 ## Available Agents (use these exact agent_id values)
 {agents_summary}
+{f"NOTE: These agents are already busy with script-based work and CANNOT be used: {', '.join(sorted(excluded_agent_ids))}" if excluded_agent_ids else ""}
 
 ## Current Metrics
 - Sprint Day: {metrics.get('sprint_day', 1)} / 14
@@ -421,6 +468,47 @@ Remember:
             lines.append(f"- {agent_id}: {name} ({role}, Team {team.title()})")
         return "\n".join(lines)
 
+    def _format_workflow_context(self, board_snapshot: dict) -> str:
+        """Format available transitions for planner to ensure valid action selection."""
+        lines = ["## Available Jira Transitions (MUST RESPECT THESE)"]
+        lines.append("")
+        lines.append("Each ticket can only transition to specific statuses based on its current state.")
+        lines.append("Actions will FAIL if the target transition is not available.")
+        lines.append("")
+
+        # Track unique transition patterns to avoid redundancy
+        status_transitions = {}
+
+        for category in ["backlog", "in_progress", "code_review", "testing"]:
+            for ticket in board_snapshot.get(category, []):
+                transitions = ticket.get("available_transitions", [])
+                if transitions:
+                    # Build list of target statuses
+                    targets = [t.get("to", t.get("name", "")) for t in transitions]
+                    targets_str = ", ".join(targets) if targets else "none"
+
+                    # Track by current status for summary
+                    current_status = ticket.get("status", "Unknown")
+                    if current_status not in status_transitions:
+                        status_transitions[current_status] = set()
+                    for t in targets:
+                        status_transitions[current_status].add(t)
+
+                    lines.append(f"- {ticket['key']} ({current_status}): can go to [{targets_str}]")
+
+        # Add summary of typical workflow
+        if status_transitions:
+            lines.append("")
+            lines.append("**Workflow Summary:**")
+            for status, targets in sorted(status_transitions.items()):
+                lines.append(f"  - From '{status}': can transition to {sorted(targets)}")
+
+        lines.append("")
+        lines.append("**CRITICAL:** Do NOT suggest actions that require unavailable transitions!")
+        lines.append("  - Example: If ticket is in 'To Do', you cannot skip to 'Code Review' - must go through 'In Progress' first")
+
+        return "\n".join(lines)
+
     def _get_agent_id_by_jira_account_id(self, jira_account_id: str) -> str:
         """Map Jira account ID to agent_id for display purposes."""
         if not jira_account_id:
@@ -557,6 +645,74 @@ Remember:
                     return ticket.get("type")
         return None
 
+    def _find_ticket_in_snapshot(
+        self, ticket_key: str, board_snapshot: dict
+    ) -> dict | None:
+        """Find a ticket in the board snapshot by key."""
+        status_keys = ["backlog", "in_progress", "code_review", "testing", "done"]
+        for status in status_keys:
+            tickets = board_snapshot.get(status, [])
+            for ticket in tickets:
+                if ticket.get("key") == ticket_key:
+                    return ticket
+        return None
+
+    def _is_transition_valid(
+        self, action: dict, board_snapshot: dict
+    ) -> bool:
+        """
+        Check if an action's target transition is available from Jira API data.
+
+        Returns True if:
+        - Ticket not found (can't validate, allow)
+        - No transition info (allow)
+        - Not a status-transition action (allow)
+        - Target status is in available transitions (allow)
+
+        Returns False if:
+        - Target status is NOT in available transitions (block)
+        """
+        ticket_key = action.get("ticket_key")
+        action_type = action.get("type")
+
+        if not ticket_key or not action_type:
+            return True  # Can't validate, allow
+
+        # Find ticket in snapshot
+        ticket = self._find_ticket_in_snapshot(ticket_key, board_snapshot)
+        if not ticket:
+            return True  # Ticket not in snapshot, can't validate
+
+        available_transitions = ticket.get("available_transitions", [])
+        if not available_transitions:
+            return True  # No transition info from API, allow
+
+        # Get target status for this action type
+        target_status = self.action_target_status.get(action_type)
+        if not target_status:
+            return True  # Not a status-transition action (e.g., add_comment)
+
+        # Check if any available transition leads to target status (fuzzy match)
+        for t in available_transitions:
+            to_status = t.get("to", "").lower()
+            name = t.get("name", "").lower()
+            target_lower = target_status.lower()
+
+            # Match if target is contained in "to" status or transition name
+            if target_lower in to_status or target_lower in name:
+                return True
+            # Also check if the transition name/to contains our target words
+            if to_status in target_lower or name in target_lower:
+                return True
+
+        # No matching transition found
+        logger.warning(
+            f"Transition validation failed: {action_type} on {ticket_key} "
+            f"(current: {ticket.get('status')}) - target '{target_status}' "
+            f"not in available transitions: {[t.get('to') for t in available_transitions]}"
+        )
+        return False
+
     def _validate_actions(
         self,
         actions: list,
@@ -567,6 +723,7 @@ Remember:
         validated = []
         used_agents = set()
         valid_agent_ids = set(self.personas.get("agents", {}).keys())
+        board_snapshot = analysis.get("board_snapshot", {})
 
         for action in actions:
             # Must have a type
@@ -596,6 +753,15 @@ Remember:
                 ):
                     # Skip action - agent role cannot act on this issue type
                     continue
+
+            # Validate Jira transition is available (API-based)
+            # Skip validation for script-based actions - they're pre-validated by pathfinder
+            if not action.get("from_script") and not self._is_transition_valid(action, board_snapshot):
+                logger.warning(
+                    f"VALIDATION BLOCKED: Transition not available for {action.get('type')} "
+                    f"on {action.get('ticket_key')}. Skipping action."
+                )
+                continue
 
             # Validate ticket exists in scenario if scenario_id provided
             scenario_id = action.get("scenario_id")
@@ -721,3 +887,100 @@ Remember:
 
         logger.info(f"Fallback plan: {len(actions)} actions ({min_advancements} forced advancements)")
         return actions
+
+    def _get_script_based_actions(
+        self,
+        state: SimulationState,
+    ) -> list[dict]:
+        """
+        Get actions from scenario scripts that are ready to execute.
+
+        Checks each active scenario for:
+        1. Is phase ready to advance (time-based)?
+        2. Is there a next script action?
+        3. Is an agent available for this action?
+
+        Returns list of action dicts ready for execution.
+        """
+        actions = []
+        used_agents = set()
+
+        for scenario in state.active_scenarios.values():
+            # Skip if scenario doesn't have a script
+            if not scenario.action_script:
+                continue
+
+            # Skip if phase isn't ready to advance
+            if not scenario.is_phase_ready_to_advance():
+                continue
+
+            # Get next script action
+            next_action = scenario.get_next_script_action()
+            if not next_action:
+                continue
+
+            # Skip optional actions sometimes (50% chance)
+            import random
+            if next_action.optional and random.random() < 0.5:
+                continue
+
+            # Find agent for this action's role
+            agent_id = self._find_agent_for_role(
+                role=next_action.role,
+                scenario=scenario,
+                used_agents=used_agents,
+            )
+
+            if not agent_id:
+                continue
+
+            # Build action dict
+            action = {
+                "type": next_action.type,
+                "ticket_key": scenario.ticket_key,
+                "scenario_id": scenario.scenario_id,
+                "agent_id": agent_id,
+                "from_script": True,
+                "details": f"Script action: {next_action.type}" + (
+                    f" ({next_action.context})" if next_action.context else ""
+                ),
+            }
+
+            actions.append(action)
+            used_agents.add(agent_id)
+
+        if actions:
+            logger.info(f"Generated {len(actions)} script-based actions")
+
+        return actions
+
+    def _find_agent_for_role(
+        self,
+        role: str,
+        scenario,
+        used_agents: set,
+    ) -> Optional[str]:
+        """Find an available agent for a given role, preferring scenario's assigned agent."""
+        # For developer actions, prefer the assigned agent
+        if role == "developer" and scenario.assigned_agent:
+            if scenario.assigned_agent not in used_agents:
+                return scenario.assigned_agent
+
+        # Get team from assigned agent's config
+        team = None
+        if scenario.assigned_agent:
+            agent_config = self.personas.get("agents", {}).get(scenario.assigned_agent, {})
+            team = agent_config.get("team")
+
+        # Find any agent with matching role (prefer same team)
+        candidates = []
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if agent_id in used_agents:
+                continue
+            if config.get("role") == role:
+                if team and config.get("team") == team:
+                    candidates.insert(0, agent_id)  # Prefer same team
+                else:
+                    candidates.append(agent_id)
+
+        return candidates[0] if candidates else None

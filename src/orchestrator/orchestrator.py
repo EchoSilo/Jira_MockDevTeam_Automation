@@ -4,11 +4,14 @@ Scenario Orchestrator - main coordination for simulation ticks.
 Combines the Analyzer, Planner, and Crews to execute simulation ticks.
 """
 
+import logging
 import random
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from ..services.jira_client import JiraClient
+
+logger = logging.getLogger(__name__)
 from ..services.llm_service import LLMService
 from ..tools.jira_tools import JiraTools
 from ..state import (
@@ -29,6 +32,7 @@ from ..crews import (
 )
 from .analyzer import ScenarioAnalyzer
 from .planner import ScenarioPlanner
+from .pathfinder import WorkflowPathfinder
 
 if TYPE_CHECKING:
     from ..logging import AsyncLogWriter, CrewAILoggingCallback
@@ -79,6 +83,7 @@ class ScenarioOrchestrator:
         # Initialize components
         self.analyzer = ScenarioAnalyzer(jira_client, personas, settings)
         self.planner = ScenarioPlanner(llm_service, settings, personas)
+        self.pathfinder = WorkflowPathfinder()
 
         # Initialize crews
         self.lifecycle_crew = TicketLifecycleCrew(personas, self.jira_tools, self.llm_config)
@@ -184,6 +189,10 @@ class ScenarioOrchestrator:
                 "opportunities_found": len(analysis.get("opportunities", [])),
                 "metrics": analysis.get("metrics", {}),
             }
+
+            # Build workflow graph from board snapshot (for pathfinding)
+            board_snapshot = analysis.get("board_snapshot", {})
+            self.pathfinder.build_graph_from_snapshot(board_snapshot)
 
             # Log analysis phase
             self._log_event(
@@ -712,6 +721,15 @@ class ScenarioOrchestrator:
         if result.get("error") or result.get("skipped"):
             return
 
+        # Skip if Jira operation failed (prevents state drift)
+        # Default to True for backwards compatibility with actions that don't set this flag
+        if not result.get("jira_success", True):
+            logger.warning(
+                f"State update SKIPPED for {action_type} on {ticket_key}: "
+                f"Jira operation failed. State remains unchanged to prevent drift."
+            )
+            return
+
         # Get scenario
         scenario = None
         if scenario_id and scenario_id in state.active_scenarios:
@@ -753,6 +771,16 @@ class ScenarioOrchestrator:
             if new_phase:
                 scenario.advance_to_phase(new_phase)
 
+            # Advance script if action was from a script
+            if action.get("from_script") or scenario.action_script:
+                next_action = scenario.get_next_script_action()
+                if next_action and next_action.type == action_type:
+                    scenario.advance_script()
+                    progress = scenario.get_script_progress()
+                    logger.debug(
+                        f"Script advanced for {ticket_key}: {progress[0]}/{progress[1]} actions complete"
+                    )
+
             # Special handling
             if action_type == "inject_blocker":
                 scenario.inject_blocker(
@@ -791,15 +819,23 @@ class ScenarioOrchestrator:
         ticket_key: str,
         agent_id: str,
         state: SimulationState,
+        scenario_type: str = "normal_flow",
     ) -> ActiveScenario:
-        """Create a new scenario for a ticket being picked up."""
-        # Try to get ticket info from Jira for complexity
+        """
+        Create a new scenario for a ticket being picked up.
+
+        Generates an action script using the pathfinder based on current
+        ticket status and scenario type.
+        """
+        # Try to get ticket info from Jira for complexity and status
         complexity = TicketComplexity.STORY  # Default
+        current_status = "To Do"  # Default
 
         try:
             issue = self.jira.get_issue(ticket_key)
             issue_type = issue.fields.issuetype.name
             complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
+            current_status = issue.fields.status.name if issue.fields.status else "To Do"
         except Exception:
             pass
 
@@ -808,6 +844,21 @@ class ScenarioOrchestrator:
             complexity=complexity,
             assigned_agent=agent_id,
         )
+
+        # Generate action script using pathfinder
+        script_actions = self.pathfinder.generate_scenario_script(
+            scenario_type=scenario_type,
+            current_status=current_status,
+            complexity=complexity.value,
+        )
+
+        # Set the script on the scenario
+        if script_actions:
+            scenario.set_script(script_actions)
+            logger.info(
+                f"Generated {len(script_actions)}-action script for {ticket_key}: "
+                f"{[a.get('type') for a in script_actions]}"
+            )
 
         state.add_scenario(scenario)
 

@@ -115,6 +115,12 @@ class ScenarioAnalyzer:
                     "in_active_sprint": True if sprint_only else self._is_in_active_sprint(issue.key),
                 }
 
+                # Fetch available transitions from Jira API (skip for done items)
+                if status not in ["done", "closed", "resolved"]:
+                    ticket_info["available_transitions"] = self._get_available_transitions(issue.key)
+                else:
+                    ticket_info["available_transitions"] = []
+
                 # Map to our categories
                 if status in ["to do", "backlog", "open"]:
                     snapshot["backlog"].append(ticket_info)
@@ -137,6 +143,24 @@ class ScenarioAnalyzer:
         """Check if an issue is in the active sprint."""
         sprint_info = self.jira.get_issue_sprint_info(issue_key)
         return sprint_info is not None and sprint_info.get("state") == "active"
+
+    def _get_available_transitions(self, issue_key: str) -> list[dict]:
+        """
+        Get available transitions for an issue from Jira API.
+
+        Returns list of dicts with 'name' (transition name) and 'to' (target status).
+        """
+        try:
+            transitions = self.jira.get_transitions(issue_key)
+            return [
+                {
+                    "name": t.get("name", ""),
+                    "to": t.get("to", {}).get("name", t.get("name", "")),
+                }
+                for t in transitions
+            ]
+        except Exception:
+            return []
 
     def analyze(self, state: SimulationState) -> dict:
         """

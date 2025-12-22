@@ -43,7 +43,7 @@ export function DashboardPage() {
     refetchInterval: 15000,
   });
 
-  const { state, agents, scenarios, sprintData } = data;
+  const { health, state, agents, scenarios, sprintData } = data;
 
   // Show error state if backend is unavailable
   if (error && !state) {
@@ -250,7 +250,7 @@ export function DashboardPage() {
 
               {/* Column 3: Recent Activity */}
               <div>
-                <ActivityFeed activities={recentActivities} />
+                <ActivityFeed activities={recentActivities} jiraUrl={health?.jira_url} />
               </div>
             </div>
           </TabsContent>

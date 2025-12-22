@@ -18,6 +18,18 @@ from ..state import ActiveScenario, ScenarioPhase
 class ReworkCrew(BaseCrew):
     """Crew for handling QA rejection and rework scenarios."""
 
+    def _detect_jira_success(self, result: str) -> bool:
+        """Parse crew result to determine if Jira transition succeeded."""
+        result_str = str(result).lower()
+        failure_indicators = [
+            "could not transition", "failed to transition", "transition failed",
+            "error transitioning", "no valid transition", "cannot transition",
+        ]
+        for indicator in failure_indicators:
+            if indicator in result_str:
+                return False
+        return True
+
     def qa_reject(
         self,
         scenario: ActiveScenario,
@@ -82,6 +94,7 @@ The rejection should be based on something realistic that could be missed during
             "agent": qa_id,
             "rejection_reason": rejection_reason,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def developer_acknowledge_rejection(
@@ -128,6 +141,7 @@ Be professional and focused. Something like "Got it, looking into this now." is 
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": True,  # Comment-only action, no transition to fail
         }
 
     def developer_fix_issue(
@@ -176,6 +190,7 @@ Be specific about what you fixed. This helps QA know what to focus on during re-
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def qa_verify_fix(
@@ -239,4 +254,5 @@ Be positive - the issue is fixed and you're confirming good work.
             "ticket": scenario.ticket_key,
             "agent": qa_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }

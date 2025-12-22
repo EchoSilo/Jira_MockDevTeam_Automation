@@ -220,6 +220,7 @@ class HealthResponse(BaseModel):
     jira_connected: bool
     last_run: Optional[str]
     simulation_day: int
+    jira_url: Optional[str] = None
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -233,6 +234,7 @@ async def health_check():
         jira_connected=jira_ok,
         last_run=state.last_run.isoformat() if state.last_run else None,
         simulation_day=state.simulation_day,
+        jira_url=app.state.jira.url if app.state.jira else None,
     )
 
 

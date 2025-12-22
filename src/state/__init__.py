@@ -11,6 +11,7 @@ from .models import (
     SprintState,
     ScenarioDistribution,
     ActionRecord,
+    PlannedAction,
     ISSUE_TYPE_TO_COMPLEXITY,
     CYCLE_TIME_RANGES,
     PHASE_DURATION_FRACTIONS,
@@ -32,6 +33,7 @@ __all__ = [
     "SprintState",
     "ScenarioDistribution",
     "ActionRecord",
+    "PlannedAction",
     # Enums
     "ScenarioType",
     "ScenarioPhase",

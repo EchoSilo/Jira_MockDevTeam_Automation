@@ -17,6 +17,18 @@ from ..state import ActiveScenario, ScenarioPhase
 class BlockerCrew(BaseCrew):
     """Crew for handling blocker scenarios."""
 
+    def _detect_jira_success(self, result: str) -> bool:
+        """Parse crew result to determine if Jira transition succeeded."""
+        result_str = str(result).lower()
+        failure_indicators = [
+            "could not transition", "failed to transition", "transition failed",
+            "error transitioning", "no valid transition", "cannot transition",
+        ]
+        for indicator in failure_indicators:
+            if indicator in result_str:
+                return False
+        return True
+
     def inject_blocker(
         self,
         scenario: ActiveScenario,
@@ -66,6 +78,7 @@ Be specific about what's blocking you and what help you need. Don't be vague.
             "agent": developer_id,
             "blocker_reason": blocker_reason,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def discuss_blocker(
@@ -138,6 +151,7 @@ Be helpful and constructive. This is a team working together to solve a problem.
             "ticket": scenario.ticket_key,
             "agent": responder_id,
             "result": result,
+            "jira_success": True,  # Comment-only action
         }
 
     def resolve_blocker(
@@ -190,6 +204,7 @@ Keep it brief and positive - the blocker is resolved, time to move on.
             "ticket": scenario.ticket_key,
             "agent": developer_id,
             "result": result,
+            "jira_success": self._detect_jira_success(result),
         }
 
     def pm_check_on_blocker(
@@ -249,4 +264,5 @@ Be supportive, not pushy. You're trying to help, not add pressure.
             "ticket": scenario.ticket_key,
             "agent": pm_id,
             "result": result,
+            "jira_success": True,  # Comment-only action
         }

@@ -4,6 +4,7 @@ import type { Activity } from '@/types';
 
 interface ActivityFeedProps {
   activities: Activity[];
+  jiraUrl?: string | null;
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -38,7 +39,7 @@ function formatActionType(actionType: string): string {
     .join(' ');
 }
 
-export function ActivityFeed({ activities }: ActivityFeedProps) {
+export function ActivityFeed({ activities, jiraUrl }: ActivityFeedProps) {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
@@ -94,12 +95,23 @@ export function ActivityFeed({ activities }: ActivityFeedProps) {
                     {formatActionType(activity.actionType)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-[var(--color-primary)] font-mono">
-                    {activity.ticketKey}
-                  </span>
-                  <ExternalLink className="h-3 w-3 text-[var(--color-text-muted)]" />
-                </div>
+                {activity.ticketKey && (
+                  <a
+                    href={jiraUrl ? `${jiraUrl.replace(/\/+$/, '')}/browse/${activity.ticketKey}` : '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "flex items-center gap-2 mt-1 group",
+                      jiraUrl ? "cursor-pointer" : "cursor-default"
+                    )}
+                    onClick={(e) => !jiraUrl && e.preventDefault()}
+                  >
+                    <span className="text-xs text-[var(--color-primary)] font-mono group-hover:underline">
+                      {activity.ticketKey}
+                    </span>
+                    <ExternalLink className="h-3 w-3 text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)]" />
+                  </a>
+                )}
                 {activity.details && (
                   <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">
                     {activity.details}
