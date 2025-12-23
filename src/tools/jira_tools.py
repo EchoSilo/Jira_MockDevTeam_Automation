@@ -70,12 +70,11 @@ class JiraTools:
         self.log_writer.log_jira_call(
             method=method,
             parameters=parameters,
-            response=response if success else "",
-            success=success,
+            response_summary=response if success else "",
             duration_ms=duration_ms,
             agent_id=self._current_agent_id,
             ticket_key=ticket_key,
-            error=error,
+            error=error if not success else None,
         )
 
     def _create_tools(self) -> None:

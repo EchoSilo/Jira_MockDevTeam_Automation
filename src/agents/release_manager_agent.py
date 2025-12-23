@@ -1,0 +1,458 @@
+"""
+Release Manager Agent - Coordinates release planning and version compliance.
+
+The Release Manager operates at the organizational level, ensuring:
+1. Fix versions exist for upcoming releases
+2. All tickets in progress have fix versions assigned
+3. Release schedules align with sprint cadence
+4. PMs are notified of compliance issues
+
+This agent does NOT directly access Jira. All actions are performed through
+directives that get converted into PM actions during the planning phase.
+"""
+
+from datetime import datetime, timedelta
+from typing import Optional
+
+from .coordinator_agent import CoordinatorAgent
+from ..services.llm_service import LLMService
+from ..state import (
+    SimulationState,
+    ReleaseDirective,
+    ReleaseVersion,
+    ReleaseState,
+)
+
+
+class ReleaseManagerAgent(CoordinatorAgent):
+    """
+    Release Manager - coordinates version planning and compliance.
+
+    Responsibilities:
+    - Plan release versions based on sprint cadence
+    - Detect tickets missing fix versions
+    - Generate directives for PMs to create/assign versions
+    - Track release health and compliance metrics
+    """
+
+    def __init__(
+        self,
+        agent_id: str,
+        config: dict,
+        llm_service: LLMService,
+        settings: dict,
+    ):
+        """
+        Initialize the Release Manager agent.
+
+        Args:
+            agent_id: Unique identifier (typically 'release_manager')
+            config: Agent config from personas.yaml
+            llm_service: LLM service for communications
+            settings: Application settings (for release_management config)
+        """
+        super().__init__(agent_id, config, llm_service)
+        self.settings = settings
+        self.rm_settings = settings.get("release_management", {})
+
+    async def analyze(
+        self,
+        state: SimulationState,
+        board_snapshot: dict,
+    ) -> dict:
+        """
+        Analyze release health and compliance.
+
+        Checks:
+        - Version coverage (% of in-progress items with fix version)
+        - Unversioned tickets that need versions
+        - Release schedule health
+        - Upcoming releases
+
+        Args:
+            state: Current simulation state
+            board_snapshot: Current Jira board state
+
+        Returns:
+            Analysis dict with compliance metrics and issues
+        """
+        analysis = {
+            "planned_releases": [],
+            "compliance_issues": [],
+            "upcoming_releases": [],
+            "version_coverage": 0.0,
+            "unversioned_tickets": [],
+            "metrics": {},
+        }
+
+        # Get current release state
+        release_state = state.release_state
+
+        # Calculate version coverage
+        total_tracked = 0
+        versioned = 0
+        unversioned = []
+
+        # Check tickets in work statuses
+        for status_key in ["in_progress", "code_review", "testing"]:
+            for ticket in board_snapshot.get(status_key, []):
+                # Skip Epics
+                if ticket.get("type") == "Epic":
+                    continue
+
+                total_tracked += 1
+
+                if ticket.get("fix_version"):
+                    versioned += 1
+                else:
+                    unversioned.append(ticket)
+
+        if total_tracked > 0:
+            analysis["version_coverage"] = round(versioned / total_tracked * 100, 1)
+
+        analysis["unversioned_tickets"] = unversioned
+        analysis["planned_releases"] = [
+            {
+                "name": r.name,
+                "target_date": r.target_date.isoformat() if r.target_date else None,
+                "status": r.status,
+                "created_in_jira": r.created_in_jira,
+                "assigned_count": len(r.assigned_tickets),
+            }
+            for r in release_state.planned_releases
+        ]
+
+        # Calculate metrics
+        analysis["metrics"] = {
+            "total_tracked": total_tracked,
+            "versioned": versioned,
+            "unversioned": len(unversioned),
+            "coverage_percent": analysis["version_coverage"],
+            "planned_release_count": len(release_state.planned_releases),
+            "sprint_day": state.sprint.sprint_day,
+            "sprint_number": state.sprint.sprint_number,
+        }
+
+        # Check for releases that need to be created in Jira
+        analysis["releases_needing_jira_creation"] = [
+            r for r in release_state.planned_releases
+            if not r.created_in_jira and r.status != "released"
+        ]
+
+        return analysis
+
+    async def generate_directives(
+        self,
+        analysis: dict,
+        state: SimulationState,
+    ) -> list[ReleaseDirective]:
+        """
+        Generate directives for PMs based on release analysis.
+
+        Directive types:
+        - create_fix_version: PM should create a version in Jira
+        - assign_fix_version: PM should assign version to a ticket
+        - release_reminder: Notify PM of upcoming release
+
+        Args:
+            analysis: Results from analyze()
+            state: Current simulation state
+
+        Returns:
+            List of directives for PM agents
+        """
+        directives = []
+
+        # Get directive limits
+        max_per_tick = self.rm_settings.get("directives", {}).get("max_per_tick", 3)
+
+        # Priority 1: Create missing versions in Jira
+        directives.extend(
+            self._generate_version_creation_directives(analysis, state)
+        )
+
+        # Priority 2: Assign versions to unversioned tickets
+        remaining_slots = max_per_tick - len(directives)
+        if remaining_slots > 0:
+            version_directives = self._generate_version_assignment_directives(
+                analysis, state, max_count=remaining_slots
+            )
+            directives.extend(version_directives)
+
+        # Priority 3: Plan new releases if needed
+        remaining_slots = max_per_tick - len(directives)
+        if remaining_slots > 0:
+            planning_directives = self._generate_release_planning_directives(
+                analysis, state
+            )
+            directives.extend(planning_directives[:remaining_slots])
+
+        return directives[:max_per_tick]
+
+    def _generate_version_creation_directives(
+        self,
+        analysis: dict,
+        state: SimulationState,
+    ) -> list[ReleaseDirective]:
+        """Generate directives to create fix versions in Jira."""
+        directives = []
+
+        releases_needing_creation = analysis.get("releases_needing_jira_creation", [])
+
+        for release in releases_needing_creation:
+            # Alternate between PMs for version creation
+            pm_id = self._select_pm_for_version(release, state)
+
+            if pm_id:
+                directives.append(self.create_directive(
+                    directive_type="create_fix_version",
+                    target_pm_id=pm_id,
+                    parameters={
+                        "version_name": release.name,
+                        "target_date": (
+                            release.target_date.isoformat()
+                            if release.target_date else None
+                        ),
+                        "reason": f"Release {release.name} planned but not created in Jira",
+                    }
+                ))
+
+        return directives
+
+    def _generate_version_assignment_directives(
+        self,
+        analysis: dict,
+        state: SimulationState,
+        max_count: int = 3,
+    ) -> list[ReleaseDirective]:
+        """Generate directives to assign versions to unversioned tickets."""
+        directives = []
+
+        unversioned = analysis.get("unversioned_tickets", [])
+        current_release = state.release_state.get_current_release()
+
+        if not current_release:
+            return directives
+
+        # Process unversioned tickets (limited per tick for gradual enforcement)
+        for ticket in unversioned[:max_count]:
+            pm_id = self._get_pm_for_ticket(ticket, state)
+
+            if pm_id:
+                directives.append(self.create_directive(
+                    directive_type="assign_fix_version",
+                    target_pm_id=pm_id,
+                    parameters={
+                        "ticket_key": ticket["key"],
+                        "version_name": current_release.name,
+                        "reason": (
+                            f"Ensuring release tracking - {ticket['key']} is "
+                            f"{ticket['status']} and needs a target release"
+                        ),
+                    }
+                ))
+
+        return directives
+
+    def _generate_release_planning_directives(
+        self,
+        analysis: dict,
+        state: SimulationState,
+    ) -> list[ReleaseDirective]:
+        """Generate directives for release planning activities."""
+        directives = []
+
+        schedule = self.rm_settings.get("schedule", {})
+        release_cadence = schedule.get("release_cadence_sprints", 2)
+        planning_buffer = schedule.get("planning_buffer_sprints", 1)
+
+        planned_releases = state.release_state.planned_releases
+        unreleased_count = len([r for r in planned_releases if r.status != "released"])
+
+        # Need to plan more releases?
+        if unreleased_count < planning_buffer + 1:
+            # Calculate next release version name
+            next_version = self._calculate_next_version(state)
+
+            # Calculate target date based on sprint cadence
+            target_date = self._calculate_release_target_date(state, release_cadence)
+
+            # Add the planned release to state (RM's planning)
+            new_release = ReleaseVersion(
+                name=next_version,
+                target_date=target_date,
+                status="planned",
+                sprint_number=state.sprint.sprint_number + release_cadence,
+            )
+            state.release_state.add_release(new_release)
+
+            # Create directive for PM to create it in Jira
+            pm_id = self._select_pm_for_version(new_release, state)
+            if pm_id:
+                directives.append(self.create_directive(
+                    directive_type="create_fix_version",
+                    target_pm_id=pm_id,
+                    parameters={
+                        "version_name": next_version,
+                        "target_date": target_date.isoformat(),
+                        "reason": f"Planning release {next_version} for Sprint {state.sprint.sprint_number + release_cadence}",
+                    }
+                ))
+
+        return directives
+
+    def _select_pm_for_version(
+        self,
+        release: ReleaseVersion,
+        state: SimulationState,
+    ) -> Optional[str]:
+        """
+        Select which PM should handle a version.
+
+        Alternates between team PMs based on release count.
+        """
+        # Count how many releases each PM has created
+        # Alternate to balance workload
+        release_count = len(state.release_state.planned_releases)
+
+        if release_count % 2 == 0:
+            return "alpha_pm"
+        else:
+            return "beta_pm"
+
+    def _get_pm_for_ticket(
+        self,
+        ticket: dict,
+        state: SimulationState,
+    ) -> Optional[str]:
+        """
+        Determine which PM should handle a ticket based on assignee's team.
+        """
+        assignee_id = ticket.get("assignee_id")
+
+        if assignee_id:
+            # Try to find agent by Jira account ID
+            # This would need access to personas, but we can use a simple heuristic
+            # For now, alternate based on ticket key hash
+            if hash(ticket.get("key", "")) % 2 == 0:
+                return "alpha_pm"
+            else:
+                return "beta_pm"
+
+        return "alpha_pm"  # Default
+
+    def _calculate_next_version(self, state: SimulationState) -> str:
+        """
+        Calculate the next version name based on existing versions.
+
+        Uses semantic versioning: vMAJOR.MINOR.PATCH
+        """
+        initial_version = self.rm_settings.get("initial_version", "1.0.0")
+        planned = state.release_state.planned_releases
+
+        if not planned:
+            return f"v{initial_version}"
+
+        # Find the highest version
+        versions = []
+        for release in planned:
+            name = release.name
+            if name.startswith("v"):
+                name = name[1:]
+            try:
+                parts = name.split(".")
+                if len(parts) >= 3:
+                    versions.append((int(parts[0]), int(parts[1]), int(parts[2])))
+            except (ValueError, IndexError):
+                continue
+
+        if not versions:
+            return f"v{initial_version}"
+
+        # Increment minor version
+        highest = max(versions)
+        new_version = (highest[0], highest[1] + 1, 0)
+
+        return f"v{new_version[0]}.{new_version[1]}.{new_version[2]}"
+
+    def _calculate_release_target_date(
+        self,
+        state: SimulationState,
+        sprints_ahead: int,
+    ) -> datetime:
+        """
+        Calculate target release date based on sprint cadence.
+
+        Args:
+            state: Current simulation state
+            sprints_ahead: How many sprints until release
+
+        Returns:
+            Target release datetime
+        """
+        schedule = self.rm_settings.get("schedule", {})
+        release_day = schedule.get("release_day", 5)  # Friday by default
+
+        # Calculate days until release
+        days_until_release = (
+            (sprints_ahead * state.sprint.total_days) -
+            state.sprint.sprint_day +
+            release_day
+        )
+
+        return datetime.utcnow() + timedelta(days=days_until_release)
+
+    async def generate_release_communication(
+        self,
+        release: ReleaseVersion,
+        action: str,
+    ) -> str:
+        """
+        Generate LLM-driven communication about a release.
+
+        Args:
+            release: The release being communicated about
+            action: Type of communication ('planning', 'reminder', 'released')
+
+        Returns:
+            Generated communication text
+        """
+        prompts = {
+            "planning": (
+                f"As {self.display_name}, a Release Manager, write a brief "
+                f"announcement about planning release {release.name} "
+                f"targeting {release.target_date.strftime('%B %d, %Y') if release.target_date else 'TBD'}. "
+                f"Keep it professional and concise (2-3 sentences)."
+            ),
+            "reminder": (
+                f"As {self.display_name}, write a friendly reminder that "
+                f"release {release.name} is approaching. "
+                f"Ask PMs to ensure all tickets have fix versions assigned. "
+                f"Keep it brief (2-3 sentences)."
+            ),
+            "released": (
+                f"As {self.display_name}, write a brief announcement that "
+                f"release {release.name} has been completed. "
+                f"Keep it celebratory but professional (1-2 sentences)."
+            ),
+        }
+
+        prompt = prompts.get(action, prompts["planning"])
+
+        try:
+            response = self.llm.generate_comment(
+                agent_name=self.display_name,
+                agent_role="Release Manager",
+                agent_persona=self.persona,
+                action_context=prompt,
+                action_type="release_communication",
+            )
+            return response
+        except Exception:
+            # Fallback to template
+            templates = {
+                "planning": f"Planning release {release.name} for upcoming sprint cycle.",
+                "reminder": f"Reminder: Release {release.name} is approaching. Please ensure all tickets have fix versions assigned.",
+                "released": f"Release {release.name} has been completed successfully.",
+            }
+            return templates.get(action, templates["planning"])

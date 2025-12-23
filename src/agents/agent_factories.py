@@ -43,7 +43,7 @@ Focus on user value and business outcomes in your communication.""",
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=5,
         max_rpm=10,
     )
 
@@ -96,7 +96,7 @@ Focus on what you're doing, blockers encountered, and progress made.""",
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=5,
         max_rpm=10,
     )
 
@@ -136,7 +136,7 @@ Your goal is quality, not being a gatekeeper.""",
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=5,
         max_rpm=10,
     )
 
@@ -176,7 +176,7 @@ You help developers grow through thoughtful guidance.""",
         llm=llm,
         verbose=False,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=5,
         max_rpm=10,
     )
 

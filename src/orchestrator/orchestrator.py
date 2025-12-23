@@ -201,6 +201,23 @@ class ScenarioOrchestrator:
                 analysis_summary=results["analysis"],
             )
 
+            # Phase 1.5: Coordinate (Release Management)
+            if self.settings.get("release_management", {}).get("enabled", False):
+                coordination_result = await self._run_coordination_phase(state, board_snapshot)
+                analysis["release_directives"] = coordination_result.get("directives", [])
+                analysis["release_analysis"] = coordination_result.get("analysis", {})
+                results["release_coordination"] = {
+                    "directives_generated": len(coordination_result.get("directives", [])),
+                    "version_coverage": coordination_result.get("analysis", {}).get("version_coverage", 0),
+                }
+
+                # Log coordination phase
+                self._log_event(
+                    "coordinate",
+                    intensity=intensity,
+                    coordination_summary=results["release_coordination"],
+                )
+
             # Phase 2: Plan
             planned_actions = self.planner.plan_tick(analysis, state, intensity)
             results["planned_actions"] = len(planned_actions)
@@ -312,6 +329,77 @@ class ScenarioOrchestrator:
             return True  # No ticket to validate
         return self.jira.is_issue_in_active_sprint(ticket_key)
 
+    async def _run_coordination_phase(
+        self,
+        state: SimulationState,
+        board_snapshot: dict,
+    ) -> dict:
+        """
+        Run the Release Management coordination phase.
+
+        This phase runs the Release Manager agent to:
+        1. Analyze version coverage and compliance
+        2. Generate directives for PMs to create/assign versions
+
+        Args:
+            state: Current simulation state
+            board_snapshot: Current Jira board state
+
+        Returns:
+            Dict with analysis and generated directives
+        """
+        result = {
+            "analysis": {},
+            "directives": [],
+        }
+
+        # Lazy initialization of Release Manager agent
+        if not hasattr(self, 'release_manager'):
+            rm_config = self.personas.get("agents", {}).get("release_manager", {})
+            if rm_config:
+                from ..agents import ReleaseManagerAgent
+                self.release_manager = ReleaseManagerAgent(
+                    agent_id="release_manager",
+                    config=rm_config,
+                    llm_service=self.llm,
+                    settings=self.settings,
+                )
+            else:
+                logger.warning("Release Manager persona not found in config")
+                return result
+
+        try:
+            # Run coordination cycle
+            coordination = await self.release_manager.coordinate(state, board_snapshot)
+
+            result["analysis"] = coordination.get("analysis", {})
+            result["directives"] = coordination.get("directives", [])
+
+            # Store directives in state for tracking
+            for directive in result["directives"]:
+                state.release_state.active_directives.append(directive)
+
+            # Log coordination activity
+            logger.info(
+                f"Release Manager generated {len(result['directives'])} directives, "
+                f"version coverage: {result['analysis'].get('version_coverage', 0)}%"
+            )
+
+        except Exception as e:
+            logger.error(f"Release coordination failed: {str(e)}")
+            result["error"] = str(e)
+
+        return result
+
+    def _find_agent_by_jira_id(self, jira_account_id: str) -> Optional[str]:
+        """Find agent_id by their Jira account ID."""
+        if not jira_account_id:
+            return None
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("jira_account_id") == jira_account_id:
+                return agent_id
+        return None
+
     def _get_next_available_developer(self) -> dict | None:
         """Get the next available developer for assignment (round-robin)."""
         developers = []
@@ -377,20 +465,77 @@ class ScenarioOrchestrator:
                 )
 
         elif action_type == "progress_to_review":
+            # Create scenario if it doesn't exist (handles state reset recovery)
+            if not scenario and ticket_key and agent_id:
+                scenario = self._create_scenario_for_ticket(ticket_key, agent_id, state)
+                # Set phase to IN_PROGRESS since we're moving to review
+                scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
             if scenario:
                 result.update(self.lifecycle_crew.progress_to_review(scenario))
 
         elif action_type == "complete_review":
+            tech_lead_id = action.get("tech_lead_id") or agent_id
+            # Create scenario if it doesn't exist (handles state reset recovery)
+            if not scenario and ticket_key:
+                # Try to find the assigned developer from Jira
+                try:
+                    issue = self.jira.get_issue(ticket_key)
+                    dev_agent_id = None
+                    if issue.fields.assignee:
+                        assignee_id = issue.fields.assignee.accountId
+                        dev_agent_id = self._find_agent_by_jira_id(assignee_id)
+
+                    # If no assignee in Jira, find a developer from the tech lead's team
+                    if not dev_agent_id and tech_lead_id:
+                        lead_persona = self.personas.get("agents", {}).get(tech_lead_id, {})
+                        team = lead_persona.get("team", "alpha")
+                        # Get first available developer from team
+                        for aid, config in self.personas.get("agents", {}).items():
+                            if config.get("team") == team and config.get("role") == "developer":
+                                dev_agent_id = aid
+                                break
+
+                    if dev_agent_id:
+                        scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
+                        scenario.advance_to_phase(ScenarioPhase.IN_REVIEW)
+                except Exception:
+                    pass
             if scenario:
-                tech_lead_id = action.get("tech_lead_id")
                 result.update(
                     self.lifecycle_crew.complete_code_review(scenario, tech_lead_id)
                 )
+            else:
+                result["error"] = "Could not create scenario - no assignee found"
 
         elif action_type == "qa_approve":
+            qa_id = action.get("qa_id") or agent_id
+            # Create scenario if it doesn't exist (handles state reset recovery)
+            if not scenario and ticket_key:
+                try:
+                    issue = self.jira.get_issue(ticket_key)
+                    dev_agent_id = None
+                    if issue.fields.assignee:
+                        assignee_id = issue.fields.assignee.accountId
+                        dev_agent_id = self._find_agent_by_jira_id(assignee_id)
+
+                    # If no assignee in Jira, find a developer from the QA's team
+                    if not dev_agent_id and qa_id:
+                        qa_persona = self.personas.get("agents", {}).get(qa_id, {})
+                        team = qa_persona.get("team", "alpha")
+                        for aid, config in self.personas.get("agents", {}).items():
+                            if config.get("team") == team and config.get("role") == "developer":
+                                dev_agent_id = aid
+                                break
+
+                    if dev_agent_id:
+                        scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
+                        scenario.advance_to_phase(ScenarioPhase.IN_TESTING)
+                except Exception:
+                    pass
             if scenario:
-                qa_id = action.get("qa_id")
                 result.update(self.lifecycle_crew.qa_approve(scenario, qa_id))
+            else:
+                result["error"] = "Could not create scenario - no assignee found"
 
         elif action_type == "add_progress_comment":
             if scenario:
@@ -398,9 +543,26 @@ class ScenarioOrchestrator:
 
         # ========== Blocker Actions ==========
         elif action_type == "inject_blocker":
+            # Create scenario if it doesn't exist (handles state reset recovery)
+            if not scenario and ticket_key and agent_id:
+                try:
+                    issue = self.jira.get_issue(ticket_key)
+                    dev_agent_id = None
+                    if issue.fields.assignee:
+                        assignee_id = issue.fields.assignee.accountId
+                        dev_agent_id = self._find_agent_by_jira_id(assignee_id)
+                    if not dev_agent_id:
+                        dev_agent_id = agent_id  # Use the agent from the action as fallback
+                    if dev_agent_id:
+                        scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
+                        scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
+                except Exception:
+                    pass
             if scenario:
                 reason = details or self._generate_blocker_reason()
                 result.update(self.blocker_crew.inject_blocker(scenario, reason))
+            else:
+                result["error"] = "Could not create scenario for blocker injection"
 
         elif action_type == "discuss_blocker":
             if scenario:
@@ -699,6 +861,126 @@ class ScenarioOrchestrator:
                         result["error"] = "No available developers found"
                 except Exception as e:
                     result["error"] = f"Fix unassigned sprint item failed: {str(e)}"
+
+        # ========== Release Management Actions ==========
+        elif action_type == "create_fix_version":
+            pm_id = action.get("agent_id")
+            version_name = action.get("version_name")
+            target_date_str = action.get("target_date")
+            reason = action.get("reason", "")
+
+            if version_name:
+                try:
+                    from datetime import date
+
+                    # Parse target date if provided
+                    release_date = None
+                    if target_date_str:
+                        try:
+                            release_date = date.fromisoformat(target_date_str[:10])
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Create version in Jira
+                    version = self.jira.create_fix_version(
+                        name=version_name,
+                        release_date=release_date,
+                    )
+
+                    if version:
+                        # Get PM name for comment
+                        persona = self.personas.get("agents", {}).get(pm_id, {})
+                        pm_name = persona.get("display_name", "Product Manager")
+
+                        # Update release state
+                        for release in state.release_state.planned_releases:
+                            if release.name == version_name:
+                                release.created_in_jira = True
+                                break
+
+                        # Mark directive as executed if from directive
+                        if action.get("from_directive") and action.get("directive_id"):
+                            state.release_state.mark_directive_executed(
+                                action.get("directive_id"),
+                                f"Created version {version_name}",
+                            )
+
+                        result.update({
+                            "success": True,
+                            "jira_success": True,
+                            "version_name": version_name,
+                            "version_id": version.get("id"),
+                            "agent": pm_id,
+                            "reason": reason,
+                        })
+
+                        logger.info(f"Created fix version {version_name} by {pm_name}")
+                    else:
+                        result["error"] = f"Failed to create version {version_name} in Jira"
+                except Exception as e:
+                    result["error"] = f"Create fix version failed: {str(e)}"
+
+        elif action_type == "assign_fix_version":
+            pm_id = action.get("agent_id")
+            ticket_key = action.get("ticket_key")
+            version_name = action.get("version_name")
+            reason = action.get("reason", "Ensuring release tracking coverage")
+
+            if ticket_key and version_name:
+                try:
+                    # Assign version in Jira
+                    success = self.jira.set_fix_version(ticket_key, version_name)
+
+                    if success:
+                        # Get PM name for comment
+                        persona = self.personas.get("agents", {}).get(pm_id, {})
+                        pm_name = persona.get("display_name", "Product Manager")
+
+                        # Add explanatory comment
+                        comment = f"Assigned to release {version_name}. {reason} - {pm_name}"
+                        self.jira.add_comment(ticket_key, comment)
+
+                        # Update scenario if exists
+                        scenario = state.get_scenario_by_ticket(ticket_key)
+                        if scenario:
+                            scenario.fix_version = version_name
+
+                        # Mark directive as executed if from directive
+                        if action.get("from_directive") and action.get("directive_id"):
+                            state.release_state.mark_directive_executed(
+                                action.get("directive_id"),
+                                f"Assigned {ticket_key} to {version_name}",
+                            )
+
+                        result.update({
+                            "success": True,
+                            "jira_success": True,
+                            "ticket_key": ticket_key,
+                            "version_name": version_name,
+                            "agent": pm_id,
+                            "reason": reason,
+                        })
+
+                        logger.info(f"Assigned {ticket_key} to version {version_name} by {pm_name}")
+                    else:
+                        result["error"] = f"Failed to set fix version on {ticket_key}"
+                except Exception as e:
+                    result["error"] = f"Assign fix version failed: {str(e)}"
+
+        elif action_type == "release_reminder":
+            # Release reminder is informational - just log it
+            pm_id = action.get("agent_id")
+            release_name = action.get("release_name", "")
+            message = action.get("message", "")
+
+            result.update({
+                "success": True,
+                "release_name": release_name,
+                "agent": pm_id,
+                "message": message,
+            })
+
+            logger.info(f"Release reminder sent for {release_name}")
 
         else:
             result["error"] = f"Unknown action type: {action_type}"

@@ -86,6 +86,98 @@ PHASE_DURATION_FRACTIONS = {
     ScenarioPhase.RE_TESTING: 0.15,
 }
 
+# Minimum hours required in each phase before advancement
+PHASE_MINIMUM_HOURS = {
+    ScenarioPhase.IN_PROGRESS: 24,      # 1 day minimum
+    ScenarioPhase.IN_REVIEW: 4,         # 4 hours minimum
+    ScenarioPhase.IN_TESTING: 4,        # 4 hours minimum
+    ScenarioPhase.BLOCKED: 8,           # Half day minimum
+    ScenarioPhase.FIXING: 8,            # Half day for rework
+    ScenarioPhase.RE_REVIEW: 2,         # Quick re-review
+    ScenarioPhase.RE_TESTING: 2,        # Quick re-test
+}
+
+# Maximum hours allowed in certain phases (prevents stale items)
+PHASE_MAXIMUM_HOURS = {
+    ScenarioPhase.IN_REVIEW: 24,        # 1 day max (unless rejected)
+    ScenarioPhase.ASSIGNED: 8,          # Should be picked up quickly
+}
+
+
+# ========== Release Management Models ==========
+
+class ReleaseVersion(BaseModel):
+    """A planned release version managed by the Release Manager."""
+    name: str                          # e.g., "v1.2.0"
+    target_date: datetime
+    status: str = "planned"            # planned | in_progress | released
+    created_in_jira: bool = False
+    assigned_tickets: list[str] = Field(default_factory=list)
+    release_notes: Optional[str] = None
+    sprint_number: Optional[int] = None  # Associated sprint
+
+
+class ReleaseDirective(BaseModel):
+    """An instruction from Release Manager to a PM agent."""
+    directive_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    directive_type: str                # create_version | assign_version | release_reminder
+    target_pm_id: str
+    parameters: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    executed: bool = False
+    execution_result: Optional[str] = None
+
+
+class ReleaseState(BaseModel):
+    """Release planning state managed by the Release Manager agent."""
+    planned_releases: list[ReleaseVersion] = Field(default_factory=list)
+    active_directives: list[ReleaseDirective] = Field(default_factory=list)
+    compliance_metrics: dict = Field(default_factory=dict)
+    last_compliance_check: Optional[datetime] = None
+
+    def get_current_release(self) -> Optional[ReleaseVersion]:
+        """Get the next planned release (not yet released)."""
+        for release in self.planned_releases:
+            if release.status != "released":
+                return release
+        return None
+
+    def get_release_by_name(self, name: str) -> Optional[ReleaseVersion]:
+        """Find a release by version name."""
+        for release in self.planned_releases:
+            if release.name == name:
+                return release
+        return None
+
+    def add_release(self, release: ReleaseVersion) -> None:
+        """Add a new planned release."""
+        self.planned_releases.append(release)
+
+    def mark_directive_executed(self, directive_id: str, result: Optional[str] = None) -> None:
+        """Mark a directive as executed."""
+        for directive in self.active_directives:
+            if directive.directive_id == directive_id:
+                directive.executed = True
+                directive.execution_result = result
+                break
+
+    def get_pending_directives(self, pm_id: Optional[str] = None) -> list[ReleaseDirective]:
+        """Get unexecuted directives, optionally filtered by PM."""
+        directives = [d for d in self.active_directives if not d.executed]
+        if pm_id:
+            directives = [d for d in directives if d.target_pm_id == pm_id]
+        return directives
+
+    def cleanup_old_directives(self, max_age_hours: int = 48) -> int:
+        """Remove executed directives older than max_age_hours."""
+        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        original_count = len(self.active_directives)
+        self.active_directives = [
+            d for d in self.active_directives
+            if not d.executed or d.created_at > cutoff
+        ]
+        return original_count - len(self.active_directives)
+
 
 class ActionRecord(BaseModel):
     """Record of an action taken within a scenario."""
@@ -128,6 +220,9 @@ class ActiveScenario(BaseModel):
     rejection_reason: Optional[str] = None
     dependency_ticket: Optional[str] = None
     dependency_team: Optional[str] = None
+
+    # Release management
+    fix_version: Optional[str] = None  # Target release version for this scenario
 
     # Tracking
     actions_taken: list[ActionRecord] = Field(default_factory=list)
@@ -266,8 +361,17 @@ class ActiveScenario(BaseModel):
             self.involved_agents.append(agent_id)
 
     def is_phase_ready_to_advance(self) -> bool:
-        """Check if current phase has exceeded its target duration."""
-        return datetime.utcnow() >= self.phase_target_end
+        """Check if current phase has exceeded its target duration and minimum time."""
+        now = datetime.utcnow()
+        time_in_phase = now - self.phase_started
+
+        # Check minimum hours requirement for current phase
+        min_hours = PHASE_MINIMUM_HOURS.get(self.current_phase, 4)  # Default 4 hours
+        if time_in_phase < timedelta(hours=min_hours):
+            return False
+
+        # Check if target time has been reached
+        return now >= self.phase_target_end
 
     def is_overdue(self) -> bool:
         """Check if scenario has exceeded target completion."""
@@ -532,6 +636,9 @@ class SimulationState(BaseModel):
 
     # Distribution tracking
     scenario_distribution: ScenarioDistribution = Field(default_factory=ScenarioDistribution)
+
+    # Release management state
+    release_state: ReleaseState = Field(default_factory=ReleaseState)
 
     # History for LLM context and avoiding repetition
     recent_actions: list[RecentAction] = Field(default_factory=list)

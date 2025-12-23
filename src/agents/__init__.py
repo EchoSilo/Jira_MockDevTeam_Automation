@@ -3,6 +3,7 @@ Agent module for the Jira Team Simulator.
 
 Provides both legacy agent classes (for backwards compatibility)
 and new CrewAI agent factories (for the scenario-driven system).
+Also includes coordinator agents for meta-level coordination.
 """
 
 # Legacy agents (will be deprecated)
@@ -11,6 +12,10 @@ from .pm_agent import PMAgent
 from .developer_agent import DeveloperAgent
 from .qa_agent import QAAgent
 from .tech_lead_agent import TechLeadAgent
+
+# Coordinator agents (meta-level, no direct Jira access)
+from .coordinator_agent import CoordinatorAgent
+from .release_manager_agent import ReleaseManagerAgent
 
 # New CrewAI agent factories
 from .agent_factories import (
@@ -30,6 +35,9 @@ __all__ = [
     "DeveloperAgent",
     "QAAgent",
     "TechLeadAgent",
+    # Coordinator agents
+    "CoordinatorAgent",
+    "ReleaseManagerAgent",
     # New factories
     "create_agent",
     "create_pm_agent",

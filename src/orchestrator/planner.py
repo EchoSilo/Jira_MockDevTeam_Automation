@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from ..services.llm_service import LLMService
-from ..state import SimulationState, ScenarioType, PlannedAction
+from ..state import SimulationState, ScenarioType, PlannedAction, ReleaseDirective
 
 logger = logging.getLogger(__name__)
 
@@ -94,23 +94,43 @@ class ScenarioPlanner:
         multiplier = intensity_multipliers.get(intensity, 1.0)
         target_actions = max(2, int(self.max_actions_per_tick * multiplier))
 
-        # Phase 1: Get script-based actions first (these take priority)
+        # Phase 0: Convert Release Manager directives to PM actions (highest priority)
+        release_directives = analysis.get("release_directives", [])
+        directive_actions = self._convert_directives_to_actions(release_directives, state)
+
+        # Track agents used by directive actions
+        directive_agent_ids = {a.get("agent_id") for a in directive_actions if a.get("agent_id")}
+
+        # If directives filled all slots, return those
+        if len(directive_actions) >= target_actions:
+            logger.info(f"Release directives filled all {len(directive_actions)} action slots")
+            return directive_actions[:target_actions]
+
+        # Phase 1: Get script-based actions (exclude agents already used by directives)
         script_actions = self._get_script_based_actions(state)
+        # Filter out script actions that would use directive agents
+        script_actions = [a for a in script_actions if a.get("agent_id") not in directive_agent_ids]
 
         # Track agents used by script actions
         script_agent_ids = {a.get("agent_id") for a in script_actions if a.get("agent_id")}
 
-        # If scripts filled all slots, just return those
-        if len(script_actions) >= target_actions:
-            logger.info(f"Scripts provided all {len(script_actions)} actions, skipping LLM planning")
-            return self._validate_actions(script_actions, analysis, state)[:target_actions]
+        # Combine directive and script agent exclusions
+        all_excluded_agents = directive_agent_ids | script_agent_ids
+
+        # Calculate slots used by directives and scripts
+        pre_planned_actions = directive_actions + script_actions
+
+        # If directives + scripts filled all slots, return those
+        if len(pre_planned_actions) >= target_actions:
+            logger.info(f"Directives ({len(directive_actions)}) + scripts ({len(script_actions)}) filled all action slots")
+            return self._validate_actions(pre_planned_actions, analysis, state)[:target_actions]
 
         # Phase 2: Use LLM for remaining slots
-        remaining_slots = target_actions - len(script_actions)
+        remaining_slots = target_actions - len(pre_planned_actions)
 
-        # Build the planning prompt (with awareness of script actions)
+        # Build the planning prompt (exclude agents used by directives and scripts)
         prompt = self._build_planning_prompt(
-            analysis, state, remaining_slots, script_agent_ids
+            analysis, state, remaining_slots, all_excluded_agents
         )
 
         try:
@@ -159,8 +179,8 @@ class ScenarioPlanner:
                 if not isinstance(validated_llm_actions, list):
                     validated_llm_actions = list(validated_llm_actions) if validated_llm_actions else []
 
-                # Combine script actions (first) with LLM actions
-                all_actions = script_actions + validated_llm_actions[:remaining_slots]
+                # Combine: directive actions (highest priority) + script actions + LLM actions
+                all_actions = directive_actions + script_actions + validated_llm_actions[:remaining_slots]
                 return all_actions[:target_actions]
             except Exception as action_error:
                 # Log the specific action parsing error but don't fail
@@ -183,8 +203,8 @@ class ScenarioPlanner:
                 # Fall back to basic plan to keep workflow running
                 fallback_actions = self._fallback_plan(analysis, state, remaining_slots)
                 validated_fallback = self._validate_actions(fallback_actions, analysis, state)
-                # Combine script actions with fallback
-                all_actions = script_actions + validated_fallback[:remaining_slots]
+                # Combine: directive actions + script actions + fallback
+                all_actions = directive_actions + script_actions + validated_fallback[:remaining_slots]
                 return all_actions[:target_actions]
 
         except Exception as e:
@@ -209,8 +229,8 @@ class ScenarioPlanner:
             # On error, fall back to basic actions
             fallback_actions = self._fallback_plan(analysis, state, remaining_slots)
             validated_fallback = self._validate_actions(fallback_actions, analysis, state)
-            # Combine script actions with fallback
-            all_actions = script_actions + validated_fallback[:remaining_slots]
+            # Combine: directive actions + script actions + fallback
+            all_actions = directive_actions + script_actions + validated_fallback[:remaining_slots]
             return all_actions[:target_actions]
 
     def _build_planning_prompt(
@@ -984,3 +1004,70 @@ Remember:
                     candidates.append(agent_id)
 
         return candidates[0] if candidates else None
+
+    def _convert_directives_to_actions(
+        self,
+        directives: list[ReleaseDirective],
+        state: SimulationState,
+    ) -> list[dict]:
+        """
+        Convert Release Manager directives into PM actions.
+
+        Directives are instructions from the Release Manager that need to be
+        executed by PM agents. This method converts them to the action format
+        used by the orchestrator's execute phase.
+
+        Args:
+            directives: List of ReleaseDirective objects from coordination phase
+            state: Current simulation state
+
+        Returns:
+            List of action dicts ready for execution
+        """
+        actions = []
+
+        for directive in directives:
+            # Skip already executed directives
+            if directive.executed:
+                continue
+
+            # Validate target PM exists
+            if directive.target_pm_id not in self.personas.get("agents", {}):
+                logger.warning(
+                    f"Directive {directive.directive_id} targets unknown PM: {directive.target_pm_id}"
+                )
+                continue
+
+            # Build action dict from directive
+            action = {
+                "type": directive.directive_type,
+                "agent_id": directive.target_pm_id,
+                "from_directive": True,
+                "directive_id": directive.directive_id,
+                "details": directive.parameters.get("reason", "Release Manager directive"),
+            }
+
+            # Add parameters based on directive type
+            if directive.directive_type == "create_fix_version":
+                action["version_name"] = directive.parameters.get("version_name")
+                action["target_date"] = directive.parameters.get("target_date")
+
+            elif directive.directive_type == "assign_fix_version":
+                action["ticket_key"] = directive.parameters.get("ticket_key")
+                action["version_name"] = directive.parameters.get("version_name")
+
+            elif directive.directive_type == "release_reminder":
+                action["version_name"] = directive.parameters.get("version_name")
+                action["message"] = directive.parameters.get("message")
+
+            actions.append(action)
+
+            logger.info(
+                f"Converted directive {directive.directive_id} ({directive.directive_type}) "
+                f"to PM action for {directive.target_pm_id}"
+            )
+
+        if actions:
+            logger.info(f"Converted {len(actions)} Release Manager directives to PM actions")
+
+        return actions

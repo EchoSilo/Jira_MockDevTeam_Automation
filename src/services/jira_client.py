@@ -113,6 +113,12 @@ class JiraClient:
     def transition_issue(self, issue_key: str, transition_name: str) -> bool:
         """Transition an issue to a new status."""
         issue = self._client.issue(issue_key)
+
+        # Idempotency: skip if already at target status
+        current_status = issue.fields.status.name.lower()
+        if current_status == transition_name.lower():
+            return True  # Already at target status
+
         transitions = self._client.transitions(issue)
 
         for t in transitions:
@@ -480,3 +486,250 @@ class JiraClient:
                 })
 
         return needs_update
+
+    # ==================== Fix Version Methods ====================
+
+    def get_fix_versions(self, released: Optional[bool] = None) -> list[dict]:
+        """
+        Get fix versions for the project.
+
+        Args:
+            released: If True, only released versions. If False, only unreleased.
+                     If None, return all versions.
+
+        Returns:
+            List of version dicts with id, name, released, release_date, description
+        """
+        try:
+            versions = self._client.project_versions(self.project_key)
+            result = []
+            for v in versions:
+                if released is not None and v.released != released:
+                    continue
+                result.append({
+                    "id": v.id,
+                    "name": v.name,
+                    "released": v.released,
+                    "release_date": getattr(v, "releaseDate", None),
+                    "description": getattr(v, "description", None),
+                    "archived": getattr(v, "archived", False),
+                })
+            return result
+        except Exception:
+            return []
+
+    def create_fix_version(
+        self,
+        name: str,
+        release_date: Optional[date] = None,
+        description: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Create a new fix version in the project.
+
+        Args:
+            name: Version name (e.g., "v1.2.0")
+            release_date: Optional target release date
+            description: Optional version description
+
+        Returns:
+            Dict with id and name if successful, None otherwise
+        """
+        try:
+            version = self._client.create_version(
+                name=name,
+                project=self.project_key,
+                releaseDate=release_date.isoformat() if release_date else None,
+                description=description,
+            )
+            return {"id": version.id, "name": version.name}
+        except Exception:
+            return None
+
+    def set_fix_version(self, issue_key: str, version_name: str) -> bool:
+        """
+        Assign a fix version to an issue.
+
+        Args:
+            issue_key: The issue to update
+            version_name: The version name to assign
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            issue = self._client.issue(issue_key)
+            issue.update(fields={"fixVersions": [{"name": version_name}]})
+            return True
+        except Exception:
+            return False
+
+    def add_fix_version(self, issue_key: str, version_name: str) -> bool:
+        """
+        Add a fix version to an issue without removing existing ones.
+
+        Args:
+            issue_key: The issue to update
+            version_name: The version name to add
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            issue = self._client.issue(issue_key)
+            existing = issue.fields.fixVersions or []
+            existing_names = [v.name for v in existing]
+
+            # Don't add if already present
+            if version_name in existing_names:
+                return True
+
+            new_versions = [{"name": v.name} for v in existing]
+            new_versions.append({"name": version_name})
+            issue.update(fields={"fixVersions": new_versions})
+            return True
+        except Exception:
+            return False
+
+    def remove_fix_version(self, issue_key: str, version_name: str) -> bool:
+        """
+        Remove a fix version from an issue.
+
+        Args:
+            issue_key: The issue to update
+            version_name: The version name to remove
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            issue = self._client.issue(issue_key)
+            existing = issue.fields.fixVersions or []
+            new_versions = [{"name": v.name} for v in existing if v.name != version_name]
+            issue.update(fields={"fixVersions": new_versions})
+            return True
+        except Exception:
+            return False
+
+    def get_issues_without_fix_version(
+        self,
+        statuses: Optional[list[str]] = None,
+        issue_types: Optional[list[str]] = None,
+        max_results: int = 50,
+    ) -> list[Issue]:
+        """
+        Get issues that don't have a fix version assigned.
+
+        Args:
+            statuses: Optional list of statuses to filter by
+            issue_types: Optional list of issue types to filter by
+            max_results: Maximum results to return
+
+        Returns:
+            List of issues without fix versions
+        """
+        jql = f"project = {self.project_key} AND fixVersion IS EMPTY"
+
+        if statuses:
+            status_str = ", ".join(f'"{s}"' for s in statuses)
+            jql += f" AND status IN ({status_str})"
+
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+
+        jql += " ORDER BY priority DESC, updated DESC"
+
+        try:
+            return self._client.search_issues(jql, maxResults=max_results)
+        except Exception:
+            return []
+
+    def get_issues_by_fix_version(
+        self,
+        version_name: str,
+        statuses: Optional[list[str]] = None,
+    ) -> list[Issue]:
+        """
+        Get all issues assigned to a specific fix version.
+
+        Args:
+            version_name: The version name to query
+            statuses: Optional list of statuses to filter by
+
+        Returns:
+            List of issues in the specified version
+        """
+        jql = f'project = {self.project_key} AND fixVersion = "{version_name}"'
+
+        if statuses:
+            status_str = ", ".join(f'"{s}"' for s in statuses)
+            jql += f" AND status IN ({status_str})"
+
+        jql += " ORDER BY priority DESC, updated DESC"
+
+        try:
+            return self._client.search_issues(jql)
+        except Exception:
+            return []
+
+    def release_version(self, version_name: str, release_date: Optional[date] = None) -> bool:
+        """
+        Mark a version as released.
+
+        Args:
+            version_name: The version to release
+            release_date: The release date (defaults to today)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            versions = self._client.project_versions(self.project_key)
+            for v in versions:
+                if v.name == version_name:
+                    v.update(
+                        released=True,
+                        releaseDate=(release_date or date.today()).isoformat(),
+                    )
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def get_version_progress(self, version_name: str) -> Optional[dict]:
+        """
+        Get progress metrics for a version.
+
+        Returns:
+            Dict with total, done, in_progress, todo counts and percentages
+        """
+        try:
+            issues = self.get_issues_by_fix_version(version_name)
+            if not issues:
+                return None
+
+            total = len(issues)
+            done = 0
+            in_progress = 0
+            todo = 0
+
+            for issue in issues:
+                status = issue.fields.status.name.lower()
+                if status in ["done", "closed", "resolved"]:
+                    done += 1
+                elif status in ["to do", "backlog", "open"]:
+                    todo += 1
+                else:
+                    in_progress += 1
+
+            return {
+                "total": total,
+                "done": done,
+                "in_progress": in_progress,
+                "todo": todo,
+                "done_percent": round((done / total) * 100, 1) if total > 0 else 0,
+                "in_progress_percent": round((in_progress / total) * 100, 1) if total > 0 else 0,
+            }
+        except Exception:
+            return None

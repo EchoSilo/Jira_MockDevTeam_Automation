@@ -191,3 +191,30 @@ schedule:
   start_hour: 9               # 9 AM
   end_hour: 17                # 5 PM
   interval_minutes: 45        # Approximate interval between runs
+
+# Release Management Configuration
+# Controls the Release Manager agent behavior
+release_management:
+  enabled: true
+
+  # Version naming pattern (used for auto-generating version names)
+  version_naming_pattern: "v{major}.{minor}.{patch}"
+  initial_version: "1.0.0"
+
+  # Release schedule
+  schedule:
+    release_cadence_sprints: 2    # Release every N sprints
+    release_day: 5                # Day of sprint for release (5 = Friday)
+    planning_buffer_sprints: 1    # Plan releases this many sprints ahead
+
+  # Compliance settings
+  compliance:
+    require_fix_version: true           # Whether fix versions are required
+    enforce_after_status: "In Progress" # Enforce version after this status
+    max_violations_before_action: 3     # Violations before RM creates directive
+    gradual_enforcement: true           # Fix violations gradually over time
+
+  # Directive settings
+  directives:
+    max_per_tick: 3                     # Max directives RM can issue per tick
+    directive_cooldown_hours: 4         # Hours between similar directives

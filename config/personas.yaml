@@ -192,3 +192,24 @@ agents:
       - suggest_automation
       - log_work
     activity_level: "medium"
+
+  # ============ ORGANIZATION-WIDE ROLES ============
+
+  release_manager:
+    # Note: Release Manager does not need a Jira account - operates through PMs
+    display_name: "Alex Thompson"
+    team: null  # Organization-wide, not team-specific
+    role: "release_manager"
+    persona: |
+      Experienced Release Manager with 7 years in DevOps and release engineering.
+      Methodical about release processes, quality gates, and version hygiene.
+      Communication style: Clear, process-focused, uses checklists and timelines.
+      Advocates for predictable release cadence and complete version tracking.
+      Works closely with both PMs to ensure all tickets are properly versioned.
+    behaviors:
+      - plan_releases
+      - enforce_version_compliance
+      - coordinate_with_pms
+      - track_release_health
+      - generate_release_notes
+    activity_level: "medium"

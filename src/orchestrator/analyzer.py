@@ -101,6 +101,11 @@ class ScenarioAnalyzer:
                 assignee = issue.fields.assignee
                 issue_type = issue.fields.issuetype.name
 
+                # Get fix version info
+                fix_versions = issue.fields.fixVersions or []
+                fix_version = fix_versions[0].name if fix_versions else None
+                fix_version_id = fix_versions[0].id if fix_versions else None
+
                 ticket_info = {
                     "key": issue.key,
                     "summary": issue.fields.summary,
@@ -113,6 +118,8 @@ class ScenarioAnalyzer:
                     ),
                     "created": str(issue.fields.created),
                     "in_active_sprint": True if sprint_only else self._is_in_active_sprint(issue.key),
+                    "fix_version": fix_version,
+                    "fix_version_id": fix_version_id,
                 }
 
                 # Fetch available transitions from Jira API (skip for done items)
@@ -989,3 +996,197 @@ class ScenarioAnalyzer:
             pass
 
         return violations
+
+    # ==================== Release Compliance Detection ====================
+
+    def detect_release_compliance_violations(
+        self,
+        state: SimulationState,
+        board_snapshot: dict,
+    ) -> list[dict]:
+        """
+        Detect tickets violating fix version requirements.
+
+        Called by the Release Manager agent to identify compliance issues.
+
+        Returns:
+            List of violation dicts with ticket info and recommended fix
+        """
+        violations = []
+
+        rm_settings = self.settings.get("release_management", {})
+        if not rm_settings.get("enabled", False):
+            return violations
+
+        compliance = rm_settings.get("compliance", {})
+        enforce_after = compliance.get("enforce_after_status", "In Progress")
+
+        # Map of statuses that require fix versions
+        enforce_statuses = {
+            "In Progress": ["in_progress"],
+            "Code Review": ["in_progress", "code_review"],
+            "Testing": ["in_progress", "code_review", "testing"],
+        }
+        statuses_to_check = enforce_statuses.get(enforce_after, ["in_progress"])
+
+        # Check tickets in enforced statuses
+        for status_key in statuses_to_check:
+            for ticket in board_snapshot.get(status_key, []):
+                # Skip Epics (they don't need fix versions the same way)
+                if ticket.get("type") == "Epic":
+                    continue
+
+                if not ticket.get("fix_version"):
+                    # Find appropriate PM for this ticket
+                    pm_id = self._find_pm_for_ticket(ticket)
+
+                    violations.append({
+                        "type": "fix_version_violation",
+                        "priority": "medium",
+                        "ticket_key": ticket["key"],
+                        "ticket_summary": ticket.get("summary", ""),
+                        "ticket_status": ticket["status"],
+                        "ticket_type": ticket.get("type", "Story"),
+                        "violation_type": "missing_fix_version",
+                        "pm_id": pm_id,
+                        "description": (
+                            f"{ticket['key']} is {ticket['status']} but has no "
+                            f"fix version assigned"
+                        ),
+                        "suggested_action": "assign_fix_version",
+                    })
+
+        return violations
+
+    def detect_release_planning_opportunities(
+        self,
+        state: SimulationState,
+    ) -> list[dict]:
+        """
+        Detect when release planning activities are needed.
+
+        Called by the Release Manager agent.
+
+        Returns:
+            List of opportunity dicts for release planning actions
+        """
+        opportunities = []
+
+        rm_settings = self.settings.get("release_management", {})
+        if not rm_settings.get("enabled", False):
+            return opportunities
+
+        release_state = state.release_state
+        schedule = rm_settings.get("schedule", {})
+
+        # Check if we need to plan upcoming releases
+        planned_count = len([
+            r for r in release_state.planned_releases
+            if r.status == "planned"
+        ])
+
+        planning_buffer = schedule.get("planning_buffer_sprints", 1)
+        if planned_count < planning_buffer + 1:
+            opportunities.append({
+                "type": "plan_release",
+                "priority": "medium",
+                "planned_count": planned_count,
+                "target_count": planning_buffer + 1,
+                "description": (
+                    f"Only {planned_count} releases planned - Release Manager "
+                    f"should plan more"
+                ),
+            })
+
+        # Check for upcoming release day
+        release_day = schedule.get("release_day", 5)
+        if state.sprint.sprint_day == release_day:
+            current_release = release_state.get_current_release()
+            if current_release:
+                opportunities.append({
+                    "type": "release_day",
+                    "priority": "high",
+                    "release_name": current_release.name,
+                    "description": (
+                        f"Today is release day - coordinate {current_release.name} "
+                        f"release activities"
+                    ),
+                })
+
+        # Check for releases missing from Jira
+        for release in release_state.planned_releases:
+            if not release.created_in_jira and release.status != "released":
+                opportunities.append({
+                    "type": "create_jira_version",
+                    "priority": "high",
+                    "release_name": release.name,
+                    "target_date": release.target_date.isoformat() if release.target_date else None,
+                    "description": (
+                        f"Release {release.name} exists in state but not in Jira - "
+                        f"PM should create the fix version"
+                    ),
+                })
+
+        return opportunities
+
+    def get_version_coverage_metrics(self, board_snapshot: dict) -> dict:
+        """
+        Calculate fix version coverage metrics across the board.
+
+        Returns:
+            Dict with coverage statistics
+        """
+        total = 0
+        versioned = 0
+        by_status = {}
+
+        for status_key in ["in_progress", "code_review", "testing"]:
+            status_tickets = board_snapshot.get(status_key, [])
+            status_total = 0
+            status_versioned = 0
+
+            for ticket in status_tickets:
+                # Skip Epics
+                if ticket.get("type") == "Epic":
+                    continue
+
+                status_total += 1
+                total += 1
+
+                if ticket.get("fix_version"):
+                    status_versioned += 1
+                    versioned += 1
+
+            by_status[status_key] = {
+                "total": status_total,
+                "versioned": status_versioned,
+                "coverage": (
+                    round(status_versioned / status_total * 100, 1)
+                    if status_total > 0 else 100.0
+                ),
+            }
+
+        return {
+            "total_tracked": total,
+            "total_versioned": versioned,
+            "overall_coverage": (
+                round(versioned / total * 100, 1) if total > 0 else 100.0
+            ),
+            "by_status": by_status,
+        }
+
+    def _find_pm_for_ticket(self, ticket: dict) -> Optional[str]:
+        """
+        Find the appropriate PM for a ticket based on assignee team.
+        """
+        assignee_id = ticket.get("assignee_id")
+        if assignee_id:
+            # Find agent by Jira account ID
+            agent_id = self._find_agent_by_jira_account(assignee_id)
+            if agent_id:
+                persona = self.personas.get("agents", {}).get(agent_id, {})
+                team = persona.get("team", "alpha")
+                return self._get_team_agents(team).get("pm")
+
+        # Default to alpha PM
+        return self._get_team_agents("alpha").get("pm")

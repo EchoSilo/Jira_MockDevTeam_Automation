@@ -15,6 +15,10 @@ from .models import (
     ISSUE_TYPE_TO_COMPLEXITY,
     CYCLE_TIME_RANGES,
     PHASE_DURATION_FRACTIONS,
+    # Release management models
+    ReleaseVersion,
+    ReleaseDirective,
+    ReleaseState,
 )
 from .simulation_state import (
     load_state,
@@ -34,6 +38,10 @@ __all__ = [
     "ScenarioDistribution",
     "ActionRecord",
     "PlannedAction",
+    # Release management classes
+    "ReleaseVersion",
+    "ReleaseDirective",
+    "ReleaseState",
     # Enums
     "ScenarioType",
     "ScenarioPhase",
