@@ -221,6 +221,7 @@ class AsyncLogWriter:
         scenario_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         error: Optional[str] = None,
+        coordination_summary: Optional[dict] = None,
     ) -> None:
         """Convenience method to log an orchestrator event."""
         if self._current_session is None:

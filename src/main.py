@@ -7,12 +7,15 @@ n8n is a dumb trigger only - all logic lives here.
 This version uses the scenario-driven CrewAI orchestration system.
 """
 
+import logging
 import random
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file before other imports
@@ -100,6 +103,74 @@ class CachedState:
 # Global caches
 _health_cache = CachedHealthCheck(ttl_seconds=60)  # Check Jira every 60s
 _state_cache = CachedState(ttl_seconds=5)  # Reload state every 5s
+
+
+def check_and_handle_expired_sprint(jira_client: JiraClient) -> Optional[dict]:
+    """
+    Check if the active sprint has expired and handle it.
+
+    Returns:
+        dict with sprint action taken, or None if no action needed
+    """
+    try:
+        active_sprint = jira_client.get_active_sprint()
+        if not active_sprint:
+            logger.info("No active sprint found")
+            return None
+
+        end_date_str = active_sprint.get("end_date")
+        if not end_date_str:
+            return None
+
+        # Parse end date and check if expired
+        end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+
+        if now > end_date:
+            days_overdue = (now - end_date).days
+            sprint_name = active_sprint.get("name", "Unknown")
+            sprint_id = active_sprint.get("id")
+
+            logger.warning(
+                f"Sprint '{sprint_name}' (ID: {sprint_id}) expired {days_overdue} days ago. "
+                f"End date: {end_date_str}"
+            )
+
+            # Close the expired sprint
+            if jira_client.complete_sprint(sprint_id):
+                logger.info(f"Successfully closed expired sprint '{sprint_name}'")
+
+                # Create a new sprint
+                new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
+                start_date = now.date()
+                end_date_new = start_date + timedelta(days=7)
+
+                new_sprint = jira_client.create_sprint(
+                    name=new_sprint_name,
+                    start_date=start_date,
+                    end_date=end_date_new,
+                )
+
+                if new_sprint:
+                    # Start the new sprint
+                    jira_client.start_sprint(
+                        new_sprint["id"],
+                        start_date=start_date,
+                        end_date=end_date_new,
+                    )
+                    logger.info(f"Created and started new sprint '{new_sprint_name}'")
+                    return {
+                        "action": "sprint_rollover",
+                        "closed_sprint": sprint_name,
+                        "new_sprint": new_sprint_name,
+                    }
+            else:
+                logger.error(f"Failed to close expired sprint '{sprint_name}'")
+
+        return None
+    except Exception as e:
+        logger.error(f"Error checking sprint expiration: {e}")
+        return None
 
 
 # Load configuration at startup
@@ -286,6 +357,11 @@ async def trigger_simulation():
         except Exception as sync_error:
             print(f"Warning: State sync failed: {sync_error}")
 
+        # Check for and handle expired sprint
+        sprint_action = check_and_handle_expired_sprint(logged_jira)
+        if sprint_action:
+            logger.info(f"Sprint action taken: {sprint_action}")
+
         # Validate and clean up any invalid agent_ids in state
         state = validate_state_agent_ids(state, app.state.personas)
 
@@ -407,7 +483,7 @@ async def get_sprint_data():
             status = issue.fields.status.name.lower()
             if status in ["to do", "backlog", "open"]:
                 status_counts["backlog"] += 1
-            elif status in ["in progress", "in development"]:
+            elif status in ["in progress", "in development", "blocked"]:
                 status_counts["inProgress"] += 1
             elif status in ["code review", "in review", "review"]:
                 status_counts["codeReview"] += 1
@@ -416,7 +492,8 @@ async def get_sprint_data():
             elif status in ["done", "closed", "resolved"]:
                 status_counts["done"] += 1
             else:
-                # Default unknown statuses to in progress
+                # Log unknown status for debugging
+                logger.warning(f"Unknown status '{status}' for {issue.key}, defaulting to inProgress")
                 status_counts["inProgress"] += 1
 
         # Calculate burndown data
@@ -695,7 +772,7 @@ async def chat_with_pm(request: ChatRequest):
     state = _state_cache.get()
 
     # Build context about the current sprint/team
-    team = pm_config.get("team")
+    team = pm_config.get("team") or "unknown"  # Handle null team values
     team_agents = [
         (aid, cfg) for aid, cfg in app.state.personas.get("agents", {}).items()
         if cfg.get("team") == team

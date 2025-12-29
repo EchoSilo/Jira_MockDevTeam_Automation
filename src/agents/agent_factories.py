@@ -21,7 +21,7 @@ def create_pm_agent(
     They do NOT delegate to other agents.
     """
     display_name = persona_config.get("display_name", "Product Manager")
-    team = persona_config.get("team", "unknown")
+    team = persona_config.get("team") or "unknown"  # Handle null team values
     persona = persona_config.get("persona", "")
 
     return Agent(
@@ -60,8 +60,8 @@ def create_developer_agent(
     and communicate progress. Seniority affects behavior.
     """
     display_name = persona_config.get("display_name", "Developer")
-    team = persona_config.get("team", "unknown")
-    seniority = persona_config.get("seniority", "mid")
+    team = persona_config.get("team") or "unknown"  # Handle null team values
+    seniority = persona_config.get("seniority") or "mid"  # Handle null seniority
     persona = persona_config.get("persona", "")
 
     seniority_context = {
@@ -113,7 +113,7 @@ def create_qa_agent(
     and create bug reports when issues are found.
     """
     display_name = persona_config.get("display_name", "QA Engineer")
-    team = persona_config.get("team", "unknown")
+    team = persona_config.get("team") or "unknown"  # Handle null team values
     persona = persona_config.get("persona", "")
 
     return Agent(
@@ -153,7 +153,7 @@ def create_tech_lead_agent(
     identify technical risks, and mentor team members.
     """
     display_name = persona_config.get("display_name", "Tech Lead")
-    team = persona_config.get("team", "unknown")
+    team = persona_config.get("team") or "unknown"  # Handle null team values
     persona = persona_config.get("persona", "")
 
     return Agent(
@@ -221,7 +221,7 @@ def get_agent_display_info(persona_config: dict) -> dict:
     return {
         "id": persona_config.get("id", "unknown"),
         "display_name": persona_config.get("display_name", "Unknown"),
-        "team": persona_config.get("team", "unknown"),
+        "team": persona_config.get("team") or "unknown",  # Handle null team values
         "role": persona_config.get("role", "developer"),
         "seniority": persona_config.get("seniority"),
         "jira_account_id": persona_config.get("jira_account_id"),

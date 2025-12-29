@@ -484,7 +484,7 @@ Remember:
         for agent_id, config in self.personas.get("agents", {}).items():
             role = config.get("role", "developer")
             name = config.get("display_name", agent_id)
-            team = config.get("team", "unknown")
+            team = config.get("team") or "unknown"  # Handle null team values
             lines.append(f"- {agent_id}: {name} ({role}, Team {team.title()})")
         return "\n".join(lines)
 

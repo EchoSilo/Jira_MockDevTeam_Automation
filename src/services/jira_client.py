@@ -3,11 +3,14 @@ Jira API client wrapper for the simulator.
 Handles all Jira interactions with proper authentication per agent.
 """
 
+import logging
 import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 from jira import JIRA
 from jira.resources import Issue
+
+logger = logging.getLogger(__name__)
 
 # Configured board ID for sprint operations
 BOARD_ID = 4
@@ -132,6 +135,12 @@ class JiraClient:
                 self._client.transition_issue(issue, t["id"])
                 return True
 
+        # Log failure with available transitions for debugging
+        trans_names = [t["name"] for t in transitions]
+        logger.warning(
+            f"Failed to transition {issue_key} to '{transition_name}'. "
+            f"Current status: '{current_status}'. Available transitions: {trans_names}"
+        )
         return False
 
     def add_comment(self, issue_key: str, comment: str) -> None:

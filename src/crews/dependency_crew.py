@@ -37,11 +37,14 @@ class DependencyCrew(BaseCrew):
         persona = self.get_persona(developer_id)
         agent = self.get_agent(developer_id, use_complex_llm=True)
 
+        # Handle null team values
+        safe_dependency_team = dependency_team or "unknown"
+
         task = Task(
             description=f"""You are {persona['display_name']} and you've discovered a dependency.
 
 Your ticket: {scenario.ticket_key}
-Dependent on: {dependency_ticket} from Team {dependency_team.title()}
+Dependent on: {dependency_ticket} from Team {safe_dependency_team.title()}
 
 Your task:
 1. Use 'Get Issue Details' on your ticket to understand the context
@@ -104,11 +107,14 @@ Be clear about the dependency without being demanding. This is normal cross-team
         persona = self.get_persona(pm_id)
         agent = self.get_agent(pm_id, use_complex_llm=True)
 
+        # Handle null team values
+        safe_dependency_team = dependency_team or "unknown"
+
         task = Task(
             description=f"""You are {persona['display_name']} (PM) coordinating a cross-team dependency.
 
 Your team's ticket: {scenario.ticket_key}
-Depends on: {dependency_ticket} from Team {dependency_team.title()}
+Depends on: {dependency_ticket} from Team {safe_dependency_team.title()}
 
 Your task:
 1. Use 'Get Issue Details' on both tickets
@@ -170,8 +176,11 @@ Be collaborative, not demanding. Cross-team coordination requires diplomacy.
         persona = self.get_persona(responder_id)
         agent = self.get_agent(responder_id, use_complex_llm=False)
 
+        # Handle null team values
+        safe_responding_team = responding_team or "unknown"
+
         task = Task(
-            description=f"""You are {persona['display_name']} from Team {responding_team.title()} responding to a dependency request on {dependency_ticket}.
+            description=f"""You are {persona['display_name']} from Team {safe_responding_team.title()} responding to a dependency request on {dependency_ticket}.
 
 Context: {response_context}
 
