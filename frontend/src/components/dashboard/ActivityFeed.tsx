@@ -33,8 +33,10 @@ function formatTimestamp(timestamp: string): string {
 }
 
 function formatActionType(actionType: string): string {
+  if (!actionType) return 'Unknown';
   return actionType
     .split('_')
+    .filter((word) => word)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }

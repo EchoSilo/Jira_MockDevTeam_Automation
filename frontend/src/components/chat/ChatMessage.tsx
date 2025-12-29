@@ -93,7 +93,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
                 strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               }}
             >
-              {message.content}
+              {message.content || ''}
             </ReactMarkdown>
           </div>
         </div>

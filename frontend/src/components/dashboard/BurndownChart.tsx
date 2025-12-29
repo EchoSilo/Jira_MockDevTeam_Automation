@@ -18,9 +18,12 @@ interface BurndownChartProps {
 }
 
 export function BurndownChart({ data, sprintName }: BurndownChartProps) {
-  // Calculate if on track (actual <= ideal for current day)
-  // null means future day, so we filter for days with actual values
-  const daysWithActual = data.filter((d) => d.actual !== null);
+  // Ensure sprintName is never null/undefined
+  const safeName = sprintName || 'Current Sprint';
+
+  // Filter out null/undefined entries and calculate if on track
+  const validData = data.filter((d) => d != null && d.day != null);
+  const daysWithActual = validData.filter((d) => d.actual !== null);
   const currentPoint = daysWithActual[daysWithActual.length - 1];
   const isOnTrack = currentPoint ? (currentPoint.actual ?? 0) <= currentPoint.ideal : true;
 
@@ -42,7 +45,7 @@ export function BurndownChart({ data, sprintName }: BurndownChartProps) {
             <h3 className="text-sm font-medium text-[var(--color-text-muted)]">
               Sprint Burndown
             </h3>
-            <p className="text-xs text-[var(--color-text-muted)]">{sprintName}</p>
+            <p className="text-xs text-[var(--color-text-muted)]">{safeName}</p>
           </div>
         </div>
 
@@ -59,8 +62,8 @@ export function BurndownChart({ data, sprintName }: BurndownChartProps) {
       </div>
 
       <div className="h-48">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-          <AreaChart data={data} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} debounce={50}>
+          <AreaChart data={validData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id="actualGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop

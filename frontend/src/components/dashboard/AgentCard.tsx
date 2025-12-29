@@ -57,7 +57,7 @@ export function AgentCard({ agent }: AgentCardProps) {
           </span>
         </div>
         <span className="text-xs text-[var(--color-text-muted)]">
-          Team {agent.team.charAt(0).toUpperCase() + agent.team.slice(1)}
+          Team {agent.team ? agent.team.charAt(0).toUpperCase() + agent.team.slice(1) : 'Unknown'}
         </span>
       </div>
 

@@ -37,7 +37,7 @@ export function ScenarioDistributionChart({
 
       <div className="flex items-center gap-6">
         <div className="h-36 w-36">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} debounce={50}>
             <PieChart>
               <Pie
                 data={chartData}

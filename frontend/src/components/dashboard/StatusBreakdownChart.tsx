@@ -42,7 +42,7 @@ export function StatusBreakdownChart({ data }: StatusBreakdownChartProps) {
       </div>
 
       <div className="h-48">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} debounce={50}>
           <BarChart
             data={chartData}
             layout="vertical"

@@ -38,25 +38,15 @@ function formatTimeAgo(timestamp: string): string {
   return 'Just now';
 }
 
-function formatAction(actionType: string): string {
-  return actionType
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (l) => l.toUpperCase());
-}
-
 export function ScenarioTimeline({ scenarios }: ScenarioTimelineProps) {
-  // Sort scenarios by most recent activity
+  // Sort scenarios by start time (most recent first)
   const sortedScenarios = [...scenarios].sort((a, b) => {
-    const aTime = a.actions_taken.length > 0
-      ? new Date(a.actions_taken[a.actions_taken.length - 1].timestamp).getTime()
-      : new Date(a.started).getTime();
-    const bTime = b.actions_taken.length > 0
-      ? new Date(b.actions_taken[b.actions_taken.length - 1].timestamp).getTime()
-      : new Date(b.started).getTime();
+    const aTime = a.started ? new Date(a.started).getTime() : 0;
+    const bTime = b.started ? new Date(b.started).getTime() : 0;
     return bTime - aTime;
   });
 
-  // Take top 8 most active scenarios
+  // Take top 8 most recent scenarios
   const recentScenarios = sortedScenarios.slice(0, 8);
 
   return (
@@ -84,13 +74,12 @@ export function ScenarioTimeline({ scenarios }: ScenarioTimelineProps) {
       </div>
 
       <div className="space-y-3 max-h-96 overflow-y-auto">
-        {recentScenarios.map((scenario) => {
-          const latestAction = scenario.actions_taken[scenario.actions_taken.length - 1];
+        {recentScenarios.map((scenario, index) => {
           const phaseColor = PHASE_COLORS[scenario.current_phase] || 'bg-gray-500';
 
           return (
             <div
-              key={scenario.scenario_id}
+              key={`${scenario.ticket_key}-${index}`}
               className={cn(
                 'p-3 rounded-lg border',
                 'bg-[var(--color-surface-elevated)]',
@@ -138,32 +127,29 @@ export function ScenarioTimeline({ scenarios }: ScenarioTimelineProps) {
                 </div>
               )}
 
-              {/* Latest action */}
-              {latestAction && (
-                <div className="text-xs text-[var(--color-text-muted)]">
-                  <span className="font-medium">{latestAction.agent_id}</span>
-                  {' → '}
-                  <span>{formatAction(latestAction.action_type)}</span>
-                  {latestAction.details && (
-                    <p className="mt-1 text-[var(--color-text-secondary)] line-clamp-2">
-                      {latestAction.details}
-                    </p>
+              {/* Assigned agent and started time */}
+              <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-2">
+                  {scenario.assigned_agent && (
+                    <span className="font-medium">{scenario.assigned_agent}</span>
                   )}
-                  <span className="text-[var(--color-text-muted)] ml-2">
-                    {formatTimeAgo(latestAction.timestamp)}
-                  </span>
+                  {scenario.complexity && (
+                    <span className="text-[var(--color-text-secondary)]">
+                      ({scenario.complexity})
+                    </span>
+                  )}
                 </div>
-              )}
-
-              {/* Action count */}
-              <div className="flex items-center gap-2 mt-2 text-xs text-[var(--color-text-muted)]">
-                <span>{scenario.actions_taken.length} actions</span>
-                {scenario.times_rejected > 0 && (
-                  <span className="text-orange-400">
-                    {scenario.times_rejected} rejection{scenario.times_rejected > 1 ? 's' : ''}
-                  </span>
+                {scenario.started && (
+                  <span>{formatTimeAgo(scenario.started)}</span>
                 )}
               </div>
+
+              {/* Rejection count */}
+              {scenario.times_rejected > 0 && (
+                <div className="mt-2 text-xs text-orange-400">
+                  {scenario.times_rejected} rejection{scenario.times_rejected > 1 ? 's' : ''}
+                </div>
+              )}
             </div>
           );
         })}

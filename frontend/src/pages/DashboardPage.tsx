@@ -1,5 +1,4 @@
 import { AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
-import Masonry from 'react-masonry-css';
 import { Header, Tabs, TabsContent } from '@/components/common';
 import {
   MetricCard,
@@ -27,13 +26,6 @@ import {
   filterScenariosByTeam,
 } from '@/lib/transformers';
 import { cn } from '@/lib/utils';
-
-// Masonry breakpoint configuration for responsive layout
-const breakpointColumns = {
-  default: 3,  // Desktop: 3 columns
-  1024: 2,     // Tablet: 2 columns
-  640: 1,      // Mobile: 1 column
-};
 
 export function DashboardPage() {
   const { selectedTeam } = useDashboardStore();
@@ -220,16 +212,12 @@ export function DashboardPage() {
         >
           {/* Sprint View - Focus on real sprint data */}
           <TabsContent value="sprint" className="space-y-6">
-            <Masonry
-              breakpointCols={breakpointColumns}
-              className="masonry-grid"
-              columnClassName="masonry-column"
-            >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-6">
               <BurndownChart data={sprintData?.burndownData ?? []} sprintName={sprint.name} />
               <VelocityChart data={sprintData?.velocityData ?? []} />
               <WorkloadCard agents={filteredAgents} />
               <StatusBreakdownChart data={statusBreakdown} />
-            </Masonry>
+            </div>
           </TabsContent>
 
           {/* Simulation View - Focus on simulation diagnostics */}

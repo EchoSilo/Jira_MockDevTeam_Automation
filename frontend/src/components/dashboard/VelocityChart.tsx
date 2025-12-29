@@ -16,13 +16,17 @@ interface VelocityChartProps {
 }
 
 export function VelocityChart({ data }: VelocityChartProps) {
-  const chartData = data.map((d) => ({
-    name: `Sprint ${d.sprintNumber}`,
-    value: d.completedItems,
-  }));
+  // Filter out null/undefined entries and ensure valid data
+  const chartData = data
+    .filter((d) => d != null && d.sprintNumber != null)
+    .map((d) => ({
+      name: `Sprint ${d.sprintNumber}`,
+      value: d.completedItems ?? 0,
+    }));
 
-  // Calculate trend
-  const lastTwo = data.slice(-2);
+  // Calculate trend from valid data points
+  const validData = data.filter((d) => d != null && d.completedItems != null);
+  const lastTwo = validData.slice(-2);
   let trend = 0;
   if (lastTwo.length === 2 && lastTwo[0].completedItems > 0) {
     trend = Math.round(
@@ -71,7 +75,7 @@ export function VelocityChart({ data }: VelocityChartProps) {
       </div>
 
       <div className="h-48">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} debounce={50}>
           <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
             <CartesianGrid
               strokeDasharray="3 3"
