@@ -1144,6 +1144,9 @@ class ScenarioOrchestrator:
 
         state.add_scenario(scenario)
 
+        # Assign ticket to agent's workload
+        state.get_agent_state(agent_id).assign_ticket(ticket_key)
+
         return scenario
 
     def _generate_blocker_reason(self) -> str:

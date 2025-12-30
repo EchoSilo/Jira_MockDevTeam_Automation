@@ -35,9 +35,13 @@ def load_state(path: str = "data/state.json") -> SimulationState:
 
         # Check if this is old format (has 'active_tickets' instead of 'active_scenarios')
         if "active_tickets" in data and "active_scenarios" not in data:
-            return _migrate_old_state(data)
+            state = _migrate_old_state(data)
+        else:
+            state = SimulationState.model_validate(data)
 
-        return SimulationState.model_validate(data)
+        # Sync agent workloads from active scenarios to fix any inconsistencies
+        state.sync_agent_workloads()
+        return state
 
     return SimulationState()
 

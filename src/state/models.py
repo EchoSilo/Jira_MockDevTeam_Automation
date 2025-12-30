@@ -680,6 +680,27 @@ class SimulationState(BaseModel):
         """Get all scenarios assigned to an agent."""
         return [s for s in self.active_scenarios.values() if s.assigned_agent == agent_id]
 
+    def sync_agent_workloads(self) -> None:
+        """Sync agent workloads from active scenarios.
+
+        Ensures assigned_tickets matches the tickets in active scenarios.
+        Call after loading state to fix any inconsistencies.
+        """
+        # Build a map of agent_id -> assigned ticket keys from scenarios
+        agent_tickets: dict[str, list[str]] = {}
+        for scenario in self.active_scenarios.values():
+            if scenario.assigned_agent and scenario.current_phase != ScenarioPhase.COMPLETED:
+                if scenario.assigned_agent not in agent_tickets:
+                    agent_tickets[scenario.assigned_agent] = []
+                agent_tickets[scenario.assigned_agent].append(scenario.ticket_key)
+
+        # Update each agent's assigned_tickets and workload
+        for agent_id, tickets in agent_tickets.items():
+            agent = self.get_agent_state(agent_id)
+            for ticket in tickets:
+                if ticket not in agent.assigned_tickets:
+                    agent.assign_ticket(ticket)
+
     def get_scenarios_ready_to_advance(self) -> list[ActiveScenario]:
         """Get scenarios that have exceeded their phase target."""
         return [s for s in self.active_scenarios.values() if s.is_phase_ready_to_advance()]
