@@ -178,6 +178,28 @@ class ReleaseState(BaseModel):
         ]
         return original_count - len(self.active_directives)
 
+    def cleanup_duplicate_directives(self) -> int:
+        """Remove duplicate pending directives, keeping only the first of each type/version combo."""
+        seen = set()
+        cleaned = []
+        for directive in self.active_directives:
+            # Keep executed directives as-is
+            if directive.executed:
+                cleaned.append(directive)
+                continue
+            # Create dedup key based on type and key parameters
+            key = (
+                directive.directive_type,
+                directive.parameters.get("version_name"),
+                directive.parameters.get("ticket_key"),
+            )
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(directive)
+        removed = len(self.active_directives) - len(cleaned)
+        self.active_directives = cleaned
+        return removed
+
 
 class ActionRecord(BaseModel):
     """Record of an action taken within a scenario."""

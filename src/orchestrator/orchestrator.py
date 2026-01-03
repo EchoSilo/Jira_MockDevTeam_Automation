@@ -353,6 +353,11 @@ class ScenarioOrchestrator:
             "directives": [],
         }
 
+        # Clean up duplicate directives from previous ticks
+        removed = state.release_state.cleanup_duplicate_directives()
+        if removed > 0:
+            logger.info(f"Cleaned up {removed} duplicate release directives")
+
         # Lazy initialization of Release Manager agent
         if not hasattr(self, 'release_manager'):
             rm_config = self.personas.get("agents", {}).get("release_manager", {})
@@ -981,6 +986,124 @@ class ScenarioOrchestrator:
             })
 
             logger.info(f"Release reminder sent for {release_name}")
+
+        elif action_type == "release_version":
+            pm_id = action.get("agent_id")
+            version_name = action.get("version_name")
+            transition_done = action.get("transition_done_to_closed", True)
+            reason = action.get("reason", "")
+
+            if version_name:
+                try:
+                    closed_count = 0
+
+                    # Transition Done items to Closed if requested
+                    if transition_done:
+                        done_issues = self.jira.get_issues_by_fix_version(
+                            version_name,
+                            statuses=["Done"]
+                        )
+                        for issue in done_issues:
+                            try:
+                                self.jira.transition_issue(issue.key, "Closed")
+                                closed_count += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to close {issue.key}: {e}")
+
+                    # Mark version as released in Jira
+                    release_success = self.jira.release_version(version_name)
+
+                    if release_success:
+                        # Update state
+                        for release in state.release_state.planned_releases:
+                            if release.name == version_name:
+                                release.status = "released"
+                                break
+
+                        # Mark directive as executed if from directive
+                        if action.get("from_directive") and action.get("directive_id"):
+                            state.release_state.mark_directive_executed(
+                                action.get("directive_id"),
+                                f"Released {version_name}, closed {closed_count} items",
+                            )
+
+                        # Get PM name for logging
+                        persona = self.personas.get("agents", {}).get(pm_id, {})
+                        pm_name = persona.get("display_name", "Product Manager")
+
+                        result.update({
+                            "success": True,
+                            "jira_success": True,
+                            "version_name": version_name,
+                            "items_closed": closed_count,
+                            "agent": pm_id,
+                            "reason": reason,
+                        })
+
+                        logger.info(
+                            f"Released {version_name} by {pm_name}, "
+                            f"transitioned {closed_count} items to Closed"
+                        )
+                    else:
+                        result["error"] = f"Failed to release version {version_name} in Jira"
+                except Exception as e:
+                    result["error"] = f"Release version failed: {str(e)}"
+
+        elif action_type == "rollover_items":
+            pm_id = action.get("agent_id")
+            from_version = action.get("from_version")
+            to_version = action.get("to_version")
+            reason = action.get("reason", "")
+
+            if from_version and to_version:
+                try:
+                    # Get non-Done items from source version
+                    all_issues = self.jira.get_issues_by_fix_version(from_version)
+                    rollover_issues = [
+                        i for i in all_issues
+                        if i.fields.status.name.lower() not in ["done", "closed"]
+                    ]
+
+                    rolled_count = 0
+                    for issue in rollover_issues:
+                        try:
+                            # Change fix version
+                            self.jira.set_fix_version(issue.key, to_version)
+                            rolled_count += 1
+
+                            # Add explanatory comment
+                            persona = self.personas.get("agents", {}).get(pm_id, {})
+                            pm_name = persona.get("display_name", "Product Manager")
+                            comment = (
+                                f"Rolled over from {from_version} to {to_version}. "
+                                f"Item was not completed before release. - {pm_name}"
+                            )
+                            self.jira.add_comment(issue.key, comment)
+                        except Exception as e:
+                            logger.warning(f"Failed to rollover {issue.key}: {e}")
+
+                    # Mark directive as executed if from directive
+                    if action.get("from_directive") and action.get("directive_id"):
+                        state.release_state.mark_directive_executed(
+                            action.get("directive_id"),
+                            f"Rolled {rolled_count} items from {from_version} to {to_version}",
+                        )
+
+                    result.update({
+                        "success": True,
+                        "jira_success": True,
+                        "from_version": from_version,
+                        "to_version": to_version,
+                        "rolled_count": rolled_count,
+                        "agent": pm_id,
+                        "reason": reason,
+                    })
+
+                    logger.info(
+                        f"Rolled over {rolled_count} items from {from_version} to {to_version}"
+                    )
+                except Exception as e:
+                    result["error"] = f"Rollover failed: {str(e)}"
 
         else:
             result["error"] = f"Unknown action type: {action_type}"

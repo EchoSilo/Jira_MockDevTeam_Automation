@@ -95,7 +95,8 @@ class ScenarioPlanner:
         target_actions = max(2, int(self.max_actions_per_tick * multiplier))
 
         # Phase 0: Convert Release Manager directives to PM actions (highest priority)
-        release_directives = analysis.get("release_directives", [])
+        # Use ALL pending directives from state, not just new ones from this tick
+        release_directives = state.release_state.get_pending_directives()
         directive_actions = self._convert_directives_to_actions(release_directives, state)
 
         # Track agents used by directive actions
@@ -1059,6 +1060,16 @@ Remember:
             elif directive.directive_type == "release_reminder":
                 action["version_name"] = directive.parameters.get("version_name")
                 action["message"] = directive.parameters.get("message")
+
+            elif directive.directive_type == "release_version":
+                action["version_name"] = directive.parameters.get("version_name")
+                action["transition_done_to_closed"] = directive.parameters.get(
+                    "transition_done_to_closed", True
+                )
+
+            elif directive.directive_type == "rollover_items":
+                action["from_version"] = directive.parameters.get("from_version")
+                action["to_version"] = directive.parameters.get("to_version")
 
             actions.append(action)
 

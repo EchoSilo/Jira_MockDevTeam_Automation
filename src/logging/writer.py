@@ -242,6 +242,7 @@ class AsyncLogWriter:
             agent_id=agent_id,
             error=error,
             success=error is None,
+            coordination_summary=coordination_summary,
         )
         self.log(entry)
 

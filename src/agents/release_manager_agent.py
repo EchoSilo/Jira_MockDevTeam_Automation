@@ -11,6 +11,7 @@ This agent does NOT directly access Jira. All actions are performed through
 directives that get converted into PM actions during the planning phase.
 """
 
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -87,6 +88,9 @@ class ReleaseManagerAgent(CoordinatorAgent):
 
         # Get current release state
         release_state = state.release_state
+
+        # Sync existing Jira versions with internal state
+        self._sync_jira_versions(state, board_snapshot.get("jira_versions", []))
 
         # Calculate version coverage
         total_tracked = 0
@@ -166,6 +170,14 @@ class ReleaseManagerAgent(CoordinatorAgent):
         # Get directive limits
         max_per_tick = self.rm_settings.get("directives", {}).get("max_per_tick", 3)
 
+        # Priority 0: Release execution (highest priority - rollover + release)
+        release_directives = self._generate_release_execution_directives(analysis, state)
+        directives.extend(release_directives)
+
+        # If release directives filled slots, return early
+        if len(directives) >= max_per_tick:
+            return directives[:max_per_tick]
+
         # Priority 1: Create missing versions in Jira
         directives.extend(
             self._generate_version_creation_directives(analysis, state)
@@ -200,6 +212,10 @@ class ReleaseManagerAgent(CoordinatorAgent):
         releases_needing_creation = analysis.get("releases_needing_jira_creation", [])
 
         for release in releases_needing_creation:
+            # Skip if directive already pending for this version
+            if self._has_pending_directive(state, "create_fix_version", version_name=release.name):
+                continue
+
             # Alternate between PMs for version creation
             pm_id = self._select_pm_for_version(release, state)
 
@@ -236,6 +252,10 @@ class ReleaseManagerAgent(CoordinatorAgent):
 
         # Process unversioned tickets (limited per tick for gradual enforcement)
         for ticket in unversioned[:max_count]:
+            # Skip if directive already pending for this ticket
+            if self._has_pending_directive(state, "assign_fix_version", ticket_key=ticket["key"]):
+                continue
+
             pm_id = self._get_pm_for_ticket(ticket, state)
 
             if pm_id:
@@ -274,6 +294,10 @@ class ReleaseManagerAgent(CoordinatorAgent):
             # Calculate next release version name
             next_version = self._calculate_next_version(state)
 
+            # Skip if already pending directive for this version
+            if self._has_pending_directive(state, "create_fix_version", version_name=next_version):
+                return directives
+
             # Calculate target date based on sprint cadence
             target_date = self._calculate_release_target_date(state, release_cadence)
 
@@ -300,6 +324,117 @@ class ReleaseManagerAgent(CoordinatorAgent):
                 ))
 
         return directives
+
+    def _generate_release_execution_directives(
+        self,
+        analysis: dict,
+        state: SimulationState,
+    ) -> list[ReleaseDirective]:
+        """
+        Generate directives for releases that are due.
+
+        Checks if any release has passed its target date and:
+        1. Generates rollover_items directive for unfinished items
+        2. Generates release_version directive to complete the release
+        """
+        directives = []
+        now = datetime.utcnow()
+        schedule = self.rm_settings.get("schedule", {})
+        release_day = schedule.get("release_day", 5)  # Friday
+
+        for release in state.release_state.planned_releases:
+            # Skip already released
+            if release.status == "released":
+                continue
+
+            # Skip if not created in Jira yet
+            if not release.created_in_jira:
+                continue
+
+            # Check if release is due (past target date or end of target sprint)
+            is_due = False
+            if release.target_date and now >= release.target_date:
+                is_due = True
+            elif (release.sprint_number and
+                  release.sprint_number <= state.sprint.sprint_number and
+                  state.sprint.sprint_day >= release_day):
+                is_due = True
+
+            if not is_due:
+                continue
+
+            # Skip if we already have pending directives for this release
+            if self._has_pending_directive(state, "release_version", version_name=release.name):
+                continue
+            if self._has_pending_directive(state, "rollover_items", version_name=release.name):
+                continue
+
+            # Find next release for rollover
+            next_release = self._get_next_release(state, release)
+            pm_id = self._select_pm_for_version(release, state)
+
+            if not pm_id:
+                continue
+
+            # Generate rollover directive first (if there's a next release)
+            if next_release and next_release.created_in_jira:
+                directives.append(self.create_directive(
+                    directive_type="rollover_items",
+                    target_pm_id=pm_id,
+                    parameters={
+                        "from_version": release.name,
+                        "to_version": next_release.name,
+                        "reason": f"Rolling over unfinished items from {release.name} to {next_release.name}",
+                    }
+                ))
+
+            # Generate release directive
+            directives.append(self.create_directive(
+                directive_type="release_version",
+                target_pm_id=pm_id,
+                parameters={
+                    "version_name": release.name,
+                    "transition_done_to_closed": True,
+                    "reason": f"Releasing {release.name} - transitioning Done items to Closed",
+                }
+            ))
+
+            # Only process one release per tick to avoid overwhelming
+            break
+
+        return directives
+
+    def _get_next_release(
+        self,
+        state: SimulationState,
+        current_release: ReleaseVersion,
+    ) -> Optional[ReleaseVersion]:
+        """
+        Find the release to roll items into.
+
+        For past-due releases, returns the current month's release.
+        For future releases, returns the next in sequence.
+        """
+        now = datetime.utcnow()
+
+        # If current release is past-due, use current month's release
+        if current_release.target_date and now >= current_release.target_date:
+            current_month = f"Release {now.strftime('%B %Y')}"
+            for release in state.release_state.planned_releases:
+                if release.name == current_month and release.status != "released":
+                    return release
+            # Current month's release not found - shouldn't happen if Jira has it
+            return None
+
+        # Otherwise find next sequential release
+        found_current = False
+        for release in state.release_state.planned_releases:
+            if release.name == current_release.name:
+                found_current = True
+                continue
+            if found_current and release.status != "released":
+                return release
+        return None
 
     def _select_pm_for_version(
         self,
@@ -340,6 +475,110 @@ class ReleaseManagerAgent(CoordinatorAgent):
                 return "beta_pm"
 
         return "alpha_pm"  # Default
+
+    def _has_pending_directive(
+        self,
+        state: SimulationState,
+        directive_type: str,
+        version_name: Optional[str] = None,
+        ticket_key: Optional[str] = None,
+    ) -> bool:
+        """Check if a similar pending directive already exists."""
+        for directive in state.release_state.active_directives:
+            if directive.executed:
+                continue
+            if directive.directive_type != directive_type:
+                continue
+            # Check version_name match if specified
+            if version_name and directive.parameters.get("version_name") != version_name:
+                continue
+            # Check ticket_key match if specified
+            if ticket_key and directive.parameters.get("ticket_key") != ticket_key:
+                continue
+            return True
+        return False
+
+    def _parse_release_date(self, name: str) -> Optional[datetime]:
+        """
+        Parse a target date from a release name like 'Release October 2025'.
+
+        Returns the last day of the specified month.
+        """
+        match = re.match(r"Release\s+(\w+)\s+(\d{4})", name)
+        if not match:
+            return None
+
+        month_name, year = match.groups()
+        try:
+            # Parse the month name to get month number
+            month = datetime.strptime(month_name, "%B").month
+            year = int(year)
+
+            # Calculate last day of the month
+            if month == 12:
+                return datetime(year + 1, 1, 1) - timedelta(days=1)
+            return datetime(year, month + 1, 1) - timedelta(days=1)
+        except ValueError:
+            return None
+
+    def _sync_jira_versions(
+        self,
+        state: SimulationState,
+        jira_versions: list[dict],
+    ) -> None:
+        """
+        Sync Jira versions with internal state.
+
+        - Marks planned releases as created if they exist in Jira
+        - Imports legacy named releases (e.g., 'Release October 2025')
+        - Marks create_fix_version directives as executed if version exists
+        """
+        if not jira_versions:
+            return
+
+        jira_version_names = {v.get("name") for v in jira_versions if v.get("name")}
+        jira_versions_map = {v.get("name"): v for v in jira_versions if v.get("name")}
+        tracked_names = {r.name for r in state.release_state.planned_releases}
+
+        # Mark planned releases as created if they exist in Jira
+        for release in state.release_state.planned_releases:
+            if release.name in jira_version_names:
+                release.created_in_jira = True
+                # Also update status if version is released in Jira
+                jira_v = jira_versions_map.get(release.name, {})
+                if jira_v.get("released", False) and release.status != "released":
+                    release.status = "released"
+
+        # Import legacy named releases from Jira that aren't tracked yet
+        for jira_v in jira_versions:
+            name = jira_v.get("name")
+            if not name or name in tracked_names:
+                continue
+
+            # Parse release date from name (e.g., "Release October 2025")
+            target_date = self._parse_release_date(name)
+            if target_date:
+                state.release_state.planned_releases.append(
+                    ReleaseVersion(
+                        name=name,
+                        target_date=target_date,
+                        status="released" if jira_v.get("released") else "planned",
+                        created_in_jira=True,
+                    )
+                )
+
+        # Mark create_fix_version directives as executed if version exists in Jira
+        for directive in state.release_state.active_directives:
+            if directive.executed:
+                continue
+            if directive.directive_type != "create_fix_version":
+                continue
+            version_name = directive.parameters.get("version_name")
+            if version_name in jira_version_names:
+                state.release_state.mark_directive_executed(
+                    directive.directive_id,
+                    f"Version {version_name} already exists in Jira (synced)"
+                )
 
     def _calculate_next_version(self, state: SimulationState) -> str:
         """

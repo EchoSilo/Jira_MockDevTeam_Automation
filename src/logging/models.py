@@ -145,6 +145,7 @@ class OrchestratorLog(BaseModel):
     planning_reasoning: Optional[str] = None
     action_type: Optional[str] = None
     action_result: Optional[dict] = None
+    coordination_summary: Optional[dict] = None
 
     # Context
     ticket_key: Optional[str] = None

@@ -83,12 +83,19 @@ class ScenarioAnalyzer:
             "testing": [],
             "done": [],
             "active_sprint": None,
+            "jira_versions": [],
         }
 
         try:
             # Get active sprint info
             active_sprint = self.jira.get_active_sprint()
             snapshot["active_sprint"] = active_sprint
+
+            # Get fix versions from Jira for release management sync
+            try:
+                snapshot["jira_versions"] = self.jira.get_fix_versions()
+            except Exception:
+                snapshot["jira_versions"] = []
 
             # Get sprint issues directly if we only want sprint items
             if sprint_only and active_sprint:
