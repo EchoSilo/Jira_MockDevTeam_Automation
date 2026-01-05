@@ -305,7 +305,7 @@ async def health_check():
     return HealthResponse(
         status="healthy" if jira_ok else "degraded",
         jira_connected=jira_ok,
-        last_run=state.last_run.isoformat() if state.last_run else None,
+        last_run=f"{state.last_run.isoformat()}Z" if state.last_run else None,
         simulation_day=state.simulation_day,
         jira_url=app.state.jira.url if app.state.jira else None,
     )
@@ -734,7 +734,7 @@ async def list_agents():
 
     return {
         "agents": agents,
-        "last_run": state.last_run.isoformat() if state.last_run else None,
+        "last_run": f"{state.last_run.isoformat()}Z" if state.last_run else None,
         "schedule": {
             "days": schedule_config.get("days", [1, 2, 3, 4, 5]),
             "start_hour": schedule_config.get("start_hour", 9),
