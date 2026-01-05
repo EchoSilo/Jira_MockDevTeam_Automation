@@ -174,7 +174,7 @@ def _convert_ticket_to_scenario(ticket_key: str, old_ticket: dict) -> Optional[A
 
 # ============ Utility Functions ============
 
-def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState:
+def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) -> SimulationState:
     """
     Sync simulation state with actual Jira board state.
     Creates scenarios for tickets not yet tracked.
@@ -206,7 +206,7 @@ def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState
         if ticket_key not in tracked_tickets:
             complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
             assigned_agent = _find_agent_by_jira_account(
-                state,
+                personas,
                 assignee.accountId if assignee else None
             )
 
@@ -243,14 +243,15 @@ def sync_state_with_jira(state: SimulationState, jira_client) -> SimulationState
     return state
 
 
-def _find_agent_by_jira_account(state: SimulationState, account_id: Optional[str]) -> Optional[str]:
+def _find_agent_by_jira_account(personas: dict, account_id: Optional[str]) -> Optional[str]:
     """
     Find agent_id by Jira account ID.
-    Note: This requires personas config which isn't in state.
-    Returns None if not found - caller should handle mapping.
     """
-    # This is a placeholder - actual implementation needs personas config
-    # The orchestrator will handle the proper mapping
+    if not account_id:
+        return None
+    for agent_id, agent_config in personas.get("agents", {}).items():
+        if agent_config.get("jira_account_id") == account_id:
+            return agent_id
     return None
 
 

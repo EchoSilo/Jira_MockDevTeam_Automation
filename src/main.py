@@ -12,8 +12,9 @@ import random
 import time
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Union
 from contextlib import asynccontextmanager
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ async def trigger_simulation():
 
         # Sync state with actual Jira board using logged client
         try:
-            sync_state_with_jira(state, logged_jira)
+            sync_state_with_jira(state, logged_jira, app.state.personas)
         except Exception as sync_error:
             print(f"Warning: State sync failed: {sync_error}")
 
@@ -766,6 +767,21 @@ class ReleaseNotesResponse(BaseModel):
     from_cache: bool = False
 
 
+class OutputFormat(str, Enum):
+    """Supported output formats for release notes."""
+    MARKDOWN = "md"
+    TEXT = "txt"
+    DOCX = "docx"
+    PPTX = "pptx"
+    PDF = "pdf"
+
+
+class ReleaseNotesRequest(BaseModel):
+    """Request model for release notes generation."""
+    output_format: OutputFormat = OutputFormat.MARKDOWN
+    regenerate: bool = False
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_with_pm(request: ChatRequest):
     """
@@ -1065,25 +1081,78 @@ Generated: {timestamp}
     return str(file_path)
 
 
-@app.post("/api/releases/{version}/generate-notes", response_model=ReleaseNotesResponse)
-async def generate_release_notes(version: str, regenerate: bool = False):
+def get_media_type(output_format: OutputFormat) -> str:
+    """Get the MIME type for a given output format."""
+    media_types = {
+        OutputFormat.MARKDOWN: "text/markdown",
+        OutputFormat.TEXT: "text/plain",
+        OutputFormat.DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        OutputFormat.PPTX: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        OutputFormat.PDF: "application/pdf",
+    }
+    return media_types.get(output_format, "application/octet-stream")
+
+
+def markdown_to_plain_text(markdown: str) -> str:
+    """Convert markdown to plain text by stripping formatting."""
+    import re
+    lines = markdown.split('\n')
+    result = []
+
+    for line in lines:
+        # Remove header markers but keep text
+        if line.startswith('#'):
+            line = re.sub(r'^#+\s*', '', line)
+            if result and result[-1] != '':
+                result.append('')
+            result.append(line.upper())
+            result.append('')
+            continue
+
+        # Remove bold markers
+        line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)
+
+        # Remove inline code markers
+        line = re.sub(r'`([^`]+)`', r'\1', line)
+
+        result.append(line)
+
+    return '\n'.join(result)
+
+
+@app.post("/api/releases/{version}/generate-notes", response_model=None)
+async def generate_release_notes(
+    version: str,
+    request: Optional[ReleaseNotesRequest] = None
+):
     """
     Generate release notes for a specific version.
 
     Args:
         version: The fix version name (e.g., "v1.2.0")
-        regenerate: If True, regenerate even if cached notes exist
+        request: Optional request body with output_format and regenerate flags
 
     Returns:
-        ReleaseNotesResponse with executive and technical notes
+        For md/txt: ReleaseNotesResponse JSON with content inline
+        For docx/pptx/pdf: FileResponse for direct file download
 
     Raises:
         404: Version not found
         400: No issues in version
         500: Generation or save failed
     """
+    # Default request if none provided (backwards compatibility)
+    if request is None:
+        request = ReleaseNotesRequest()
+
+    output_format = request.output_format
+    regenerate = request.regenerate
+
     try:
         jira = app.state.jira
+        llm = app.state.llm
+        releases_dir = Path("data/releases")
+        releases_dir.mkdir(parents=True, exist_ok=True)
 
         # Check if version exists
         versions = jira.get_fix_versions()
@@ -1094,66 +1163,143 @@ async def generate_release_notes(version: str, regenerate: bool = False):
                 detail=f"Version '{version}' not found in Jira"
             )
 
-        # Check for cached notes
+        # Try to use cached markdown notes if available
+        cached = None
         if not regenerate:
             cached = load_cached_release_notes(version)
-            if cached:
-                # Return cached notes
-                metrics = jira.get_version_progress(version) or {}
-                return ReleaseNotesResponse(
-                    version=version,
-                    executive_notes=cached["executive_notes"],
-                    technical_notes=cached["technical_notes"],
-                    saved_path=f"data/releases/{version}.md",
-                    generated_at=datetime.now(timezone.utc).isoformat(),
-                    issue_count=metrics.get("total", 0),
-                    teams=[],  # Not tracked in cache
-                    from_cache=True,
+
+        # Get or generate the base notes (always needed)
+        if cached:
+            executive_notes = cached["executive_notes"]
+            technical_notes = cached["technical_notes"]
+            # Get metrics from Jira for statistics
+            progress = jira.get_version_progress(version) or {}
+            metrics = {
+                "total_issues": progress.get("total", 0),
+                "teams": [],
+                "category_counts": {"Features": 0, "Fixes": 0, "Improvements": 0}
+            }
+            from_cache = True
+        else:
+            # Fetch issues for this version
+            issues = jira.get_issues_by_fix_version(version)
+            if not issues:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No issues found for version '{version}'"
                 )
 
-        # Fetch issues for this version
-        issues = jira.get_issues_by_fix_version(version)
-        if not issues:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No issues found for version '{version}'"
+            # Build team lookup and categorize
+            team_lookup = build_account_team_lookup(app.state.personas)
+            issues_by_category, issues_by_team, metrics = categorize_issues_for_release_notes(
+                issues, team_lookup
             )
 
-        # Build team lookup from personas
-        team_lookup = build_account_team_lookup(app.state.personas)
+            # Generate release notes via LLM
+            notes = llm.generate_release_notes(
+                version_name=version,
+                issues_by_category=issues_by_category,
+                issues_by_team=issues_by_team,
+                version_metrics=metrics,
+            )
+            executive_notes = notes["executive_notes"]
+            technical_notes = notes["technical_notes"]
+            from_cache = False
 
-        # Categorize issues
-        issues_by_category, issues_by_team, metrics = categorize_issues_for_release_notes(
-            issues, team_lookup
-        )
+            # Always save markdown version as cache
+            save_release_notes(
+                version=version,
+                executive_notes=executive_notes,
+                technical_notes=technical_notes,
+                metrics=metrics,
+            )
 
-        # Generate release notes via LLM
-        llm = app.state.llm
-        notes = llm.generate_release_notes(
-            version_name=version,
-            issues_by_category=issues_by_category,
-            issues_by_team=issues_by_team,
-            version_metrics=metrics,
-        )
+        generated_at = datetime.now(timezone.utc).isoformat()
 
-        # Save to disk
-        saved_path = save_release_notes(
-            version=version,
-            executive_notes=notes["executive_notes"],
-            technical_notes=notes["technical_notes"],
-            metrics=metrics,
-        )
+        # Route based on output format
+        if output_format == OutputFormat.MARKDOWN:
+            return ReleaseNotesResponse(
+                version=version,
+                executive_notes=executive_notes,
+                technical_notes=technical_notes,
+                saved_path=str(releases_dir / f"{version}.md"),
+                generated_at=generated_at,
+                issue_count=metrics.get("total_issues", 0),
+                teams=metrics.get("teams", []),
+                from_cache=from_cache,
+            )
 
-        return ReleaseNotesResponse(
-            version=version,
-            executive_notes=notes["executive_notes"],
-            technical_notes=notes["technical_notes"],
-            saved_path=saved_path,
-            generated_at=datetime.now(timezone.utc).isoformat(),
-            issue_count=metrics["total_issues"],
-            teams=metrics["teams"],
-            from_cache=False,
-        )
+        elif output_format == OutputFormat.TEXT:
+            # Convert to plain text
+            plain_executive = markdown_to_plain_text(executive_notes)
+            plain_technical = markdown_to_plain_text(technical_notes)
+
+            # Save text file
+            txt_path = releases_dir / f"{version}.txt"
+            txt_content = f"""RELEASE NOTES: {version}
+Generated: {generated_at}
+
+{'='*60}
+
+EXECUTIVE SUMMARY
+
+{plain_executive}
+
+{'='*60}
+
+TECHNICAL DETAILS
+
+{plain_technical}
+
+{'='*60}
+
+STATISTICS
+- Total Issues: {metrics.get('total_issues', 0)}
+- Teams Contributing: {', '.join(metrics.get('teams', [])) or 'None'}
+- Features: {metrics.get('category_counts', {}).get('Features', 0)}
+- Fixes: {metrics.get('category_counts', {}).get('Fixes', 0)}
+- Improvements: {metrics.get('category_counts', {}).get('Improvements', 0)}
+"""
+            txt_path.write_text(txt_content, encoding="utf-8")
+
+            return ReleaseNotesResponse(
+                version=version,
+                executive_notes=plain_executive,
+                technical_notes=plain_technical,
+                saved_path=str(txt_path),
+                generated_at=generated_at,
+                issue_count=metrics.get("total_issues", 0),
+                teams=metrics.get("teams", []),
+                from_cache=from_cache,
+            )
+
+        elif output_format in [OutputFormat.DOCX, OutputFormat.PPTX, OutputFormat.PDF]:
+            # Use Anthropic Skills API to generate document
+            skill_id = output_format.value  # "docx", "pptx", or "pdf"
+
+            file_bytes = llm.generate_document_with_skill(
+                skill_id=skill_id,
+                version_name=version,
+                executive_notes=executive_notes,
+                technical_notes=technical_notes,
+                metrics=metrics,
+            )
+
+            # Save the file
+            file_path = releases_dir / f"{version}.{output_format.value}"
+            file_path.write_bytes(file_bytes)
+
+            return FileResponse(
+                path=str(file_path),
+                filename=f"{version}_release_notes.{output_format.value}",
+                media_type=get_media_type(output_format),
+            )
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported output format: {output_format}"
+            )
 
     except HTTPException:
         raise

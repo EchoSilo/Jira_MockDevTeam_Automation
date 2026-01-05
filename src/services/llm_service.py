@@ -4,9 +4,13 @@ Routes between Haiku (fast/cheap) and Sonnet (complex) based on action type.
 """
 
 import os
+import logging
+import time
 from typing import Optional
 import anthropic
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class LLMService:
@@ -345,3 +349,236 @@ Write the technical release notes in Markdown format. Just the notes, no preambl
                 for issue in data.get("issues", []):
                     lines.append(f"- [{issue['key']}] {issue['summary']}")
         return "\n".join(lines) if lines else "No team contributions recorded."
+
+    def generate_document_with_skill(
+        self,
+        skill_id: str,
+        version_name: str,
+        executive_notes: str,
+        technical_notes: str,
+        metrics: dict,
+    ) -> bytes:
+        """
+        Generate a document using Anthropic Skills API.
+
+        Args:
+            skill_id: The skill to use ("pptx", "docx", or "pdf")
+            version_name: The version name for the release
+            executive_notes: Customer-facing release notes (markdown)
+            technical_notes: Technical release notes (markdown)
+            metrics: Release metrics dict
+
+        Returns:
+            bytes: The generated document file content
+        """
+        logger.info(f"[Skills API] Starting document generation: skill={skill_id}, version={version_name}")
+        start_time = time.time()
+
+        prompt = f"""Create a professional release notes document for {version_name}.
+
+## Executive Summary (Customer-Facing)
+{executive_notes}
+
+## Technical Details (Internal)
+{technical_notes}
+
+## Statistics
+- Total Issues: {metrics.get('total_issues', 0)}
+- Teams Contributing: {', '.join(metrics.get('teams', [])) or 'None'}
+- Features: {metrics.get('category_counts', {}).get('Features', 0)}
+- Fixes: {metrics.get('category_counts', {}).get('Fixes', 0)}
+- Improvements: {metrics.get('category_counts', {}).get('Improvements', 0)}
+
+Create a polished, professional document with:
+- Clear section headers
+- Good visual hierarchy
+- Professional formatting
+- Executive summary first, then technical details
+"""
+
+        try:
+            logger.info(f"[Skills API] Calling beta.messages.create with skill_id={skill_id}")
+
+            response = self.client.beta.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=16384,
+                betas=["code-execution-2025-08-25", "skills-2025-10-02"],
+                container={
+                    "skills": [{
+                        "type": "anthropic",
+                        "skill_id": skill_id,
+                        "version": "latest"
+                    }]
+                },
+                messages=[{"role": "user", "content": prompt}],
+                tools=[{"type": "code_execution_20250825", "name": "code_execution"}]
+            )
+
+            elapsed = time.time() - start_time
+            logger.info(f"[Skills API] Response received in {elapsed:.2f}s")
+
+            # Log response structure for debugging
+            logger.info(f"[Skills API] Response type: {type(response).__name__}")
+            logger.info(f"[Skills API] Response stop_reason: {getattr(response, 'stop_reason', 'N/A')}")
+            logger.info(f"[Skills API] Response content blocks: {len(response.content)}")
+
+            for i, block in enumerate(response.content):
+                block_type = getattr(block, 'type', 'unknown')
+                logger.info(f"[Skills API] Block {i}: type={block_type}")
+
+                # Log text content (truncated)
+                if block_type == 'text' and hasattr(block, 'text'):
+                    preview = block.text[:200] + "..." if len(block.text) > 200 else block.text
+                    logger.info(f"[Skills API] Block {i} text preview: {preview}")
+
+                # Log all attributes for debugging
+                attrs = [a for a in dir(block) if not a.startswith('_')]
+                logger.debug(f"[Skills API] Block {i} attributes: {attrs}")
+
+            # Extract file_id from response
+            file_id = self._extract_file_id_from_response(response)
+
+            if not file_id:
+                # Detailed error for debugging
+                block_types = [getattr(b, 'type', 'unknown') for b in response.content]
+                error_msg = f"No file_id found. Response had {len(response.content)} blocks: {block_types}"
+                logger.error(f"[Skills API] {error_msg}")
+
+                # Log full response for debugging
+                for i, block in enumerate(response.content):
+                    logger.error(f"[Skills API] Full block {i}: {block}")
+
+                raise ValueError(error_msg)
+
+            logger.info(f"[Skills API] Extracted file_id: {file_id}")
+
+            # Download the file
+            logger.info(f"[Skills API] Downloading file...")
+            file_response = self.client.beta.files.download(
+                file_id=file_id,
+                betas=["files-api-2025-04-14"]
+            )
+
+            # Handle BinaryAPIResponse - try different methods to get content
+            logger.info(f"[Skills API] File response type: {type(file_response).__name__}")
+            if hasattr(file_response, 'read'):
+                content = file_response.read()
+            elif hasattr(file_response, 'content'):
+                content = file_response.content
+            elif hasattr(file_response, 'iter_bytes'):
+                content = b''.join(file_response.iter_bytes())
+            else:
+                # Try to read as bytes directly
+                content = bytes(file_response)
+            logger.info(f"[Skills API] File downloaded: {len(content)} bytes")
+
+            total_elapsed = time.time() - start_time
+            logger.info(f"[Skills API] Document generation complete in {total_elapsed:.2f}s")
+
+            return content
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"[Skills API] Failed after {elapsed:.2f}s: {type(e).__name__}: {e}")
+            raise
+
+    def _extract_file_id_from_response(self, response) -> Optional[str]:
+        """Extract file_id from a Skills API response with detailed logging."""
+        logger.debug(f"[Skills API] Searching for file_id in response...")
+
+        # First check response-level attributes
+        if hasattr(response, 'output_files') and response.output_files:
+            for f in response.output_files:
+                if hasattr(f, 'file_id'):
+                    logger.info(f"[Skills API] Found file_id in response.output_files: {f.file_id}")
+                    return f.file_id
+
+        for i, block in enumerate(response.content):
+            block_type = getattr(block, 'type', None)
+            logger.debug(f"[Skills API] Checking block {i}: type={block_type}")
+
+            # Log all attributes of this block for debugging
+            attrs = [a for a in dir(block) if not a.startswith('_')]
+            logger.info(f"[Skills API] Block {i} ({block_type}) attributes: {attrs}")
+
+            # Check for tool_result blocks
+            if block_type == 'tool_result':
+                logger.debug(f"[Skills API] Found tool_result block")
+                if hasattr(block, 'content'):
+                    for j, item in enumerate(block.content):
+                        item_type = getattr(item, 'type', 'unknown')
+                        logger.debug(f"[Skills API] tool_result item {j}: type={item_type}")
+                        if hasattr(item, 'file_id'):
+                            logger.info(f"[Skills API] Found file_id in tool_result: {item.file_id}")
+                            return item.file_id
+
+            # Check for direct file blocks
+            elif block_type == 'file':
+                if hasattr(block, 'file_id'):
+                    logger.info(f"[Skills API] Found file_id in file block: {block.file_id}")
+                    return block.file_id
+
+            # Check for container_result (Skills API specific)
+            elif block_type == 'container_result':
+                logger.debug(f"[Skills API] Found container_result block")
+                if hasattr(block, 'files') and block.files:
+                    for f in block.files:
+                        if hasattr(f, 'file_id'):
+                            logger.info(f"[Skills API] Found file_id in container_result: {f.file_id}")
+                            return f.file_id
+
+            # Check for code execution result blocks (bash, text_editor)
+            elif 'code_execution_tool_result' in str(block_type):
+                logger.info(f"[Skills API] Found code execution result block: {block_type}")
+                # Check content attribute
+                if hasattr(block, 'content'):
+                    content = block.content
+                    logger.info(f"[Skills API] Block content type: {type(content).__name__}")
+                    # Content might be an object or a list
+                    if hasattr(content, 'file_id'):
+                        logger.info(f"[Skills API] Found file_id in content: {content.file_id}")
+                        return content.file_id
+                    # Check for nested content list (BetaBashCodeExecutionResultBlock.content)
+                    if hasattr(content, 'content') and isinstance(content.content, list):
+                        for k, item in enumerate(content.content):
+                            logger.info(f"[Skills API] Checking nested content item {k}: {type(item).__name__}")
+                            if hasattr(item, 'file_id') and item.file_id:
+                                logger.info(f"[Skills API] Found file_id in content.content[{k}]: {item.file_id}")
+                                return item.file_id
+                    if hasattr(content, 'files') and content.files:
+                        for f in content.files:
+                            if hasattr(f, 'file_id'):
+                                logger.info(f"[Skills API] Found file_id in content.files: {f.file_id}")
+                                return f.file_id
+                    # Check for output_files
+                    if hasattr(content, 'output_files') and content.output_files:
+                        for f in content.output_files:
+                            if hasattr(f, 'file_id'):
+                                logger.info(f"[Skills API] Found file_id in content.output_files: {f.file_id}")
+                                return f.file_id
+                # Check block-level files attribute
+                if hasattr(block, 'files') and block.files:
+                    for f in block.files:
+                        if hasattr(f, 'file_id'):
+                            logger.info(f"[Skills API] Found file_id in block.files: {f.file_id}")
+                            return f.file_id
+                # Check output_files attribute
+                if hasattr(block, 'output_files') and block.output_files:
+                    for f in block.output_files:
+                        if hasattr(f, 'file_id'):
+                            logger.info(f"[Skills API] Found file_id in block.output_files: {f.file_id}")
+                            return f.file_id
+
+            # Check nested content structures
+            if hasattr(block, 'content') and isinstance(block.content, list):
+                for j, item in enumerate(block.content):
+                    if hasattr(item, 'file_id'):
+                        logger.info(f"[Skills API] Found file_id in nested content: {item.file_id}")
+                        return item.file_id
+                    if hasattr(item, 'type') and item.type == 'file':
+                        if hasattr(item, 'file_id'):
+                            logger.info(f"[Skills API] Found file_id in nested file block: {item.file_id}")
+                            return item.file_id
+
+        logger.warning(f"[Skills API] No file_id found in response")
+        return None
