@@ -1,0 +1,201 @@
+import type {
+  Sprint,
+  StatusBreakdown,
+  ScenarioDistribution,
+  Agent,
+  Activity,
+  VelocityDataPoint,
+  BurndownDataPoint,
+} from '@/types';
+
+export const mockSprint: Sprint = {
+  name: 'Sprint 5',
+  number: 5,
+  day: 3,
+  totalDays: 7,
+  startDate: '2025-12-15T00:00:00Z',
+};
+
+export const mockStatusBreakdown: StatusBreakdown = {
+  backlog: 8,
+  inProgress: 5,
+  codeReview: 2,
+  testing: 3,
+  done: 12,
+};
+
+export const mockScenarioDistribution: ScenarioDistribution = {
+  normalFlow: 10,
+  blocker: 2,
+  rework: 2,
+  scopeCreep: 1,
+  dependency: 0,
+};
+
+export const mockAgents: Agent[] = [
+  {
+    id: 'alpha_pm',
+    name: 'Sarah Chen',
+    team: 'alpha',
+    role: 'pm',
+    assignedTickets: 0,
+    isOverloaded: false,
+    dailyActions: 5,
+  },
+  {
+    id: 'alpha_lead',
+    name: 'James Wilson',
+    team: 'alpha',
+    role: 'tech_lead',
+    assignedTickets: 2,
+    isOverloaded: false,
+    dailyActions: 8,
+  },
+  {
+    id: 'alpha_dev_senior',
+    name: 'Elena Rodriguez',
+    team: 'alpha',
+    role: 'developer',
+    assignedTickets: 4,
+    isOverloaded: false,
+    dailyActions: 12,
+  },
+  {
+    id: 'alpha_dev_mid',
+    name: 'Marcus Johnson',
+    team: 'alpha',
+    role: 'developer',
+    assignedTickets: 6,
+    isOverloaded: true,
+    dailyActions: 10,
+  },
+  {
+    id: 'alpha_qa',
+    name: 'Priya Patel',
+    team: 'alpha',
+    role: 'qa',
+    assignedTickets: 3,
+    isOverloaded: false,
+    dailyActions: 7,
+  },
+  {
+    id: 'beta_pm',
+    name: 'David Kim',
+    team: 'beta',
+    role: 'pm',
+    assignedTickets: 0,
+    isOverloaded: false,
+    dailyActions: 4,
+  },
+  {
+    id: 'beta_lead',
+    name: 'Rachel Green',
+    team: 'beta',
+    role: 'tech_lead',
+    assignedTickets: 1,
+    isOverloaded: false,
+    dailyActions: 6,
+  },
+  {
+    id: 'beta_dev',
+    name: 'Alex Kim',
+    team: 'beta',
+    role: 'developer',
+    assignedTickets: 3,
+    isOverloaded: false,
+    dailyActions: 9,
+  },
+  {
+    id: 'beta_qa',
+    name: 'Jordan Lee',
+    team: 'beta',
+    role: 'qa',
+    assignedTickets: 2,
+    isOverloaded: false,
+    dailyActions: 5,
+  },
+];
+
+export const mockActivities: Activity[] = [
+  {
+    id: '1',
+    timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
+    agentId: 'alpha_dev_senior',
+    agentName: 'Elena Rodriguez',
+    actionType: 'progress_to_review',
+    ticketKey: 'PROJ-142',
+    details: 'Moved to code review after completing implementation',
+  },
+  {
+    id: '2',
+    timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
+    agentId: 'alpha_qa',
+    agentName: 'Priya Patel',
+    actionType: 'qa_approve',
+    ticketKey: 'PROJ-138',
+    details: 'All test cases passed, marking as done',
+  },
+  {
+    id: '3',
+    timestamp: new Date(Date.now() - 30 * 60000).toISOString(),
+    agentId: 'beta_dev',
+    agentName: 'Alex Kim',
+    actionType: 'pick_up_from_backlog',
+    ticketKey: 'PROJ-155',
+    details: 'Starting work on user profile feature',
+  },
+  {
+    id: '4',
+    timestamp: new Date(Date.now() - 45 * 60000).toISOString(),
+    agentId: 'alpha_lead',
+    agentName: 'James Wilson',
+    actionType: 'complete_code_review',
+    ticketKey: 'PROJ-140',
+    details: 'Approved with minor suggestions',
+  },
+  {
+    id: '5',
+    timestamp: new Date(Date.now() - 60 * 60000).toISOString(),
+    agentId: 'alpha_pm',
+    agentName: 'Sarah Chen',
+    actionType: 'create_story',
+    ticketKey: 'PROJ-160',
+    details: 'Created new story for dashboard analytics',
+  },
+  {
+    id: '6',
+    timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
+    agentId: 'alpha_dev_mid',
+    agentName: 'Marcus Johnson',
+    actionType: 'inject_blocker',
+    ticketKey: 'PROJ-145',
+    details: 'Blocked waiting for API endpoint from platform team',
+  },
+  {
+    id: '7',
+    timestamp: new Date(Date.now() - 120 * 60000).toISOString(),
+    agentId: 'beta_qa',
+    agentName: 'Jordan Lee',
+    actionType: 'qa_reject',
+    ticketKey: 'PROJ-152',
+    details: 'Found regression in edge case handling',
+  },
+];
+
+export const mockVelocityData: VelocityDataPoint[] = [
+  { sprintNumber: 1, sprintName: 'Sprint 1', completedItems: 12 },
+  { sprintNumber: 2, sprintName: 'Sprint 2', completedItems: 15 },
+  { sprintNumber: 3, sprintName: 'Sprint 3', completedItems: 14 },
+  { sprintNumber: 4, sprintName: 'Sprint 4', completedItems: 18 },
+  { sprintNumber: 5, sprintName: 'Sprint 5', completedItems: 12 },
+];
+
+export const mockBurndownData: BurndownDataPoint[] = [
+  { day: 'Day 1', ideal: 30, actual: 30 },
+  { day: 'Day 2', ideal: 25, actual: 28 },
+  { day: 'Day 3', ideal: 20, actual: 22 },
+  { day: 'Day 4', ideal: 15, actual: 0 },
+  { day: 'Day 5', ideal: 10, actual: 0 },
+  { day: 'Day 6', ideal: 5, actual: 0 },
+  { day: 'Day 7', ideal: 0, actual: 0 },
+];
