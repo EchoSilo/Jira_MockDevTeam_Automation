@@ -114,6 +114,7 @@ llm:
     - design_discussion
     - blocker_analysis
     - dependency_identification
+    - generate_release_notes  # Release notes generation uses Sonnet for quality
 
 # Sprint configuration
 sprint:

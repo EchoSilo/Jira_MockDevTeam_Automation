@@ -222,3 +222,126 @@ No fluff, no AI-speak. Just the comment."""
         )
 
         return response.content[0].text.strip()
+
+    def generate_release_notes(
+        self,
+        version_name: str,
+        issues_by_category: dict[str, list[dict]],
+        issues_by_team: dict[str, dict],
+        version_metrics: dict,
+    ) -> dict:
+        """
+        Generate executive and technical release notes for a version.
+
+        Args:
+            version_name: The version name (e.g., "v1.2.0")
+            issues_by_category: Issues grouped by category (Features, Fixes, Improvements)
+                Each item: {"key": "PROJ-123", "summary": "...", "team": "alpha", "type": "Story"}
+            issues_by_team: Issues grouped by team with contribution counts
+                {"alpha": {"Features": 3, "Fixes": 2, "issues": [...]}, ...}
+            version_metrics: Overall metrics
+                {"total_issues": 11, "done_count": 11, "teams": ["alpha", "beta"]}
+
+        Returns:
+            {
+                "executive_notes": str,  # Customer-facing markdown
+                "technical_notes": str,  # Internal team-focused markdown
+            }
+        """
+        categories_text = self._format_categories_for_prompt(issues_by_category)
+        team_contributions_text = self._format_team_contributions_for_prompt(issues_by_team)
+
+        # Generate executive notes
+        executive_prompt = f"""You are a technical writer creating customer-facing release notes for {version_name}.
+
+Write polished, engaging release notes similar to video game patch notes (like Call of Duty or Fortnite updates).
+
+## Issues in this release:
+{categories_text}
+
+## Guidelines:
+- Focus on WHAT users can now do, not HOW it was built
+- Use exciting but professional language
+- Group by Features, Fixes, and Improvements (only include sections that have items)
+- Avoid technical jargon - speak to end users
+- Be concise but impactful
+- Use bullet points for easy scanning
+- Start with a brief exciting summary paragraph
+- Do NOT use emoji
+
+Write the release notes in Markdown format. Just the notes, no preamble."""
+
+        executive_response = self.client.messages.create(
+            model=self.complex_model,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": executive_prompt}],
+        )
+        executive_notes = executive_response.content[0].text.strip()
+
+        # Generate technical notes
+        technical_prompt = f"""You are a release manager creating internal technical release notes for {version_name}.
+
+Write detailed technical release notes for the engineering team and stakeholders.
+
+## Issues by Category:
+{categories_text}
+
+## Team Contributions:
+{team_contributions_text}
+
+## Metrics:
+- Total Issues: {version_metrics.get('total_issues', 0)}
+- Teams: {', '.join(version_metrics.get('teams', [])) or 'None'}
+
+## Guidelines:
+- Include ticket keys (e.g., PROJ-123) for traceability
+- Credit teams with phrases like "Team Alpha delivered..."
+- Group by team first, then by category within each team
+- Include technical details where relevant
+- Note any notable complexity or technical achievements
+- Be professional and informative
+- Do NOT use emoji
+
+Write the technical release notes in Markdown format. Just the notes, no preamble."""
+
+        technical_response = self.client.messages.create(
+            model=self.complex_model,
+            max_tokens=2500,
+            messages=[{"role": "user", "content": technical_prompt}],
+        )
+        technical_notes = technical_response.content[0].text.strip()
+
+        return {
+            "executive_notes": executive_notes,
+            "technical_notes": technical_notes,
+        }
+
+    def _format_categories_for_prompt(self, issues_by_category: dict) -> str:
+        """Format issues by category for LLM prompt."""
+        lines = []
+        for category, issues in issues_by_category.items():
+            if issues:
+                lines.append(f"\n### {category}")
+                for issue in issues:
+                    lines.append(f"- [{issue['key']}] {issue['summary']} (Team: {issue.get('team', 'Unknown')})")
+        return "\n".join(lines) if lines else "No issues in this release."
+
+    def _format_team_contributions_for_prompt(self, issues_by_team: dict) -> str:
+        """Format team contributions for LLM prompt."""
+        lines = []
+        for team, data in issues_by_team.items():
+            if team == "unassigned":
+                team_name = "Unassigned"
+            else:
+                team_name = f"Team {team.title()}"
+            counts = []
+            for cat in ["Features", "Fixes", "Improvements"]:
+                count = data.get(cat, 0)
+                if count > 0:
+                    counts.append(f"{count} {cat}")
+            if counts:
+                lines.append(f"\n### {team_name}")
+                lines.append(f"Delivered: {', '.join(counts)}")
+                for issue in data.get("issues", []):
+                    lines.append(f"- [{issue['key']}] {issue['summary']}")
+        return "\n".join(lines) if lines else "No team contributions recorded."

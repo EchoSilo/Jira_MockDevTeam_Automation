@@ -250,7 +250,8 @@ class ScenarioPlanner:
         scenarios_summary = self._format_active_scenarios(state)
         opportunities_summary = self._format_opportunities(analysis.get("opportunities", []))
         recent_summary = self._format_recent_actions(state.recent_actions[-10:])
-        agents_summary = self._format_available_agents()
+        agents_summary = self._format_available_agents(state)
+        fairness_guidance = self._format_fairness_guidance(state)
         metrics = analysis.get("metrics", {})
 
         # Calculate advancement requirements
@@ -302,6 +303,9 @@ Your job is to plan realistic team activity that creates meaningful patterns in 
 ## Available Agents (use these exact agent_id values)
 {agents_summary}
 {f"NOTE: These agents are already busy with script-based work and CANNOT be used: {', '.join(sorted(excluded_agent_ids))}" if excluded_agent_ids else ""}
+
+## Workload Fairness (IMPORTANT)
+{fairness_guidance}
 
 ## Current Metrics
 - Sprint Day: {metrics.get('sprint_day', 1)} / 14
@@ -479,14 +483,89 @@ Remember:
 
         return "\n".join(lines)
 
-    def _format_available_agents(self) -> str:
-        """Format available agents for prompt."""
+    def _format_available_agents(self, state: SimulationState = None) -> str:
+        """Format available agents with workload information for prompt."""
         lines = []
+
+        # Get workload stats if state available
+        workload_stats = {}
+        if state:
+            workload_stats = state.get_developer_workload_stats(self.personas)
+
         for agent_id, config in self.personas.get("agents", {}).items():
             role = config.get("role", "developer")
             name = config.get("display_name", agent_id)
             team = config.get("team") or "unknown"  # Handle null team values
-            lines.append(f"- {agent_id}: {name} ({role}, Team {team.title()})")
+
+            # Base info
+            line = f"- {agent_id}: {name} ({role}, Team {team.title()})"
+
+            # Add workload info for developers
+            if role == "developer" and agent_id in workload_stats:
+                stats = workload_stats[agent_id]
+                workload = stats["current_workload"]
+                sprint_assigns = stats["sprint_assignments"]
+                seniority = stats["seniority"]
+
+                # Add workload indicator
+                if sprint_assigns == 0:
+                    workload_indicator = "** NO ASSIGNMENTS THIS SPRINT **"
+                elif workload >= 4:
+                    workload_indicator = f"[{workload} tickets - BUSY]"
+                elif workload == 0:
+                    workload_indicator = "[Available]"
+                else:
+                    workload_indicator = f"[{workload} tickets]"
+
+                line += f" - {seniority} - Sprint: {sprint_assigns} assigned {workload_indicator}"
+
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    def _format_fairness_guidance(self, state: SimulationState) -> str:
+        """Format workload fairness guidance for the prompt."""
+        workload_stats = state.get_developer_workload_stats(self.personas)
+
+        if not workload_stats:
+            return ""
+
+        lines = []
+
+        # Identify developers needing work
+        zero_assignments = [
+            f"{s['display_name']} ({agent_id})"
+            for agent_id, s in workload_stats.items()
+            if s["sprint_assignments"] == 0
+        ]
+
+        underloaded = [
+            f"{s['display_name']} ({agent_id}) - {s['sprint_assignments']} assignments"
+            for agent_id, s in workload_stats.items()
+            if 0 < s["sprint_assignments"] <= 2 and s["current_workload"] < 3
+        ]
+
+        if zero_assignments:
+            lines.append("**PRIORITY - These developers have ZERO assignments this sprint:**")
+            for dev in zero_assignments:
+                lines.append(f"  - {dev}")
+            lines.append("")
+            lines.append("When selecting agents for 'pick_up_task', STRONGLY PREFER these developers.")
+            lines.append("")
+
+        if underloaded:
+            lines.append("**Underloaded developers (prefer for new work):**")
+            for dev in underloaded:
+                lines.append(f"  - {dev}")
+            lines.append("")
+
+        # Add guidance
+        lines.append("**Fairness Rules:**")
+        lines.append("1. Every developer should get at least 1 assignment per sprint")
+        lines.append("2. When picking up tasks, prefer developers with fewer sprint assignments")
+        lines.append("3. Don't completely block high-performers - they can still be selected")
+        lines.append("4. Consider current workload (busy developers may not need more work)")
+
         return "\n".join(lines)
 
     def _format_workflow_context(self, board_snapshot: dict) -> str:

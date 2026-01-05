@@ -754,6 +754,18 @@ class ChatResponse(BaseModel):
     tickets_mentioned: list[str] = []
 
 
+class ReleaseNotesResponse(BaseModel):
+    """Response model for release notes generation."""
+    version: str
+    executive_notes: str
+    technical_notes: str
+    saved_path: str
+    generated_at: str
+    issue_count: int
+    teams: list[str]
+    from_cache: bool = False
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_with_pm(request: ChatRequest):
     """
@@ -858,6 +870,299 @@ Respond as {pm_config.get('display_name')}:"""
         response=pm_response,
         tickets_mentioned=tickets_mentioned,
     )
+
+
+# ============ Release Notes Generation ============
+
+def build_account_team_lookup(personas: dict) -> dict[str, dict]:
+    """Build lookup from Jira account ID to team/display_name."""
+    lookup = {}
+    for agent_id, config in personas.get("agents", {}).items():
+        jira_account_id = config.get("jira_account_id")
+        if jira_account_id:
+            lookup[jira_account_id] = {
+                "team": config.get("team"),
+                "display_name": config.get("display_name"),
+                "role": config.get("role"),
+                "agent_id": agent_id,
+            }
+    return lookup
+
+
+def categorize_issues_for_release_notes(
+    issues: list,
+    team_lookup: dict,
+) -> tuple[dict, dict, dict]:
+    """
+    Categorize issues by type and team for release notes.
+
+    Returns:
+        (issues_by_category, issues_by_team, metrics)
+    """
+    # Issue type to category mapping
+    type_to_category = {
+        "Story": "Features",
+        "Epic": "Features",
+        "Bug": "Fixes",
+        "Task": "Improvements",
+        "Sub-task": "Improvements",
+        "Subtask": "Improvements",
+    }
+
+    issues_by_category = {
+        "Features": [],
+        "Fixes": [],
+        "Improvements": [],
+    }
+
+    issues_by_team = {}
+    teams_seen = set()
+
+    for issue in issues:
+        # Get issue details
+        key = issue.key
+        summary = issue.fields.summary
+        issue_type = issue.fields.issuetype.name
+        category = type_to_category.get(issue_type, "Improvements")
+
+        # Determine team from assignee
+        assignee = issue.fields.assignee
+        team = "unassigned"
+        if assignee:
+            account_id = assignee.accountId
+            agent_info = team_lookup.get(account_id, {})
+            team = agent_info.get("team") or "unassigned"
+
+        if team and team != "unassigned":
+            teams_seen.add(team)
+
+        # Create issue record
+        issue_record = {
+            "key": key,
+            "summary": summary,
+            "type": issue_type,
+            "team": team,
+            "status": issue.fields.status.name,
+        }
+
+        # Add to category
+        issues_by_category[category].append(issue_record)
+
+        # Add to team
+        if team not in issues_by_team:
+            issues_by_team[team] = {
+                "Features": 0,
+                "Fixes": 0,
+                "Improvements": 0,
+                "issues": [],
+            }
+        issues_by_team[team][category] += 1
+        issues_by_team[team]["issues"].append(issue_record)
+
+    metrics = {
+        "total_issues": len(issues),
+        "done_count": sum(1 for i in issues if i.fields.status.name.lower() in ["done", "closed", "resolved"]),
+        "teams": sorted(list(teams_seen)),
+        "category_counts": {
+            cat: len(items) for cat, items in issues_by_category.items()
+        },
+    }
+
+    return issues_by_category, issues_by_team, metrics
+
+
+def load_cached_release_notes(version: str) -> Optional[dict]:
+    """Load cached release notes from disk if available."""
+    releases_dir = Path("data/releases")
+    file_path = releases_dir / f"{version}.md"
+
+    if not file_path.exists():
+        return None
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+
+        # Parse the markdown to extract sections
+        sections = {}
+        current_section = None
+        current_content = []
+
+        for line in content.split("\n"):
+            if line.startswith("## Executive Summary"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "executive"
+                current_content = []
+            elif line.startswith("## Technical Details"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "technical"
+                current_content = []
+            elif line.startswith("## Statistics"):
+                if current_section:
+                    sections[current_section] = "\n".join(current_content).strip()
+                current_section = "stats"
+                current_content = []
+            elif line.startswith("---"):
+                continue  # Skip horizontal rules
+            elif current_section:
+                current_content.append(line)
+
+        if current_section:
+            sections[current_section] = "\n".join(current_content).strip()
+
+        if "executive" in sections and "technical" in sections:
+            return {
+                "executive_notes": sections["executive"],
+                "technical_notes": sections["technical"],
+            }
+
+    except Exception:
+        pass
+
+    return None
+
+
+def save_release_notes(
+    version: str,
+    executive_notes: str,
+    technical_notes: str,
+    metrics: dict,
+) -> str:
+    """Save release notes to disk and return the file path."""
+    releases_dir = Path("data/releases")
+    releases_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = releases_dir / f"{version}.md"
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    content = f"""# Release Notes: {version}
+Generated: {timestamp}
+
+---
+
+## Executive Summary
+
+{executive_notes}
+
+---
+
+## Technical Details
+
+{technical_notes}
+
+---
+
+## Statistics
+- Total Issues: {metrics.get('total_issues', 0)}
+- Teams Contributing: {', '.join(metrics.get('teams', [])) or 'None'}
+- Features: {metrics.get('category_counts', {}).get('Features', 0)}
+- Fixes: {metrics.get('category_counts', {}).get('Fixes', 0)}
+- Improvements: {metrics.get('category_counts', {}).get('Improvements', 0)}
+"""
+
+    file_path.write_text(content, encoding="utf-8")
+    return str(file_path)
+
+
+@app.post("/api/releases/{version}/generate-notes", response_model=ReleaseNotesResponse)
+async def generate_release_notes(version: str, regenerate: bool = False):
+    """
+    Generate release notes for a specific version.
+
+    Args:
+        version: The fix version name (e.g., "v1.2.0")
+        regenerate: If True, regenerate even if cached notes exist
+
+    Returns:
+        ReleaseNotesResponse with executive and technical notes
+
+    Raises:
+        404: Version not found
+        400: No issues in version
+        500: Generation or save failed
+    """
+    try:
+        jira = app.state.jira
+
+        # Check if version exists
+        versions = jira.get_fix_versions()
+        version_exists = any(v["name"] == version for v in versions)
+        if not version_exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Version '{version}' not found in Jira"
+            )
+
+        # Check for cached notes
+        if not regenerate:
+            cached = load_cached_release_notes(version)
+            if cached:
+                # Return cached notes
+                metrics = jira.get_version_progress(version) or {}
+                return ReleaseNotesResponse(
+                    version=version,
+                    executive_notes=cached["executive_notes"],
+                    technical_notes=cached["technical_notes"],
+                    saved_path=f"data/releases/{version}.md",
+                    generated_at=datetime.now(timezone.utc).isoformat(),
+                    issue_count=metrics.get("total", 0),
+                    teams=[],  # Not tracked in cache
+                    from_cache=True,
+                )
+
+        # Fetch issues for this version
+        issues = jira.get_issues_by_fix_version(version)
+        if not issues:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No issues found for version '{version}'"
+            )
+
+        # Build team lookup from personas
+        team_lookup = build_account_team_lookup(app.state.personas)
+
+        # Categorize issues
+        issues_by_category, issues_by_team, metrics = categorize_issues_for_release_notes(
+            issues, team_lookup
+        )
+
+        # Generate release notes via LLM
+        llm = app.state.llm
+        notes = llm.generate_release_notes(
+            version_name=version,
+            issues_by_category=issues_by_category,
+            issues_by_team=issues_by_team,
+            version_metrics=metrics,
+        )
+
+        # Save to disk
+        saved_path = save_release_notes(
+            version=version,
+            executive_notes=notes["executive_notes"],
+            technical_notes=notes["technical_notes"],
+            metrics=metrics,
+        )
+
+        return ReleaseNotesResponse(
+            version=version,
+            executive_notes=notes["executive_notes"],
+            technical_notes=notes["technical_notes"],
+            saved_path=saved_path,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            issue_count=metrics["total_issues"],
+            teams=metrics["teams"],
+            from_cache=False,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate release notes for {version}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate release notes: {str(e)}"
+        )
 
 
 # ============ Frontend Static Files ============

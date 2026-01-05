@@ -502,6 +502,10 @@ class AgentState(BaseModel):
     recent_rejections: int = 0
     recent_completions: int = 0
 
+    # Sprint-level assignment tracking for workload fairness
+    sprint_assignments: int = 0  # Tickets assigned this sprint
+    last_sprint_reset: int = 0   # Sprint number when counters were last reset
+
     def record_action(self, ticket_key: Optional[str] = None) -> None:
         """Record that agent took an action."""
         self.last_action = datetime.utcnow()
@@ -511,6 +515,7 @@ class AgentState(BaseModel):
         """Assign a ticket to this agent."""
         if ticket_key not in self.assigned_tickets:
             self.assigned_tickets.append(ticket_key)
+            self.sprint_assignments += 1  # Track sprint-level assignments
         self.current_workload = len(self.assigned_tickets)
         self.is_overloaded = self.current_workload >= 5
 
@@ -539,6 +544,12 @@ class AgentState(BaseModel):
     def reset_daily_counters(self) -> None:
         """Reset counters at start of new day."""
         self.actions_today = 0
+
+    def reset_sprint_counters(self, sprint_number: int) -> None:
+        """Reset sprint counters at start of new sprint."""
+        if sprint_number != self.last_sprint_reset:
+            self.sprint_assignments = 0
+            self.last_sprint_reset = sprint_number
 
 
 class RecentAction(BaseModel):
@@ -795,8 +806,11 @@ class SimulationState(BaseModel):
         for agent in self.agents.values():
             agent.reset_daily_counters()
 
-        # Advance sprint
-        self.sprint.advance_day()
+        # Advance sprint and reset sprint counters if new sprint
+        new_sprint_started = self.sprint.advance_day()
+        if new_sprint_started:
+            for agent in self.agents.values():
+                agent.reset_sprint_counters(self.sprint.sprint_number)
 
     # ========== Serialization Helpers ==========
 
@@ -827,3 +841,59 @@ class SimulationState(BaseModel):
             }
             for agent_id, agent in self.agents.items()
         }
+
+    def get_developer_workload_stats(self, personas: dict) -> dict:
+        """Calculate workload statistics for all developers.
+
+        Returns dict with agent_id -> {
+            'current_workload': int,
+            'sprint_assignments': int,
+            'display_name': str,
+            'team': str,
+            'seniority': str,
+            'fairness_score': float  # 0-1, higher = needs more work
+        }
+        """
+        stats = {}
+        developers = []
+
+        # Collect all developers from personas
+        for agent_id, config in personas.get("agents", {}).items():
+            if config.get("role") == "developer":
+                agent_state = self.get_agent_state(agent_id)
+                developers.append({
+                    "agent_id": agent_id,
+                    "current_workload": agent_state.current_workload,
+                    "sprint_assignments": agent_state.sprint_assignments,
+                    "display_name": config.get("display_name", agent_id),
+                    "team": config.get("team", "unknown"),
+                    "seniority": config.get("seniority", "mid"),
+                })
+
+        if not developers:
+            return stats
+
+        # Calculate fairness scores (0-1, higher means agent needs more work)
+        max_assignments = max(d["sprint_assignments"] for d in developers) or 1
+        avg_assignments = sum(d["sprint_assignments"] for d in developers) / len(developers)
+
+        for dev in developers:
+            # Score based on how far below average they are
+            if avg_assignments > 0:
+                relative_deficit = (avg_assignments - dev["sprint_assignments"]) / avg_assignments
+            else:
+                relative_deficit = 1.0 if dev["sprint_assignments"] == 0 else 0.0
+
+            # Clamp between 0 and 1
+            fairness_score = max(0.0, min(1.0, (relative_deficit + 1) / 2))
+
+            # Boost score if they have 0 assignments this sprint
+            if dev["sprint_assignments"] == 0:
+                fairness_score = 1.0
+
+            stats[dev["agent_id"]] = {
+                **dev,
+                "fairness_score": round(fairness_score, 2),
+            }
+
+        return stats
