@@ -97,9 +97,10 @@ class CrewAILoggingCallback:
                 scenario_id=self._current_scenario_id,
                 is_complex=is_complex,
             )
-        except Exception:
+        except Exception as e:
             # Don't let logging errors break the flow
-            pass
+            import sys
+            print(f"Warning: Failed to log CrewAI usage: {e}", file=sys.stderr)
 
 
 def setup_crewai_logging(log_writer: "AsyncLogWriter") -> CrewAILoggingCallback:

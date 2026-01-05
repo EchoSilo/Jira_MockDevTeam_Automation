@@ -60,6 +60,27 @@ class JiraClient:
 
         return self._client.search_issues(jql, maxResults=max_results)
 
+    def get_all_active_issues(
+        self,
+        issue_types: Optional[list[str]] = None,
+        max_results: int = 100,
+    ) -> list[Issue]:
+        """Get all active (non-completed) issues in the project.
+
+        Args:
+            issue_types: Optional list of issue types to filter
+            max_results: Maximum number of issues to return
+
+        Returns:
+            List of issues not in Done/Closed/Resolved status
+        """
+        jql = f'project = {self.project_key} AND status NOT IN ("Done", "Closed", "Resolved")'
+        if issue_types:
+            type_str = ", ".join(f'"{t}"' for t in issue_types)
+            jql += f" AND issuetype IN ({type_str})"
+        jql += " ORDER BY updated DESC"
+        return self._client.search_issues(jql, maxResults=max_results)
+
     def get_backlog_issues(
         self,
         max_results: int = 30,

@@ -3,8 +3,11 @@ QA Engineer agent.
 Tests tickets, approves or rejects, creates bugs.
 """
 
+import logging
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
@@ -223,8 +226,8 @@ class QAAgent(BaseAgent):
         # Link to original ticket
         try:
             self.jira.link_issues(bug.key, related_ticket_key, "is caused by")
-        except Exception:
-            pass  # Link type might not exist
+        except Exception as e:
+            logger.warning(f"Failed to link bug {bug.key} to {related_ticket_key}: {e}")
 
         # Track in state
         state.track_ticket(bug.key, "To Do")

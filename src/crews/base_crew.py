@@ -175,9 +175,10 @@ class BaseCrew:
                     duration_ms=duration_ms,
                     crew_output=result_str[:2000],
                 )
-            except Exception:
+            except Exception as e:
                 # Don't let logging errors break the flow
-                pass
+                import sys
+                print(f"Warning: Failed to log crew result: {e}", file=sys.stderr)
 
         return result_str
 

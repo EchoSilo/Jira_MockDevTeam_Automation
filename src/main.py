@@ -58,7 +58,8 @@ class CachedHealthCheck:
             try:
                 jira_client.get_current_user()
                 self._jira_connected = True
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Jira connectivity check failed: {e}")
                 self._jira_connected = False
 
             self._last_check = now
@@ -450,9 +451,9 @@ async def get_state():
                 "total_issues": len(sprint_issues),
                 "done_issues": done_count,
             }
-    except Exception:
+    except Exception as e:
         # Fallback to local sprint data if Jira unavailable
-        pass
+        logger.warning(f"Failed to fetch Jira sprint data: {e}")
 
     return state_dict
 
@@ -531,15 +532,15 @@ async def get_sprint_data():
                 try:
                     sprint_issues_closed = jira.get_sprint_issues(sprint.id)
                     done_count = sum(1 for i in sprint_issues_closed if i.fields.status.name.lower() in ["done", "closed", "resolved"])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to get sprint issues for {sprint.name}: {e}")
                 velocity_data.append({
                     "sprintNumber": sprint_num,
                     "sprintName": sprint.name,
                     "completedItems": done_count,
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to fetch velocity data: {e}")
 
         # Add current sprint to velocity if has completed items
         if done_items > 0 or not velocity_data:
@@ -1033,8 +1034,8 @@ def load_cached_release_notes(version: str) -> Optional[dict]:
                 "technical_notes": sections["technical"],
             }
 
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to generate release notes: {e}")
 
     return None
 

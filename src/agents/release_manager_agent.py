@@ -11,9 +11,12 @@ This agent does NOT directly access Jira. All actions are performed through
 directives that get converted into PM actions during the planning phase.
 """
 
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .coordinator_agent import CoordinatorAgent
 from ..services.llm_service import LLMService
@@ -687,8 +690,9 @@ class ReleaseManagerAgent(CoordinatorAgent):
                 action_type="release_communication",
             )
             return response
-        except Exception:
+        except Exception as e:
             # Fallback to template
+            logger.warning(f"LLM release notes generation failed, using template: {e}")
             templates = {
                 "planning": f"Planning release {release.name} for upcoming sprint cycle.",
                 "reminder": f"Reminder: Release {release.name} is approaching. Please ensure all tickets have fix versions assigned.",

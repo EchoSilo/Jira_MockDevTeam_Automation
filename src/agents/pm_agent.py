@@ -3,8 +3,11 @@ Product Manager agent.
 Creates stories, prioritizes backlog, adds acceptance criteria.
 """
 
+import logging
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
@@ -90,15 +93,15 @@ class PMAgent(BaseAgent):
         try:
             epics = self.jira.get_project_issues(issue_types=["Epic"], max_results=10)
             existing_epics = [e.fields.summary for e in epics]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to fetch epics for story context: {e}")
 
         recent_stories = []
         try:
             stories = self.jira.get_project_issues(issue_types=["Story"], max_results=10)
             recent_stories = [s.fields.summary for s in stories]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to fetch recent stories for context: {e}")
 
         # Get team focus from config
         team_config = self.config.get("team", "alpha")

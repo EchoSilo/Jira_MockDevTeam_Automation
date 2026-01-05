@@ -317,5 +317,6 @@ class AsyncLogWriter:
                     self._db.insert_log_entry(item)
             except Empty:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                import sys
+                print(f"Warning: Failed to flush log entry on shutdown: {e}", file=sys.stderr)

@@ -161,6 +161,38 @@ class LoggedJiraClient(JiraClient):
             )
             raise
 
+    def get_all_active_issues(
+        self,
+        issue_types: Optional[list[str]] = None,
+        max_results: int = 100,
+    ) -> list[Issue]:
+        """Get all active issues with logging."""
+        start_time = time.time()
+        try:
+            result = super().get_all_active_issues(issue_types, max_results)
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            self._log_writer.log_jira_call(
+                method="get_all_active_issues",
+                parameters={"issue_types": issue_types, "max_results": max_results},
+                response_summary=f"Retrieved {len(result)} active issues",
+                duration_ms=duration_ms,
+                agent_id=self._current_agent_id,
+                agent_name=self._current_agent_name,
+                scenario_id=self._current_scenario_id,
+            )
+            return result
+
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            self._log_writer.log_jira_call(
+                method="get_all_active_issues",
+                parameters={"issue_types": issue_types, "max_results": max_results},
+                duration_ms=duration_ms,
+                error=str(e),
+            )
+            raise
+
     def get_in_progress_issues(self, assignee: Optional[str] = None) -> list[Issue]:
         """Get in-progress issues with logging."""
         start_time = time.time()

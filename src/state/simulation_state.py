@@ -7,9 +7,12 @@ the new scenario-driven simulation model.
 """
 
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     SimulationState,
@@ -183,7 +186,8 @@ def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) ->
     # Get all active tickets from Jira
     try:
         jira_tickets = jira_client.get_all_active_issues()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to sync state with Jira: {e}")
         return state
 
     tracked_tickets = {s.ticket_key for s in state.active_scenarios.values()}

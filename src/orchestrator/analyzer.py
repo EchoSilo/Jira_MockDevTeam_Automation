@@ -6,9 +6,12 @@ opportunities for scenario actions. This provides input to the
 LLM planner.
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import random
+
+logger = logging.getLogger(__name__)
 
 from ..services.jira_client import JiraClient
 from ..state import (
@@ -94,7 +97,8 @@ class ScenarioAnalyzer:
             # Get fix versions from Jira for release management sync
             try:
                 snapshot["jira_versions"] = self.jira.get_fix_versions()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to get fix versions: {e}")
                 snapshot["jira_versions"] = []
 
             # Get sprint issues directly if we only want sprint items
@@ -147,9 +151,9 @@ class ScenarioAnalyzer:
                 elif status in ["done", "closed", "resolved"]:
                     snapshot["done"].append(ticket_info)
 
-        except Exception:
+        except Exception as e:
             # Return empty snapshot on error
-            pass
+            logger.error(f"Failed to create board snapshot: {e}")
 
         return snapshot
 
@@ -173,7 +177,8 @@ class ScenarioAnalyzer:
                 }
                 for t in transitions
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get transitions for {issue_key}: {e}")
             return []
 
     def analyze(self, state: SimulationState) -> dict:
@@ -696,8 +701,8 @@ class ScenarioAnalyzer:
                         f"'{epic_info['suggested_status']}' - {epic_info['reason']}"
                     ),
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to detect epic sync opportunities: {e}")
 
         return opportunities
 
@@ -735,8 +740,8 @@ class ScenarioAnalyzer:
                             f"for proper ownership"
                         ),
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to detect unassigned epic opportunities: {e}")
 
         return opportunities
 
@@ -755,8 +760,9 @@ class ScenarioAnalyzer:
             if "beta" in labels or "beta" in summary or "ux" in summary:
                 return self._get_team_agents("beta").get("pm")
             return self._get_team_agents("alpha").get("pm")
-        except Exception:
+        except Exception as e:
             # Default to alpha PM
+            logger.warning(f"Failed to find PM for epic {epic_key}: {e}")
             return self._get_team_agents("alpha").get("pm")
 
     # ==================== Sprint Planning Detection ====================
@@ -865,8 +871,8 @@ class ScenarioAnalyzer:
                         ),
                     })
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to detect sprint planning opportunities: {e}")
 
         return opportunities
 
@@ -999,8 +1005,8 @@ class ScenarioAnalyzer:
                             "Developers work on Stories, Bugs, and Tasks."
                         ),
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to detect epic violations: {e}")
 
         return violations
 

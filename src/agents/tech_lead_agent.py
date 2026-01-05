@@ -3,8 +3,11 @@ Tech Lead agent.
 Reviews technical approaches, flags blockers, provides architectural guidance.
 """
 
+import logging
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
@@ -28,8 +31,8 @@ class TechLeadAgent(BaseAgent):
                 issue_types=TECH_LEAD_ALLOWED_ISSUE_TYPES,
                 max_results=10,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to get code review items for {self.agent_id}: {e}")
 
         # Get items in progress (for architectural review, filtered - no Epics)
         in_progress = self.jira.get_in_progress_issues(

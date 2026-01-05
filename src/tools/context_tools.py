@@ -2,7 +2,11 @@
 Context tools for gathering information for LLM prompts.
 """
 
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
 from ..services.jira_client import JiraClient
 from ..state.simulation_state import SimulationState
 
@@ -75,7 +79,8 @@ class ContextTools:
                 try:
                     assigned = self.jira.get_in_progress_issues(assignee=account_id)
                     workload[agent.get("display_name")] = len(assigned)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to get workload for {agent.get('display_name')}: {e}")
                     workload[agent.get("display_name")] = 0
 
         return workload
@@ -99,5 +104,6 @@ class ContextTools:
                 }
                 for i in issues
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get blocked tickets: {e}")
             return []

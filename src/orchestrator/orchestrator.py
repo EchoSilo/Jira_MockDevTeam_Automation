@@ -503,8 +503,8 @@ class ScenarioOrchestrator:
                     if dev_agent_id:
                         scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
                         scenario.advance_to_phase(ScenarioPhase.IN_REVIEW)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to create/advance scenario for {ticket_key}: {e}")
             if scenario:
                 result.update(
                     self.lifecycle_crew.complete_code_review(scenario, tech_lead_id)
@@ -535,8 +535,8 @@ class ScenarioOrchestrator:
                     if dev_agent_id:
                         scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
                         scenario.advance_to_phase(ScenarioPhase.IN_TESTING)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to create/advance scenario for {ticket_key}: {e}")
             if scenario:
                 result.update(self.lifecycle_crew.qa_approve(scenario, qa_id))
             else:
@@ -561,8 +561,8 @@ class ScenarioOrchestrator:
                     if dev_agent_id:
                         scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
                         scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to create/advance scenario for {ticket_key}: {e}")
             if scenario:
                 reason = details or self._generate_blocker_reason()
                 result.update(self.blocker_crew.inject_blocker(scenario, reason))
@@ -1241,8 +1241,8 @@ class ScenarioOrchestrator:
             issue_type = issue.fields.issuetype.name
             complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
             current_status = issue.fields.status.name if issue.fields.status else "To Do"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to get issue details for {ticket_key}: {e}")
 
         scenario = ActiveScenario.create_normal_flow(
             ticket_key=ticket_key,

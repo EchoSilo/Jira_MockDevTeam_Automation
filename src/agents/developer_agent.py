@@ -3,8 +3,11 @@ Developer agent.
 Picks up tasks, transitions statuses, adds comments, logs work.
 """
 
+import logging
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .base_agent import BaseAgent
 from ..state.simulation_state import SimulationState
@@ -35,8 +38,8 @@ class DeveloperAgent(BaseAgent):
                 i for i in in_progress
                 if i.fields.assignee and i.fields.assignee.accountId == self.jira_account_id
             ]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to get in-progress issues for {self.agent_id}: {e}")
 
         # Get backlog items I could pick up (filtered to allowed issue types - no Epics)
         backlog = self.jira.get_backlog_issues(

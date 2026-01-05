@@ -4,8 +4,11 @@ FastAPI endpoints for log viewer UI.
 Provides REST API for querying logs and a simple HTML viewer.
 """
 
+import logging
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
@@ -38,7 +41,8 @@ async def list_sessions(
             "limit": limit,
             "offset": offset,
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to list log sessions: {e}")
         return {
             "sessions": [],
             "total": 0,
@@ -128,7 +132,8 @@ async def get_stats(
         end_dt = datetime.fromisoformat(end_date) if end_date else None
 
         return query.get_token_usage_stats(start_dt, end_dt)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to get token usage stats: {e}")
         return {
             "total_calls": 0,
             "total_input_tokens": 0,
