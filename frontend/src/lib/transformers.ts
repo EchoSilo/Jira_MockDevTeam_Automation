@@ -80,6 +80,7 @@ export function transformAgents(
       team: agent.team as Team,
       role: agent.role,
       assignedTickets: agent.current_workload,
+      reviewTickets: agent.review_tickets?.length || 0,
       isOverloaded: state.agents[agent.id]?.is_overloaded || agent.current_workload >= 5,
       dailyActions: agent.daily_actions,
     }));

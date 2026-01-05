@@ -77,7 +77,11 @@ export function AgentCard({ agent }: AgentCardProps) {
           >
             {agent.assignedTickets}
           </span>
-          <span className="text-xs text-[var(--color-text-muted)]">tickets</span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {agent.role === 'tech_lead' && agent.reviewTickets > 0
+              ? `${agent.reviewTickets} reviewing`
+              : 'tickets'}
+          </span>
         </div>
       </div>
     </div>

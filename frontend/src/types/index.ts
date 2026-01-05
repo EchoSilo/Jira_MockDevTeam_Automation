@@ -12,6 +12,7 @@ export interface Agent {
   role: 'pm' | 'developer' | 'qa' | 'tech_lead';
   avatar?: string;
   assignedTickets: number;
+  reviewTickets: number;  // Tickets being reviewed (for Tech Lead)
   isOverloaded: boolean;
   dailyActions: number;
 }

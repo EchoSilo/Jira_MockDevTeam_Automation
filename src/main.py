@@ -724,6 +724,7 @@ async def list_agents():
             "team": config.get("team"),
             "role": config.get("role"),
             "assigned_tickets": agent_state.assigned_tickets if agent_state else [],
+            "review_tickets": agent_state.review_tickets if agent_state else [],
             "current_workload": agent_state.current_workload if agent_state else 0,
             "daily_actions": agent_state.actions_today if agent_state else 0,
         })

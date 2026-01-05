@@ -491,6 +491,7 @@ class AgentState(BaseModel):
     last_action: Optional[datetime] = None
     actions_today: int = 0
     assigned_tickets: list[str] = Field(default_factory=list)
+    review_tickets: list[str] = Field(default_factory=list)  # Tickets being reviewed (for Tech Lead)
 
     # Calculated metrics
     current_workload: int = 0
@@ -511,20 +512,35 @@ class AgentState(BaseModel):
         self.last_action = datetime.utcnow()
         self.actions_today += 1
 
+    def _update_workload(self) -> None:
+        """Update workload from assigned + review tickets."""
+        self.current_workload = len(self.assigned_tickets) + len(self.review_tickets)
+        self.is_overloaded = self.current_workload >= 5
+
     def assign_ticket(self, ticket_key: str) -> None:
         """Assign a ticket to this agent."""
         if ticket_key not in self.assigned_tickets:
             self.assigned_tickets.append(ticket_key)
             self.sprint_assignments += 1  # Track sprint-level assignments
-        self.current_workload = len(self.assigned_tickets)
-        self.is_overloaded = self.current_workload >= 5
+        self._update_workload()
 
     def unassign_ticket(self, ticket_key: str) -> None:
         """Remove a ticket from this agent."""
         if ticket_key in self.assigned_tickets:
             self.assigned_tickets.remove(ticket_key)
-        self.current_workload = len(self.assigned_tickets)
-        self.is_overloaded = self.current_workload >= 5
+        self._update_workload()
+
+    def assign_review(self, ticket_key: str) -> None:
+        """Assign a ticket for code review to this agent (Tech Lead)."""
+        if ticket_key not in self.review_tickets:
+            self.review_tickets.append(ticket_key)
+        self._update_workload()
+
+    def unassign_review(self, ticket_key: str) -> None:
+        """Remove a review assignment from this agent."""
+        if ticket_key in self.review_tickets:
+            self.review_tickets.remove(ticket_key)
+        self._update_workload()
 
     def record_rejection(self) -> None:
         """Record that agent's work was rejected."""

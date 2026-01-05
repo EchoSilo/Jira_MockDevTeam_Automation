@@ -104,6 +104,7 @@ export interface AgentInfo {
   team: 'alpha' | 'beta';
   role: 'pm' | 'developer' | 'qa' | 'tech_lead';
   assigned_tickets: string[];
+  review_tickets: string[];  // Tickets being reviewed (for Tech Lead)
   current_workload: number;
   daily_actions: number;
 }

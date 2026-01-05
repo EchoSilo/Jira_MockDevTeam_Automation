@@ -133,6 +133,12 @@ class TechLeadAgent(BaseAgent):
                 self.jira.transition_issue(ticket_key, "Testing")
             state.track_ticket(ticket_key, "Ready for QA")
 
+            # Unassign review from self now that review is complete
+            agent_state = state.get_agent_state(self.agent_id)
+            if agent_state:
+                agent_state.unassign_review(ticket_key)
+                logger.info(f"Completed code review for {ticket_key}, unassigned from review queue")
+
         return {
             "action": "code_review_comment",
             "ticket": ticket_key,

@@ -189,6 +189,16 @@ class DeveloperAgent(BaseAgent):
                 self.jira.add_comment(ticket_key, comment)
             state.track_ticket(ticket_key, "Code Review", self.agent_id)
 
+            # Auto-assign to Tech Lead (Marcus Johnson) for code review
+            tech_lead_account_id = "712020:41732ea3-e934-4118-81fa-224b0a91c802"
+            self.jira.assign_issue(ticket_key, tech_lead_account_id)
+
+            # Track review assignment in state
+            tech_lead_state = state.get_agent_state("alpha_tech_lead")
+            if tech_lead_state:
+                tech_lead_state.assign_review(ticket_key)
+                logger.info(f"Assigned {ticket_key} to Marcus Johnson for code review")
+
         return {
             "action": "transition_to_review",
             "ticket": ticket_key,
