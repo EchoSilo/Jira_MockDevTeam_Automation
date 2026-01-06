@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
 import { Header, Tabs, TabsContent } from '@/components/common';
 import {
@@ -12,9 +13,20 @@ import {
   BurndownChart,
   ActivityFeed,
   ScenarioTimeline,
+  VersionListCard,
+  VersionProgressCard,
+  ReleaseNotesCard,
+  VersionIssuesCard,
 } from '@/components/dashboard';
 import { useDashboardStore } from '@/store';
-import { useDashboardData } from '@/hooks/useApi';
+import {
+  useDashboardData,
+  useVersions,
+  useVersionProgress,
+  useVersionIssues,
+  useGenerateReleaseNotes,
+} from '@/hooks/useApi';
+import type { ReleaseNotesResponse, OutputFormat } from '@/lib/api';
 import {
   transformSprint,
   transformAgents,
@@ -30,12 +42,39 @@ import { cn } from '@/lib/utils';
 export function DashboardPage() {
   const { selectedTeam } = useDashboardStore();
 
+  // Release view state
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [releaseNotes, setReleaseNotes] = useState<ReleaseNotesResponse | null>(null);
+
   // Fetch real data from backend with 15 second refresh
   const { data, isLoading, error, refetch } = useDashboardData({
     refetchInterval: 15000,
   });
 
   const { health, state, agents, scenarios, sprintData } = data;
+
+  // Release data hooks
+  const { data: versionsData, isLoading: versionsLoading } = useVersions();
+  const { data: progressData, isLoading: progressLoading } = useVersionProgress(selectedVersion);
+  const { data: issuesData, isLoading: issuesLoading } = useVersionIssues(selectedVersion);
+  const { generate: generateNotes, isLoading: notesLoading } = useGenerateReleaseNotes();
+
+  // Handle release notes generation
+  const handleGenerateNotes = async (format: OutputFormat, regenerate?: boolean) => {
+    if (!selectedVersion) return;
+
+    try {
+      const result = await generateNotes(selectedVersion, format, regenerate ?? false);
+      if (result && (format === 'md' || format === 'txt')) {
+        setReleaseNotes(result);
+      }
+    } catch (err) {
+      console.error('Failed to generate notes:', err);
+    }
+  };
+
+  // Calculate unreleased versions count for badge
+  const unreleasedCount = versionsData?.versions.filter(v => !v.released && !v.archived).length ?? 0;
 
   // Show error state if backend is unavailable
   if (error && !state) {
@@ -201,10 +240,11 @@ export function DashboardPage() {
           />
         </div>
 
-        {/* Tab-based view for Sprint and Simulation data */}
+        {/* Tab-based view for Sprint, Release, and Simulation data */}
         <Tabs
           tabs={[
             { value: 'sprint', label: 'Sprint View' },
+            { value: 'release', label: 'Release View', badge: unreleasedCount || undefined },
             { value: 'simulation', label: 'Simulation', badge: activeScenarioCount }
           ]}
           defaultValue="sprint"
@@ -217,6 +257,47 @@ export function DashboardPage() {
               <VelocityChart data={sprintData?.velocityData ?? []} />
               <WorkloadCard agents={filteredAgents} />
               <StatusBreakdownChart data={statusBreakdown} />
+            </div>
+          </TabsContent>
+
+          {/* Release View - Fix versions and release notes */}
+          <TabsContent value="release" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+              {/* Column 1: Version list */}
+              <div>
+                <VersionListCard
+                  versions={versionsData?.versions ?? []}
+                  selectedVersion={selectedVersion}
+                  onSelectVersion={setSelectedVersion}
+                  isLoading={versionsLoading}
+                />
+              </div>
+
+              {/* Column 2-3: Progress and Release Notes */}
+              <div className="lg:col-span-2 space-y-6">
+                <VersionProgressCard
+                  versionName={selectedVersion}
+                  progress={progressData ?? null}
+                  isLoading={progressLoading}
+                />
+                <ReleaseNotesCard
+                  versionName={selectedVersion}
+                  notes={releaseNotes}
+                  isGenerating={notesLoading}
+                  onGenerate={handleGenerateNotes}
+                />
+              </div>
+
+              {/* Column 4: Issues by type */}
+              <div>
+                <VersionIssuesCard
+                  versionName={selectedVersion}
+                  issuesByType={issuesData?.issues_by_type ?? null}
+                  total={issuesData?.total ?? 0}
+                  isLoading={issuesLoading}
+                  jiraUrl={health?.jira_url}
+                />
+              </div>
             </div>
           </TabsContent>
 

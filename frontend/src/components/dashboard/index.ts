@@ -11,3 +11,9 @@ export { VelocityChart } from './VelocityChart';
 export { BurndownChart } from './BurndownChart';
 export { ActivityFeed } from './ActivityFeed';
 export { ScenarioTimeline } from './ScenarioTimeline';
+
+// Release View components
+export { VersionListCard } from './VersionListCard';
+export { VersionProgressCard } from './VersionProgressCard';
+export { ReleaseNotesCard } from './ReleaseNotesCard';
+export { VersionIssuesCard } from './VersionIssuesCard';

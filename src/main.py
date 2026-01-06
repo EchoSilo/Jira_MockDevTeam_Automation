@@ -562,6 +562,150 @@ async def get_sprint_data():
         return {"error": str(e)}
 
 
+# =============================================================================
+# Release/Version API Endpoints
+# =============================================================================
+
+class VersionInfo(BaseModel):
+    """Version information from Jira."""
+    id: str
+    name: str
+    released: bool
+    release_date: Optional[str]
+    description: Optional[str]
+    archived: bool
+
+
+class VersionsResponse(BaseModel):
+    """Response for versions list."""
+    versions: list[VersionInfo]
+    total: int
+
+
+class VersionProgress(BaseModel):
+    """Progress metrics for a version."""
+    version_name: str
+    total: int
+    done: int
+    in_progress: int
+    todo: int
+    done_percent: float
+    in_progress_percent: float
+
+
+class VersionIssue(BaseModel):
+    """Issue assigned to a version."""
+    key: str
+    summary: str
+    issue_type: str
+    status: str
+    assignee: Optional[str]
+    priority: Optional[str]
+
+
+class VersionIssuesResponse(BaseModel):
+    """Response for version issues."""
+    version_name: str
+    total: int
+    issues_by_type: dict[str, list[VersionIssue]]
+    issues: list[VersionIssue]
+
+
+@app.get("/api/releases/versions", response_model=VersionsResponse)
+async def get_versions(
+    released: Optional[bool] = None,
+    include_archived: bool = False,
+):
+    """Get all fix versions from Jira."""
+    try:
+        versions = app.state.jira.get_fix_versions(released=released)
+
+        # Filter archived if not requested
+        if not include_archived:
+            versions = [v for v in versions if not v.get("archived", False)]
+
+        version_infos = [
+            VersionInfo(
+                id=str(v.get("id", "")),
+                name=v.get("name", ""),
+                released=v.get("released", False),
+                release_date=v.get("release_date"),
+                description=v.get("description"),
+                archived=v.get("archived", False),
+            )
+            for v in versions
+        ]
+
+        return VersionsResponse(
+            versions=version_infos,
+            total=len(version_infos),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/releases/versions/{version_name}/progress", response_model=VersionProgress)
+async def get_version_progress_endpoint(version_name: str):
+    """Get progress metrics for a specific version."""
+    try:
+        progress = app.state.jira.get_version_progress(version_name)
+        if not progress:
+            raise HTTPException(status_code=404, detail=f"Version '{version_name}' not found or has no issues")
+
+        return VersionProgress(
+            version_name=version_name,
+            total=progress.get("total", 0),
+            done=progress.get("done", 0),
+            in_progress=progress.get("in_progress", 0),
+            todo=progress.get("todo", 0),
+            done_percent=progress.get("done_percent", 0.0),
+            in_progress_percent=progress.get("in_progress_percent", 0.0),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/releases/versions/{version_name}/issues", response_model=VersionIssuesResponse)
+async def get_version_issues(version_name: str):
+    """Get all issues for a specific version, grouped by type."""
+    try:
+        issues = app.state.jira.get_issues_by_fix_version(version_name)
+
+        result_issues = []
+        issues_by_type: dict[str, list[VersionIssue]] = {}
+
+        for issue in issues:
+            issue_type = issue.fields.issuetype.name
+            assignee = issue.fields.assignee.displayName if issue.fields.assignee else None
+            priority = issue.fields.priority.name if issue.fields.priority else None
+
+            issue_data = VersionIssue(
+                key=issue.key,
+                summary=issue.fields.summary,
+                issue_type=issue_type,
+                status=issue.fields.status.name,
+                assignee=assignee,
+                priority=priority,
+            )
+
+            result_issues.append(issue_data)
+
+            if issue_type not in issues_by_type:
+                issues_by_type[issue_type] = []
+            issues_by_type[issue_type].append(issue_data)
+
+        return VersionIssuesResponse(
+            version_name=version_name,
+            total=len(issues),
+            issues_by_type=issues_by_type,
+            issues=result_issues,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/scenarios")
 async def get_scenarios():
     """Get active scenarios and their status (cached for dashboard performance)."""

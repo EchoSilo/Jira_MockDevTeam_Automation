@@ -7,6 +7,11 @@ import api, {
   type SessionsResponse,
   type TokenStats,
   type SprintDataResponse,
+  type VersionsResponse,
+  type VersionProgress,
+  type VersionIssuesResponse,
+  type ReleaseNotesResponse,
+  type OutputFormat,
   ApiError,
 } from '@/lib/api';
 
@@ -238,4 +243,84 @@ export function useResetMutation() {
   }, []);
 
   return { reset, isLoading, error };
+}
+
+// =============================================================================
+// Release/Version Hooks
+// =============================================================================
+
+// Hook for versions list
+export function useVersions(
+  params?: { released?: boolean; includeArchived?: boolean },
+  options?: UseQueryOptions
+) {
+  return useQuery<VersionsResponse>(
+    () => api.releases.getVersions(params),
+    options
+  );
+}
+
+// Hook for version progress
+export function useVersionProgress(
+  versionName: string | null,
+  options?: UseQueryOptions
+) {
+  return useQuery<VersionProgress>(
+    () => api.releases.getVersionProgress(versionName!),
+    { ...options, enabled: !!versionName && (options?.enabled !== false) }
+  );
+}
+
+// Hook for version issues
+export function useVersionIssues(
+  versionName: string | null,
+  options?: UseQueryOptions
+) {
+  return useQuery<VersionIssuesResponse>(
+    () => api.releases.getVersionIssues(versionName!),
+    { ...options, enabled: !!versionName && (options?.enabled !== false) }
+  );
+}
+
+// Mutation hook for generating release notes
+export function useGenerateReleaseNotes() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const generate = useCallback(async (
+    versionName: string,
+    format: OutputFormat = 'md',
+    regenerate: boolean = false
+  ): Promise<ReleaseNotesResponse | null> => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await api.releases.generateNotes(versionName, format, regenerate);
+
+      // Handle file download for binary formats
+      if (result instanceof Blob) {
+        const url = window.URL.createObjectURL(result);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${versionName}_release_notes.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        return null;
+      }
+
+      return result;
+    } catch (err) {
+      const apiError = err instanceof ApiError
+        ? err
+        : new ApiError(err instanceof Error ? err.message : 'Unknown error', 0);
+      setError(apiError);
+      throw apiError;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return { generate, isLoading, error };
 }

@@ -227,6 +227,60 @@ export interface ChatResponse {
   tickets_mentioned: string[];
 }
 
+// Release/Version types
+export interface VersionInfo {
+  id: string;
+  name: string;
+  released: boolean;
+  release_date: string | null;
+  description: string | null;
+  archived: boolean;
+}
+
+export interface VersionsResponse {
+  versions: VersionInfo[];
+  total: number;
+}
+
+export interface VersionProgress {
+  version_name: string;
+  total: number;
+  done: number;
+  in_progress: number;
+  todo: number;
+  done_percent: number;
+  in_progress_percent: number;
+}
+
+export interface VersionIssue {
+  key: string;
+  summary: string;
+  issue_type: string;
+  status: string;
+  assignee: string | null;
+  priority: string | null;
+}
+
+export interface VersionIssuesResponse {
+  version_name: string;
+  total: number;
+  issues_by_type: Record<string, VersionIssue[]>;
+  issues: VersionIssue[];
+}
+
+export interface ReleaseNotesResponse {
+  version: string;
+  executive_notes: string;
+  technical_notes: string;
+  saved_path: string;
+  generated_at: string;
+  issue_count: number;
+  teams: string[];
+  from_cache: boolean;
+}
+
+export type OutputFormat = 'md' | 'txt' | 'docx' | 'pptx' | 'pdf';
+
 // API Error class
 export class ApiError extends Error {
   status: number;
@@ -345,6 +399,57 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(request),
     }),
+
+  // Release/Version endpoints
+  releases: {
+    // Get all versions
+    getVersions: (params?: { released?: boolean; includeArchived?: boolean }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.released !== undefined) searchParams.set('released', String(params.released));
+      if (params?.includeArchived) searchParams.set('include_archived', 'true');
+      const query = searchParams.toString();
+      return fetchApi<VersionsResponse>(`/api/releases/versions${query ? `?${query}` : ''}`);
+    },
+
+    // Get version progress
+    getVersionProgress: (versionName: string) =>
+      fetchApi<VersionProgress>(`/api/releases/versions/${encodeURIComponent(versionName)}/progress`),
+
+    // Get version issues
+    getVersionIssues: (versionName: string) =>
+      fetchApi<VersionIssuesResponse>(`/api/releases/versions/${encodeURIComponent(versionName)}/issues`),
+
+    // Generate release notes (returns JSON for md/txt, file download for others)
+    generateNotes: async (
+      versionName: string,
+      format: OutputFormat = 'md',
+      regenerate: boolean = false
+    ): Promise<ReleaseNotesResponse | Blob> => {
+      const url = `${API_BASE_URL}/api/releases/${encodeURIComponent(versionName)}/generate-notes`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ output_format: format, regenerate }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new ApiError(
+          errorData?.detail || `HTTP ${response.status}: ${response.statusText}`,
+          response.status,
+          errorData
+        );
+      }
+
+      // For binary formats, return blob
+      if (['docx', 'pptx', 'pdf'].includes(format)) {
+        return response.blob();
+      }
+
+      return response.json();
+    },
+  },
 };
 
 export default api;
