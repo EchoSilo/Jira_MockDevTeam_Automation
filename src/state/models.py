@@ -1,13 +1,19 @@
 """
 Enhanced state models for scenario-driven simulation.
 Tracks tickets as scenarios with lifecycle phases and target timelines.
+
+NOTE: The old per-ticket ActiveScenario model is deprecated.
+Sprint-level scenarios are now managed via SprintScenario in src/scenarios/.
 """
 
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 import uuid
+
+if TYPE_CHECKING:
+    from src.scenarios import SprintScenario
 
 
 class ScenarioType(str, Enum):
@@ -689,11 +695,42 @@ class SimulationState(BaseModel):
     # Release management state
     release_state: ReleaseState = Field(default_factory=ReleaseState)
 
+    # NEW: Sprint-level scenario (replaces per-ticket active_scenarios)
+    # Stored as dict for JSON serialization, converted to SprintScenario when accessed
+    sprint_scenario: Optional[dict[str, Any]] = None
+    completed_sprint_scenarios: list[str] = Field(default_factory=list)  # scenario_ids
+
     # History for LLM context and avoiding repetition
     recent_actions: list[RecentAction] = Field(default_factory=list)
     recent_narrative: str = ""  # LLM's last planning reasoning
 
-    # ========== Scenario Management ==========
+    # ========== Sprint Scenario Management (NEW) ==========
+
+    def get_sprint_scenario(self) -> Optional["SprintScenario"]:
+        """Get the current sprint scenario as a SprintScenario object."""
+        if self.sprint_scenario is None:
+            return None
+        # Import here to avoid circular dependency
+        from src.scenarios import SprintScenario
+        return SprintScenario.model_validate(self.sprint_scenario)
+
+    def set_sprint_scenario(self, scenario: "SprintScenario") -> None:
+        """Set the current sprint scenario."""
+        self.sprint_scenario = scenario.model_dump()
+
+    def clear_sprint_scenario(self) -> None:
+        """Clear the current sprint scenario (e.g., when sprint ends)."""
+        if self.sprint_scenario:
+            scenario_id = self.sprint_scenario.get("scenario_id")
+            if scenario_id:
+                self.completed_sprint_scenarios.append(scenario_id)
+        self.sprint_scenario = None
+
+    def has_active_sprint_scenario(self) -> bool:
+        """Check if there's an active sprint scenario."""
+        return self.sprint_scenario is not None
+
+    # ========== Legacy Scenario Management (DEPRECATED) ==========
 
     def add_scenario(self, scenario: ActiveScenario) -> None:
         """Add a new active scenario."""

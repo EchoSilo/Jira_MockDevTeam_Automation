@@ -1,0 +1,459 @@
+# Sprint Scenario Archetypes
+# These define the narrative patterns for sprint simulations
+
+archetypes:
+  smooth_sprint:
+    name: "Smooth Sprint"
+    description: "Normal flow with steady progress and on-time delivery"
+    target_completion_rate:
+      min: 0.80
+      max: 0.90
+    selection_weight: 30  # Base weight for random selection
+    selection_conditions:
+      # Conditions that increase likelihood of this archetype
+      - condition: "balanced_workload"  # Items <= capacity
+        weight_modifier: 20
+      - condition: "low_bug_ratio"  # Bugs < 20%
+        weight_modifier: 10
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: dev_pickup
+          coverage: 0.6  # 60% of items picked up
+      day_2:
+        - event: dev_progress
+          items_advancing: 2
+      day_3:
+        - event: push_to_review
+          count: 2
+        - event: dev_progress
+      day_4:
+        - event: review_complete
+          count: 2
+        - event: push_to_qa
+          count: 1
+      day_5:
+        - event: qa_approve
+          count: 1
+        - event: push_to_review
+          count: 2
+      day_6:
+        - event: review_complete
+          count: 2
+        - event: qa_approve
+          count: 2
+      day_7:
+        - event: qa_approve
+          count: 2
+        - event: sprint_complete
+    mood_progression:
+      - day: 1
+        mood: "energized"
+        comment_tone: "Kicking off the sprint with clear goals"
+      - day: 4
+        mood: "focused"
+        comment_tone: "Good momentum, staying on track"
+      - day: 7
+        mood: "satisfied"
+        comment_tone: "Solid sprint, delivered what we committed to"
+
+  overloaded_sprint:
+    name: "Overloaded Sprint"
+    description: "Too much work committed, leading to carryover and stress"
+    target_completion_rate:
+      min: 0.45
+      max: 0.60
+    selection_weight: 15
+    selection_conditions:
+      - condition: "items_exceed_capacity"  # Items > 1.3x capacity
+        weight_modifier: 40
+      - condition: "many_high_priority"  # > 50% high priority
+        weight_modifier: 15
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: dev_pickup
+          coverage: 0.8  # Devs take on too much
+      day_2:
+        - event: dev_progress
+        - event: context_switch
+          reason: "urgent_bug"
+      day_3:
+        - event: push_to_review
+          count: 1
+        - event: scope_creep
+          count: 1
+      day_4:
+        - event: dev_progress
+        - event: pm_pressure_comment
+      day_5:
+        - event: review_complete
+          count: 1
+        - event: push_to_qa
+          count: 1
+        - event: rush_comment
+      day_6:
+        - event: qa_approve
+          count: 1
+        - event: push_to_review
+          count: 2
+        - event: overtime_comment
+      day_7:
+        - event: carryover
+          percentage: 0.40  # 40% of items carry over
+        - event: sprint_complete
+    mood_progression:
+      - day: 1
+        mood: "ambitious"
+        comment_tone: "Packed sprint but we can do this"
+      - day: 4
+        mood: "stressed"
+        comment_tone: "We might need to cut scope"
+      - day: 7
+        mood: "exhausted"
+        comment_tone: "Carrying items over, need to reassess capacity"
+
+  blocker_heavy:
+    name: "Blocker-Heavy Sprint"
+    description: "Multiple blockers emerge causing delays and escalations"
+    target_completion_rate:
+      min: 0.55
+      max: 0.70
+    selection_weight: 15
+    selection_conditions:
+      - condition: "high_complexity_items"  # Many story points per item
+        weight_modifier: 25
+      - condition: "cross_team_dependencies"
+        weight_modifier: 30
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: dev_pickup
+          coverage: 0.6
+      day_2:
+        - event: dev_progress
+        - event: blocker
+          blocker_type: "technical"
+          severity: "medium"
+      day_3:
+        - event: escalation_comment
+        - event: blocker
+          blocker_type: "dependency"
+          severity: "high"
+      day_4:
+        - event: blocker_discussion
+        - event: workaround_attempted
+      day_5:
+        - event: blocker_resolved
+          count: 1
+        - event: push_to_review
+          count: 1
+      day_6:
+        - event: blocker_resolved
+          count: 1
+        - event: catch_up_progress
+      day_7:
+        - event: qa_approve
+          count: 2
+        - event: carryover
+          percentage: 0.30
+        - event: sprint_complete
+    mood_progression:
+      - day: 1
+        mood: "optimistic"
+        comment_tone: "Ready to tackle the sprint"
+      - day: 3
+        mood: "frustrated"
+        comment_tone: "Blocked on multiple fronts, need help"
+      - day: 5
+        mood: "relieved"
+        comment_tone: "Finally unblocked, pushing forward"
+      - day: 7
+        mood: "cautious"
+        comment_tone: "Got through it but we need to address root causes"
+
+  rework_sprint:
+    name: "Rework Sprint"
+    description: "QA finds significant issues, requiring bug fixes and re-testing"
+    target_completion_rate:
+      min: 0.60
+      max: 0.75
+    selection_weight: 15
+    selection_conditions:
+      - condition: "high_bug_ratio"  # Bugs > 30%
+        weight_modifier: 35
+      - condition: "new_feature_area"  # New epic/feature work
+        weight_modifier: 20
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: dev_pickup
+          coverage: 0.6
+      day_2:
+        - event: dev_progress
+        - event: push_to_review
+          count: 2
+      day_3:
+        - event: review_complete
+          count: 2
+        - event: push_to_qa
+          count: 2
+      day_4:
+        - event: qa_rejection
+          count: 2
+          rejection_reasons:
+            - "edge case not handled"
+            - "acceptance criteria not met"
+      day_5:
+        - event: rework_in_progress
+        - event: dev_frustration_comment
+      day_6:
+        - event: rework_complete
+          count: 2
+        - event: push_to_qa
+          count: 2
+      day_7:
+        - event: qa_approve
+          count: 2
+        - event: sprint_complete
+    mood_progression:
+      - day: 1
+        mood: "confident"
+        comment_tone: "Sprint goals are clear"
+      - day: 4
+        mood: "deflated"
+        comment_tone: "More issues than expected, back to the drawing board"
+      - day: 6
+        mood: "determined"
+        comment_tone: "Fixed the issues, ready for re-test"
+      - day: 7
+        mood: "relieved"
+        comment_tone: "Passed QA, lessons learned for next time"
+
+  crunch_sprint:
+    name: "Crunch Sprint"
+    description: "Pre-release pressure with long hours and rushed work"
+    target_completion_rate:
+      min: 0.85
+      max: 0.95
+    selection_weight: 10
+    selection_conditions:
+      - condition: "pre_release_sprint"  # Sprint before a release
+        weight_modifier: 50
+      - condition: "deadline_pressure"  # External deadline
+        weight_modifier: 30
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: dev_pickup
+          coverage: 0.9  # Everything gets picked up
+        - event: urgency_comment
+      day_2:
+        - event: dev_progress
+          accelerated: true
+        - event: push_to_review
+          count: 3
+      day_3:
+        - event: review_complete
+          count: 3
+          rushed: true
+        - event: push_to_qa
+          count: 3
+      day_4:
+        - event: qa_approve
+          count: 2
+        - event: overtime_comment
+        - event: push_to_review
+          count: 2
+      day_5:
+        - event: review_complete
+          count: 2
+        - event: qa_approve
+          count: 2
+        - event: release_prep_comment
+      day_6:
+        - event: qa_approve
+          count: 2
+        - event: final_push_comment
+      day_7:
+        - event: qa_approve
+          count: 2
+        - event: release_ready
+        - event: sprint_complete
+    mood_progression:
+      - day: 1
+        mood: "intense"
+        comment_tone: "Release deadline approaching, all hands on deck"
+      - day: 4
+        mood: "exhausted_but_pushing"
+        comment_tone: "Long hours but we're making progress"
+      - day: 7
+        mood: "accomplished"
+        comment_tone: "Made it! Ready for release"
+
+  recovery_sprint:
+    name: "Recovery Sprint"
+    description: "After a rough sprint, focus on cleanup and sustainable pace"
+    target_completion_rate:
+      min: 0.70
+      max: 0.80
+    selection_weight: 15
+    selection_conditions:
+      - condition: "previous_sprint_low_completion"  # < 60% last sprint
+        weight_modifier: 45
+      - condition: "high_carryover"  # Many items carried from last sprint
+        weight_modifier: 25
+    script_template:
+      day_1:
+        - event: sprint_planning
+        - event: retro_comment
+          tone: "lessons learned"
+        - event: dev_pickup
+          coverage: 0.5  # Conservative commitment
+      day_2:
+        - event: dev_progress
+          pace: "sustainable"
+        - event: tech_debt_work
+      day_3:
+        - event: push_to_review
+          count: 1
+        - event: process_improvement_comment
+      day_4:
+        - event: review_complete
+          count: 1
+          thorough: true
+        - event: push_to_qa
+          count: 1
+      day_5:
+        - event: qa_approve
+          count: 1
+        - event: dev_progress
+      day_6:
+        - event: push_to_review
+          count: 2
+        - event: review_complete
+          count: 1
+      day_7:
+        - event: qa_approve
+          count: 2
+        - event: sprint_complete
+        - event: team_health_improved_comment
+    mood_progression:
+      - day: 1
+        mood: "reflective"
+        comment_tone: "Taking lessons from last sprint"
+      - day: 4
+        mood: "steady"
+        comment_tone: "Sustainable pace is working"
+      - day: 7
+        mood: "healthy"
+        comment_tone: "Good sprint, team is in a better place"
+
+# Event definitions
+events:
+  sprint_planning:
+    action_type: "sprint_planning"
+    agent_types: ["pm"]
+    description: "PM plans the sprint with the team"
+
+  dev_pickup:
+    action_type: "pick_up_task"
+    agent_types: ["developer", "tech_lead"]
+    description: "Developer picks up a task from the sprint backlog"
+
+  dev_progress:
+    action_type: "log_work"
+    agent_types: ["developer", "tech_lead"]
+    description: "Developer makes progress on assigned work"
+
+  push_to_review:
+    action_type: "progress_to_review"
+    agent_types: ["developer"]
+    description: "Developer pushes work to code review"
+
+  review_complete:
+    action_type: "complete_review"
+    agent_types: ["tech_lead"]
+    description: "Tech lead completes code review"
+
+  push_to_qa:
+    action_type: "progress_to_qa"
+    agent_types: ["developer", "tech_lead"]
+    description: "Work moves to QA for testing"
+
+  qa_approve:
+    action_type: "qa_approve"
+    agent_types: ["qa"]
+    description: "QA approves the work"
+
+  qa_rejection:
+    action_type: "qa_reject"
+    agent_types: ["qa"]
+    description: "QA rejects the work with feedback"
+
+  blocker:
+    action_type: "inject_blocker"
+    agent_types: ["developer", "tech_lead"]
+    description: "A blocker is discovered"
+
+  blocker_resolved:
+    action_type: "resolve_blocker"
+    agent_types: ["developer", "tech_lead"]
+    description: "A blocker is resolved"
+
+  scope_creep:
+    action_type: "add_to_sprint"
+    agent_types: ["pm"]
+    description: "PM adds unplanned work to the sprint"
+
+  carryover:
+    action_type: "carryover_items"
+    agent_types: ["pm"]
+    description: "Incomplete items are carried to next sprint"
+
+  sprint_complete:
+    action_type: "complete_sprint"
+    agent_types: ["pm"]
+    description: "Sprint is closed"
+
+  rework_in_progress:
+    action_type: "rework"
+    agent_types: ["developer"]
+    description: "Developer fixes rejected work"
+
+  rework_complete:
+    action_type: "rework_complete"
+    agent_types: ["developer"]
+    description: "Developer completes rework"
+
+# Comment templates for mood-based messaging
+comment_templates:
+  energized:
+    - "Excited to kick off Sprint {sprint_number}!"
+    - "Clear goals this sprint, let's do this."
+    - "Fresh start, feeling good about this sprint."
+
+  stressed:
+    - "We might need to re-prioritize some items."
+    - "Lot on our plate this sprint, staying focused."
+    - "Pushing hard but we may need to cut scope."
+
+  frustrated:
+    - "Blocked on {blocker_reason}, need to escalate."
+    - "Waiting on dependencies, this is slowing us down."
+    - "Running into more issues than expected."
+
+  relieved:
+    - "Finally got past that blocker!"
+    - "Back on track after the delay."
+    - "Good progress now that we're unblocked."
+
+  exhausted:
+    - "Long week, but we're getting there."
+    - "Need to be more realistic next sprint."
+    - "Carrying over some items, will reassess capacity."
+
+  accomplished:
+    - "Great sprint! Delivered everything we committed to."
+    - "Strong finish to the sprint."
+    - "Team really came together this sprint."

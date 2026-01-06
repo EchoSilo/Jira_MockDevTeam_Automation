@@ -40,6 +40,7 @@ import {
   countOverloadedAgents,
   getActivityContext,
   filterScenariosByTeam,
+  getSprintScenarioFromResponse,
 } from '@/lib/transformers';
 import { cn } from '@/lib/utils';
 
@@ -194,6 +195,9 @@ export function DashboardPage() {
   const scenarioDistribution = filteredScenarios
     ? transformScenarioDistribution(filteredScenarios)
     : { normalFlow: 0, blocker: 0, rework: 0, scopeCreep: 0, dependency: 0 };
+
+  // Get sprint scenario if available (new sprint-level narrative)
+  const sprintScenario = getSprintScenarioFromResponse(scenarios);
 
   const filteredAgents = state && agents
     ? transformAgents(agents, state, selectedTeam)
@@ -363,7 +367,7 @@ export function DashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Column 1: Active Scenarios + Scenario Distribution */}
               <div className="space-y-6">
-                <ActiveScenariosCard data={scenarioDistribution} />
+                <ActiveScenariosCard data={scenarioDistribution} sprintScenario={sprintScenario} />
                 <ScenarioDistributionChart data={scenarioDistribution} />
               </div>
 

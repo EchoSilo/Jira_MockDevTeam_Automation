@@ -39,7 +39,7 @@ export interface StatusBreakdown {
   done: number;
 }
 
-// Scenario types
+// Legacy scenario types (deprecated)
 export type ScenarioType = 'normal_flow' | 'blocker' | 'rework' | 'scope_creep' | 'dependency';
 
 export interface ScenarioDistribution {
@@ -48,6 +48,45 @@ export interface ScenarioDistribution {
   rework: number;
   scopeCreep: number;
   dependency: number;
+}
+
+// Sprint Scenario types (NEW)
+export type ScenarioArchetype =
+  | 'smooth_sprint'
+  | 'overloaded_sprint'
+  | 'blocker_heavy'
+  | 'rework_sprint'
+  | 'crunch_sprint'
+  | 'recovery_sprint';
+
+export interface SprintScenarioEvent {
+  event_id: string;
+  event_type: string;
+  ticket_key: string | null;
+  executed: boolean;
+}
+
+export interface SprintScenario {
+  scenario_id: string;
+  sprint_id: number;
+  sprint_name: string;
+  archetype: ScenarioArchetype;
+  archetype_name: string;
+  current_day: number;
+  total_days: number;
+  current_mood: string | null;
+  target_completion_rate: number;
+  actual_completion_rate: number;
+  is_on_track: boolean;
+  total_items: number;
+  items_completed: number;
+  items_carried_over: number;
+  total_events: number;
+  events_executed: number;
+  events_remaining: number;
+  release_context: string | null;
+  started_at: string | null;
+  today_events: SprintScenarioEvent[];
 }
 
 // Activity types

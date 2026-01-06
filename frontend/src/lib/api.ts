@@ -121,7 +121,46 @@ export interface AgentsResponse {
   schedule: ScheduleInfo;
 }
 
+// Sprint Scenario Event (from sprint scenario script)
+export interface SprintScenarioEventAPI {
+  event_id: string;
+  event_type: string;
+  ticket_key: string | null;
+  executed: boolean;
+}
+
+// Sprint Scenario (new sprint-level narrative)
+export interface SprintScenarioAPI {
+  scenario_id: string;
+  sprint_id: number;
+  sprint_name: string;
+  archetype: string;
+  archetype_name: string;
+  current_day: number;
+  total_days: number;
+  current_mood: string | null;
+  target_completion_rate: number;
+  actual_completion_rate: number;
+  is_on_track: boolean;
+  total_items: number;
+  items_completed: number;
+  items_carried_over: number;
+  total_events: number;
+  events_executed: number;
+  events_remaining: number;
+  release_context: string | null;
+  started_at: string | null;
+  today_events: SprintScenarioEventAPI[];
+}
+
 export interface ScenariosResponse {
+  // Response type indicator
+  type?: 'sprint_scenario' | 'legacy_scenarios';
+
+  // Sprint scenario (new format)
+  sprint_scenario?: SprintScenarioAPI;
+
+  // Legacy fields (for backwards compatibility)
   active_count: number;
   scenarios: Array<{
     id: string;

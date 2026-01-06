@@ -3,6 +3,8 @@ Scenario Planner - LLM-driven scenario planning.
 
 Uses Claude (Sonnet) to decide which scenarios to advance or inject
 based on the current board state and detected opportunities.
+
+Now also supports sprint-level scenarios via ScriptExecutor.
 """
 
 import json
@@ -13,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 
 from ..services.llm_service import LLMService
 from ..state import SimulationState, ScenarioType, PlannedAction, ReleaseDirective
+from ..scenarios import ScriptExecutor, SprintScenario
 
 logger = logging.getLogger(__name__)
 
@@ -988,6 +991,54 @@ Remember:
         logger.info(f"Fallback plan: {len(actions)} actions ({min_advancements} forced advancements)")
         return actions
 
+    def _get_sprint_scenario_actions(
+        self,
+        state: SimulationState,
+        max_actions: int = 5,
+    ) -> list[dict]:
+        """
+        Get actions from the current sprint scenario script.
+
+        Uses the new sprint-level scenario system instead of per-ticket scenarios.
+        The ScriptExecutor converts script events into orchestrator actions.
+
+        Args:
+            state: Current simulation state
+            max_actions: Maximum actions to return
+
+        Returns:
+            List of action dicts from the sprint scenario
+        """
+        sprint_scenario = state.get_sprint_scenario()
+        if not sprint_scenario:
+            logger.debug("No active sprint scenario")
+            return []
+
+        # Build agent list for the executor
+        agents = []
+        for agent_id, agent_config in self.personas.get("agents", {}).items():
+            agents.append({
+                "id": agent_id,
+                "type": agent_config.get("role", "developer"),
+                "team": agent_config.get("team", "alpha"),
+                "name": agent_config.get("display_name", agent_id),
+            })
+
+        # Create executor and get actions
+        executor = ScriptExecutor(agents)
+        actions = executor.get_actions_for_tick(sprint_scenario, max_actions)
+
+        if actions:
+            logger.info(
+                f"Sprint scenario '{sprint_scenario.archetype.value}' "
+                f"day {sprint_scenario.current_day}: {len(actions)} scripted actions"
+            )
+
+        # Update the scenario in state (to persist event execution tracking)
+        state.set_sprint_scenario(sprint_scenario)
+
+        return actions
+
     def _get_script_based_actions(
         self,
         state: SimulationState,
@@ -995,13 +1046,17 @@ Remember:
         """
         Get actions from scenario scripts that are ready to execute.
 
-        Checks each active scenario for:
-        1. Is phase ready to advance (time-based)?
-        2. Is there a next script action?
-        3. Is an agent available for this action?
+        First checks for sprint-level scenario actions, then falls back
+        to per-ticket scenario scripts (deprecated).
 
         Returns list of action dicts ready for execution.
         """
+        # NEW: First try sprint-level scenario
+        sprint_actions = self._get_sprint_scenario_actions(state)
+        if sprint_actions:
+            return sprint_actions
+
+        # LEGACY: Fall back to per-ticket scenarios (deprecated)
         actions = []
         used_agents = set()
 

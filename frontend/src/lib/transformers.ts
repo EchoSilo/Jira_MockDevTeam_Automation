@@ -8,6 +8,7 @@ import type {
   ScenariosResponse,
   AgentInfo,
   ScheduleInfo,
+  SprintScenarioAPI,
 } from './api';
 import type {
   Sprint,
@@ -17,6 +18,7 @@ import type {
   Activity,
   DashboardSnapshot,
   Team,
+  SprintScenario,
 } from '@/types';
 
 // Map backend agent roles/names
@@ -141,6 +143,59 @@ export function transformScenarioDistribution(
   };
 }
 
+/**
+ * Transform sprint scenario from API response to frontend type
+ */
+export function transformSprintScenario(
+  apiScenario: SprintScenarioAPI | undefined
+): SprintScenario | null {
+  if (!apiScenario) return null;
+
+  return {
+    scenario_id: apiScenario.scenario_id,
+    sprint_id: apiScenario.sprint_id,
+    sprint_name: apiScenario.sprint_name,
+    archetype: apiScenario.archetype as SprintScenario['archetype'],
+    archetype_name: apiScenario.archetype_name,
+    current_day: apiScenario.current_day,
+    total_days: apiScenario.total_days,
+    current_mood: apiScenario.current_mood,
+    target_completion_rate: apiScenario.target_completion_rate,
+    actual_completion_rate: apiScenario.actual_completion_rate,
+    is_on_track: apiScenario.is_on_track,
+    total_items: apiScenario.total_items,
+    items_completed: apiScenario.items_completed,
+    items_carried_over: apiScenario.items_carried_over,
+    total_events: apiScenario.total_events,
+    events_executed: apiScenario.events_executed,
+    events_remaining: apiScenario.events_remaining,
+    release_context: apiScenario.release_context,
+    started_at: apiScenario.started_at,
+    today_events: apiScenario.today_events.map((event) => ({
+      event_id: event.event_id,
+      event_type: event.event_type,
+      ticket_key: event.ticket_key,
+      executed: event.executed,
+    })),
+  };
+}
+
+/**
+ * Extract sprint scenario from scenarios response if available
+ */
+export function getSprintScenarioFromResponse(
+  scenarios: ScenariosResponse | null
+): SprintScenario | null {
+  if (!scenarios) return null;
+
+  // Check if response contains a sprint scenario
+  if (scenarios.type === 'sprint_scenario' && scenarios.sprint_scenario) {
+    return transformSprintScenario(scenarios.sprint_scenario);
+  }
+
+  return null;
+}
+
 export function transformRecentActions(state: SimulationState): Activity[] {
   return state.recent_actions.slice(-20).reverse().map((action, idx) => ({
     id: `${action.timestamp}-${idx}`,
@@ -181,6 +236,8 @@ export function createDashboardSnapshot(
 
 // Calculate blockers count
 export function countBlockers(scenarios: ScenariosResponse): number {
+  // Handle sprint scenario format (no legacy scenarios array)
+  if (!scenarios.scenarios) return 0;
   return scenarios.scenarios.filter((s) => s.is_blocked).length;
 }
 
@@ -220,6 +277,11 @@ export function filterScenariosByTeam(
   team: Team
 ): ScenariosResponse {
   if (team === 'all') return scenarios;
+
+  // Handle sprint scenario format (no legacy scenarios array)
+  if (!scenarios.scenarios) {
+    return scenarios;
+  }
 
   const teamAgentIds = new Set(
     agents.agents.filter((a) => a.team === team).map((a) => a.id)

@@ -5,14 +5,20 @@ Manages:
 1. PM plans sprint by allocating items to active sprint
 2. PM creates future sprints when needed
 3. PM adjusts sprint contents as needed
+4. Generates sprint scenarios for simulation guidance
 """
 
+import logging
 from datetime import date, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from crewai import Task
 
+from src.scenarios import ScenarioPlanner, SprintScenario
+from src.state.models import SimulationState
 from .base_crew import BaseCrew
+
+logger = logging.getLogger(__name__)
 
 
 class SprintPlanningCrew(BaseCrew):
@@ -354,3 +360,161 @@ class SprintPlanningCrew(BaseCrew):
             "sprint_name": sprint_name,
             "result": result,
         }
+
+    # ========== Sprint Scenario Generation ==========
+
+    def generate_sprint_scenario(
+        self,
+        sprint_id: int,
+        sprint_name: str,
+        sprint_items: list[dict[str, Any]],
+        state: SimulationState,
+        release_context: Optional[str] = None,
+    ) -> SprintScenario:
+        """
+        Generate a sprint scenario for the upcoming sprint.
+
+        This creates a narrative arc that will guide the simulation,
+        determining what events happen on which days.
+
+        Args:
+            sprint_id: The sprint ID/number
+            sprint_name: The sprint name
+            sprint_items: List of tickets in the sprint
+            state: Current simulation state (for previous sprint context)
+            release_context: Optional release info (e.g., "Sprint before v1.2.0")
+
+        Returns:
+            SprintScenario with day-by-day script
+        """
+        planner = ScenarioPlanner()
+
+        # Calculate team capacity (developers * points per sprint)
+        developers = self._get_available_developers()
+        points_per_dev = 10  # Assume ~10 points per dev per sprint
+        team_capacity = len(developers) * points_per_dev
+
+        # Get previous sprint completion rate from state
+        previous_completion = None
+        if state.completed_sprint_scenarios:
+            # Could look up previous scenario completion rate here
+            pass
+
+        # Generate the scenario
+        scenario = planner.plan_scenario(
+            sprint_id=sprint_id,
+            sprint_name=sprint_name,
+            sprint_items=sprint_items,
+            team_capacity=team_capacity,
+            release_context=release_context,
+            previous_sprint_completion=previous_completion,
+            sprint_duration_days=7,
+        )
+
+        logger.info(
+            f"Generated sprint scenario: {scenario.archetype.value} "
+            f"for {sprint_name} with {len(sprint_items)} items, "
+            f"target completion: {scenario.target_completion_rate:.0%}"
+        )
+
+        return scenario
+
+    def plan_sprint_with_scenario(
+        self,
+        pm_id: str,
+        team: str,
+        active_sprint: dict,
+        unassigned_items: list[dict],
+        state: SimulationState,
+        release_context: Optional[str] = None,
+    ) -> dict:
+        """
+        Plan sprint AND generate scenario in one operation.
+
+        This is the main entry point for sprint planning that also
+        sets up the sprint scenario for simulation guidance.
+
+        Args:
+            pm_id: The PM agent ID
+            team: Team name (alpha/beta)
+            active_sprint: Active sprint info dict
+            unassigned_items: List of items not in any sprint
+            state: Current simulation state
+            release_context: Optional release info
+
+        Returns:
+            Result dict including both planning result and scenario info
+        """
+        # First, do the regular sprint planning
+        planning_result = self.plan_current_sprint(
+            pm_id=pm_id,
+            team=team,
+            active_sprint=active_sprint,
+            unassigned_items=unassigned_items,
+        )
+
+        # Get items now in the sprint (including newly added)
+        sprint_id = active_sprint.get("id")
+        sprint_name = active_sprint.get("name", "Current Sprint")
+
+        # Fetch current sprint items from Jira
+        sprint_items = self.jira_tools.jira.get_sprint_issues(sprint_id) or []
+
+        # Convert to the format expected by scenario planner
+        # Note: get_sprint_issues returns Jira Issue objects, not dicts
+        items_for_scenario = []
+        for item in sprint_items:
+            # Handle Jira Issue objects (have .key attribute)
+            if hasattr(item, 'key'):
+                items_for_scenario.append({
+                    "key": item.key,
+                    "type": getattr(item.fields.issuetype, 'name', 'Story') if hasattr(item.fields, 'issuetype') else 'Story',
+                    "priority": getattr(item.fields.priority, 'name', 'Medium') if hasattr(item.fields, 'priority') and item.fields.priority else 'Medium',
+                    "story_points": getattr(item.fields, 'customfield_10016', 0) or 0,
+                    "summary": getattr(item.fields, 'summary', ''),
+                    "assignee": getattr(item.fields.assignee, 'accountId', None) if hasattr(item.fields, 'assignee') and item.fields.assignee else None,
+                })
+            else:
+                # Handle dict format
+                items_for_scenario.append({
+                    "key": item.get("key"),
+                    "type": item.get("fields", {}).get("issuetype", {}).get("name", "Story"),
+                    "priority": item.get("fields", {}).get("priority", {}).get("name", "Medium"),
+                    "story_points": item.get("fields", {}).get("customfield_10016", 0),
+                    "summary": item.get("fields", {}).get("summary", ""),
+                    "assignee": item.get("fields", {}).get("assignee", {}).get("accountId") if item.get("fields", {}).get("assignee") else None,
+                })
+
+        # Generate scenario if we have items
+        scenario = None
+        if items_for_scenario:
+            try:
+                # Extract sprint number from name
+                try:
+                    sprint_number = int(sprint_name.split()[-1])
+                except (ValueError, IndexError):
+                    sprint_number = sprint_id
+
+                scenario = self.generate_sprint_scenario(
+                    sprint_id=sprint_number,
+                    sprint_name=sprint_name,
+                    sprint_items=items_for_scenario,
+                    state=state,
+                    release_context=release_context,
+                )
+
+                # Store scenario in state
+                state.set_sprint_scenario(scenario)
+                scenario.start()  # Mark as started
+
+                planning_result["scenario_generated"] = True
+                planning_result["scenario_id"] = scenario.scenario_id
+                planning_result["scenario_archetype"] = scenario.archetype.value
+                planning_result["scenario_target_completion"] = scenario.target_completion_rate
+
+            except Exception as e:
+                logger.error(f"Failed to generate sprint scenario: {e}")
+                planning_result["scenario_generated"] = False
+                planning_result["scenario_error"] = str(e)
+
+        return planning_result

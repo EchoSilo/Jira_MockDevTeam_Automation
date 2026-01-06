@@ -719,11 +719,67 @@ async def get_version_issues(version_name: str):
 
 @app.get("/scenarios")
 async def get_scenarios():
-    """Get active scenarios and their status (cached for dashboard performance)."""
-    state = _state_cache.get()
-    scenarios = []
+    """Get active scenarios and their status (cached for dashboard performance).
 
-    # Compute distribution from active scenarios (not stored totals)
+    Returns sprint-level scenario if available, with legacy per-ticket scenarios
+    as fallback for backwards compatibility.
+    """
+    state = _state_cache.get()
+
+    # NEW: Check for sprint-level scenario
+    sprint_scenario = state.get_sprint_scenario()
+    if sprint_scenario:
+        # Return sprint scenario summary
+        progress = sprint_scenario.get_progress_summary()
+
+        # Get upcoming events for today
+        today_events = []
+        for event in sprint_scenario.get_pending_events_for_today():
+            today_events.append({
+                "event_id": event.event_id,
+                "event_type": event.event_type.value,
+                "ticket_key": event.ticket_key,
+                "executed": event.executed,
+            })
+
+        return {
+            "type": "sprint_scenario",
+            "sprint_scenario": {
+                "scenario_id": progress["scenario_id"],
+                "sprint_id": progress["sprint_id"],
+                "sprint_name": progress["sprint_name"],
+                "archetype": progress["archetype"],
+                "archetype_name": progress["archetype_name"],
+                "current_day": progress["current_day"],
+                "total_days": progress["total_days"],
+                "current_mood": progress["current_mood"],
+                "target_completion_rate": progress["target_completion_rate"],
+                "actual_completion_rate": progress["actual_completion_rate"],
+                "is_on_track": progress["is_on_track"],
+                "total_items": progress["total_items"],
+                "items_completed": progress["items_completed"],
+                "items_carried_over": progress["items_carried_over"],
+                "total_events": progress["total_events"],
+                "events_executed": progress["events_executed"],
+                "events_remaining": progress["events_remaining"],
+                "release_context": progress["release_context"],
+                "started_at": progress["started_at"],
+                "today_events": today_events,
+            },
+            # Legacy format for backwards compatibility
+            "active_count": len(sprint_scenario.sprint_items),
+            "scenarios": [],  # Empty for sprint scenario format
+            "distribution": {
+                "normal_flow": progress["total_items"],
+                "blocker": 0,
+                "rework": 0,
+                "scope_creep": 0,
+                "dependency": 0,
+            },
+        }
+
+    # LEGACY: Fall back to per-ticket scenarios
+    scenarios = []
     active_distribution = {
         "normal_flow": 0,
         "blocker": 0,
@@ -733,9 +789,7 @@ async def get_scenarios():
     }
 
     for scenario_id, scenario in state.active_scenarios.items():
-        # Compute is_blocked from phase
         is_blocked = scenario.current_phase.value in ["blocked", "blocker_discussed", "waiting_on_dependency"]
-        # Compute is_rejected from phase
         is_rejected = scenario.current_phase.value in ["rejected", "fixing", "re_review", "re_testing"]
 
         scenarios.append({
@@ -754,15 +808,48 @@ async def get_scenarios():
             "target_end": scenario.target_completion.isoformat() if scenario.target_completion else None,
         })
 
-        # Count by scenario type for active distribution
         scenario_type = scenario.scenario_type.value
         if scenario_type in active_distribution:
             active_distribution[scenario_type] += 1
 
     return {
+        "type": "legacy_scenarios",
         "active_count": len(scenarios),
         "scenarios": scenarios,
         "distribution": active_distribution,
+    }
+
+
+@app.get("/scenario/current")
+async def get_current_scenario():
+    """Get the current sprint scenario details."""
+    state = _state_cache.get()
+    sprint_scenario = state.get_sprint_scenario()
+
+    if not sprint_scenario:
+        return {"has_scenario": False, "message": "No active sprint scenario"}
+
+    progress = sprint_scenario.get_progress_summary()
+
+    # Build script overview
+    script_overview = []
+    for day in sprint_scenario.script:
+        day_info = {
+            "day": day.day,
+            "mood": day.mood.value if day.mood else None,
+            "total_events": len(day.events),
+            "executed_events": len(day.get_executed_events()),
+            "pending_events": len(day.get_pending_events()),
+        }
+        script_overview.append(day_info)
+
+    return {
+        "has_scenario": True,
+        "scenario": progress,
+        "script_overview": script_overview,
+        "sprint_items": sprint_scenario.sprint_items,
+        "items_completed": sprint_scenario.items_completed,
+        "items_carried_over": sprint_scenario.items_carried_over,
     }
 
 
@@ -839,13 +926,19 @@ async def force_sprint_planning():
         pm_id = "alpha_pm"
         team = "alpha"
 
-        # Execute sprint planning
-        result = orchestrator.sprint_planning_crew.plan_current_sprint(
+        # Execute sprint planning with scenario generation
+        result = orchestrator.sprint_planning_crew.plan_sprint_with_scenario(
             pm_id=pm_id,
             team=team,
             active_sprint=active_sprint,
             unassigned_items=unassigned_items[:15],  # Limit to 15 items
+            state=state,
+            release_context=None,  # Could be enhanced to detect release context
         )
+
+        # Save state with new scenario
+        save_state(state)
+        _state_cache.update(state)
 
         # End session
         app.state.log_writer.end_session(
@@ -853,11 +946,22 @@ async def force_sprint_planning():
             actions_completed=1,
         )
 
+        # Check if scenario was generated
+        scenario_info = None
+        if state.sprint_scenario:
+            scenario_info = {
+                "scenario_id": state.sprint_scenario.get("scenario_id"),
+                "archetype": state.sprint_scenario.get("archetype"),
+                "archetype_name": state.sprint_scenario.get("archetype_name"),
+                "total_events": state.sprint_scenario.get("total_events", 0),
+            }
+
         return {
             "success": True,
             "sprint": active_sprint.get("name"),
             "unassigned_items_available": len(unassigned_items),
             "result": result,
+            "sprint_scenario": scenario_info,
         }
 
     except Exception as e:
