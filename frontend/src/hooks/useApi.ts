@@ -11,6 +11,7 @@ import api, {
   type VersionProgress,
   type VersionIssuesResponse,
   type ReleaseNotesResponse,
+  type ReleaseNotesHistoryItem,
   type OutputFormat,
   ApiError,
 } from '@/lib/api';
@@ -25,6 +26,7 @@ interface UseQueryResult<T> {
 interface UseQueryOptions {
   enabled?: boolean;
   refetchInterval?: number; // in milliseconds
+  key?: string | number | null; // Force refetch when this changes
   onSuccess?: (data: unknown) => void;
   onError?: (error: ApiError) => void;
 }
@@ -34,7 +36,7 @@ function useQuery<T>(
   queryFn: () => Promise<T>,
   options: UseQueryOptions = {}
 ): UseQueryResult<T> {
-  const { enabled = true, refetchInterval, onSuccess, onError } = options;
+  const { enabled = true, refetchInterval, key, onSuccess, onError } = options;
   const [data, setData] = useState<T | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -76,7 +78,7 @@ function useQuery<T>(
         setIsLoading(false);
       }
     }
-  }, [enabled]);
+  }, [enabled, key]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -267,7 +269,11 @@ export function useVersionProgress(
 ) {
   return useQuery<VersionProgress>(
     () => api.releases.getVersionProgress(versionName!),
-    { ...options, enabled: !!versionName && (options?.enabled !== false) }
+    {
+      ...options,
+      enabled: !!versionName && (options?.enabled !== false),
+      key: versionName, // Force refetch when version changes
+    }
   );
 }
 
@@ -278,7 +284,11 @@ export function useVersionIssues(
 ) {
   return useQuery<VersionIssuesResponse>(
     () => api.releases.getVersionIssues(versionName!),
-    { ...options, enabled: !!versionName && (options?.enabled !== false) }
+    {
+      ...options,
+      enabled: !!versionName && (options?.enabled !== false),
+      key: versionName, // Force refetch when version changes
+    }
   );
 }
 
@@ -323,4 +333,39 @@ export function useGenerateReleaseNotes() {
   }, []);
 
   return { generate, isLoading, error };
+}
+
+// Hook for release notes history
+export function useReleaseNotesHistory(options?: UseQueryOptions) {
+  return useQuery<ReleaseNotesHistoryItem[]>(
+    () => api.releases.getHistory(),
+    options
+  );
+}
+
+// Mutation hook for downloading release notes
+export function useDownloadReleaseNotes() {
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const download = useCallback(async (
+    versionName: string,
+    format: OutputFormat
+  ): Promise<void> => {
+    setIsDownloading(true);
+    setError(null);
+    try {
+      await api.releases.downloadNotes(versionName, format);
+    } catch (err) {
+      const apiError = err instanceof ApiError
+        ? err
+        : new ApiError(err instanceof Error ? err.message : 'Download failed', 0);
+      setError(apiError);
+      throw apiError;
+    } finally {
+      setIsDownloading(false);
+    }
+  }, []);
+
+  return { download, isDownloading, error };
 }

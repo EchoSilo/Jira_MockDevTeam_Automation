@@ -350,6 +350,83 @@ Write the technical release notes in Markdown format. Just the notes, no preambl
                     lines.append(f"- [{issue['key']}] {issue['summary']}")
         return "\n".join(lines) if lines else "No team contributions recorded."
 
+    def generate_release_tags(
+        self,
+        version_name: str,
+        issues_by_category: dict[str, list[dict]],
+        executive_notes: str,
+    ) -> list[str]:
+        """
+        Generate 3-5 descriptive tags for a release based on its content.
+
+        Tags are high-level themes like:
+        - "Security", "Performance", "UX", "API", "Bug Fixes"
+        - "Breaking Changes", "New Features", "Infrastructure"
+        - Domain-specific: "Equipment", "Workouts", "Analytics"
+
+        Args:
+            version_name: The version name (e.g., "v1.2.0")
+            issues_by_category: Issues grouped by category
+            executive_notes: The executive summary for additional context
+
+        Returns:
+            List of 3-5 tag strings
+        """
+        import json as json_module
+
+        categories_text = self._format_categories_for_prompt(issues_by_category)
+
+        prompt = f"""Analyze this software release and generate 3-5 descriptive tags.
+
+Version: {version_name}
+
+Issues by category:
+{categories_text}
+
+Executive summary:
+{executive_notes[:1500]}
+
+Generate tags that:
+- Describe the major themes/areas of this release
+- Are 1-2 words each (e.g., "Performance", "New Features", "Bug Fixes")
+- Are useful for filtering/searching releases later
+- Include both technical categories (API, Performance, Security) and functional areas
+- Reflect what's actually in the release, not generic placeholders
+
+Common tag examples: "Performance", "Security", "New Features", "Bug Fixes", "UX Improvements", "API Changes", "Infrastructure", "Documentation", "Mobile", "Integrations", "Analytics", "User Management"
+
+Respond with ONLY a JSON array of tag strings, nothing else.
+Example: ["New Features", "Performance", "Bug Fixes"]"""
+
+        try:
+            response = self.client.messages.create(
+                model=self.routine_model,  # Use Haiku for speed/cost
+                max_tokens=100,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+            # Parse the JSON array from response
+            response_text = response.content[0].text.strip()
+
+            # Handle potential markdown code blocks
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                response_text = "\n".join(lines[1:-1])
+
+            tags = json_module.loads(response_text)
+
+            # Ensure we have a list of strings and limit to 5 tags
+            if isinstance(tags, list):
+                tags = [str(t).strip() for t in tags[:5] if t]
+                logger.info(f"Generated {len(tags)} tags for {version_name}: {tags}")
+                return tags
+
+        except Exception as e:
+            logger.warning(f"Failed to generate tags for {version_name}: {e}")
+
+        # Return empty list on failure
+        return []
+
     def generate_document_with_skill(
         self,
         skill_id: str,

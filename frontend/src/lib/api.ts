@@ -259,6 +259,8 @@ export interface VersionIssue {
   status: string;
   assignee: string | null;
   priority: string | null;
+  parent_key: string | null;
+  parent_summary: string | null;
 }
 
 export interface VersionIssuesResponse {
@@ -277,6 +279,15 @@ export interface ReleaseNotesResponse {
   issue_count: number;
   teams: string[];
   from_cache: boolean;
+  tags: string[];  // AI-generated tags like "Performance", "Features", "Security"
+}
+
+export interface ReleaseNotesHistoryItem {
+  version: string;
+  generated_at: string;
+  file_formats: string[];  // ['md', 'pdf', 'docx'] - available formats
+  issue_count: number;
+  tags: string[];
 }
 
 export type OutputFormat = 'md' | 'txt' | 'docx' | 'pptx' | 'pdf';
@@ -418,6 +429,36 @@ export const api = {
     // Get version issues
     getVersionIssues: (versionName: string) =>
       fetchApi<VersionIssuesResponse>(`/api/releases/versions/${encodeURIComponent(versionName)}/issues`),
+
+    // Get history of all generated release notes
+    getHistory: () =>
+      fetchApi<ReleaseNotesHistoryItem[]>('/api/releases/history'),
+
+    // Download existing release notes (without regenerating)
+    downloadNotes: async (versionName: string, format: OutputFormat): Promise<void> => {
+      const url = `${API_BASE_URL}/api/releases/${encodeURIComponent(versionName)}/download/${format}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new ApiError(
+          errorData?.detail || `HTTP ${response.status}: ${response.statusText}`,
+          response.status,
+          errorData
+        );
+      }
+
+      // Trigger browser download
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${versionName}_release_notes.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+    },
 
     // Generate release notes (returns JSON for md/txt, file download for others)
     generateNotes: async (

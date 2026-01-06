@@ -601,6 +601,8 @@ class VersionIssue(BaseModel):
     status: str
     assignee: Optional[str]
     priority: Optional[str]
+    parent_key: Optional[str] = None
+    parent_summary: Optional[str] = None
 
 
 class VersionIssuesResponse(BaseModel):
@@ -681,6 +683,13 @@ async def get_version_issues(version_name: str):
             assignee = issue.fields.assignee.displayName if issue.fields.assignee else None
             priority = issue.fields.priority.name if issue.fields.priority else None
 
+            # Get parent info if available (for hierarchy display)
+            parent_key = None
+            parent_summary = None
+            if hasattr(issue.fields, 'parent') and issue.fields.parent:
+                parent_key = issue.fields.parent.key
+                parent_summary = getattr(issue.fields.parent.fields, 'summary', None) if hasattr(issue.fields.parent, 'fields') else None
+
             issue_data = VersionIssue(
                 key=issue.key,
                 summary=issue.fields.summary,
@@ -688,6 +697,8 @@ async def get_version_issues(version_name: str):
                 status=issue.fields.status.name,
                 assignee=assignee,
                 priority=priority,
+                parent_key=parent_key,
+                parent_summary=parent_summary,
             )
 
             result_issues.append(issue_data)
@@ -911,6 +922,16 @@ class ReleaseNotesResponse(BaseModel):
     issue_count: int
     teams: list[str]
     from_cache: bool = False
+    tags: list[str] = []  # AI-generated tags like "Performance", "Features", "Security"
+
+
+class ReleaseNotesHistoryItem(BaseModel):
+    """Metadata for a previously generated release notes file."""
+    version: str
+    generated_at: str
+    file_formats: list[str]  # ['md', 'pdf', 'docx'] - available formats
+    issue_count: int
+    tags: list[str]
 
 
 class OutputFormat(str, Enum):
@@ -1190,8 +1211,14 @@ def save_release_notes(
     executive_notes: str,
     technical_notes: str,
     metrics: dict,
+    tags: list[str] = None,
 ) -> str:
-    """Save release notes to disk and return the file path."""
+    """Save release notes to disk and return the file path.
+
+    Also saves a companion JSON metadata file with tags and other metadata.
+    """
+    import json
+
     releases_dir = Path("data/releases")
     releases_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1224,6 +1251,19 @@ Generated: {timestamp}
 """
 
     file_path.write_text(content, encoding="utf-8")
+
+    # Save companion JSON metadata file
+    json_path = releases_dir / f"{version}.json"
+    metadata = {
+        "version": version,
+        "generated_at": timestamp,
+        "issue_count": metrics.get('total_issues', 0),
+        "teams": metrics.get('teams', []),
+        "tags": tags or [],
+        "category_counts": metrics.get('category_counts', {}),
+    }
+    json_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
     return str(file_path)
 
 
@@ -1264,6 +1304,149 @@ def markdown_to_plain_text(markdown: str) -> str:
         result.append(line)
 
     return '\n'.join(result)
+
+
+def load_release_metadata(version: str) -> Optional[dict]:
+    """Load metadata from companion JSON file for a release version."""
+    import json
+    json_path = Path("data/releases") / f"{version}.json"
+    if json_path.exists():
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+
+def scan_releases_directory() -> list[ReleaseNotesHistoryItem]:
+    """Scan the releases directory and return metadata for all generated releases."""
+    import json
+    import re
+
+    releases_dir = Path("data/releases")
+    if not releases_dir.exists():
+        return []
+
+    # Find all unique versions by looking at .md files
+    history_items = []
+    md_files = list(releases_dir.glob("*.md"))
+
+    for md_file in md_files:
+        version = md_file.stem  # filename without extension
+
+        # Determine which formats exist for this version
+        file_formats = []
+        for ext in ['md', 'txt', 'pdf', 'docx', 'pptx']:
+            if (releases_dir / f"{version}.{ext}").exists():
+                file_formats.append(ext)
+
+        # Try to load metadata from companion JSON
+        metadata = load_release_metadata(version)
+
+        if metadata:
+            # Use JSON metadata if available
+            history_items.append(ReleaseNotesHistoryItem(
+                version=version,
+                generated_at=metadata.get("generated_at", ""),
+                file_formats=file_formats,
+                issue_count=metadata.get("issue_count", 0),
+                tags=metadata.get("tags", []),
+            ))
+        else:
+            # Parse the markdown file header for generated_at timestamp
+            try:
+                content = md_file.read_text(encoding="utf-8")
+                generated_at = ""
+                issue_count = 0
+
+                # Look for "Generated: <timestamp>" line
+                match = re.search(r"Generated:\s*(.+)", content)
+                if match:
+                    generated_at = match.group(1).strip()
+
+                # Look for "Total Issues: <count>" line
+                match = re.search(r"Total Issues:\s*(\d+)", content)
+                if match:
+                    issue_count = int(match.group(1))
+
+                history_items.append(ReleaseNotesHistoryItem(
+                    version=version,
+                    generated_at=generated_at,
+                    file_formats=file_formats,
+                    issue_count=issue_count,
+                    tags=[],  # No tags without JSON metadata
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to parse release notes for {version}: {e}")
+                continue
+
+    # Sort by generated_at descending (newest first)
+    history_items.sort(key=lambda x: x.generated_at, reverse=True)
+
+    return history_items
+
+
+@app.get("/api/releases/history", response_model=list[ReleaseNotesHistoryItem])
+async def get_release_notes_history():
+    """
+    Get a list of all previously generated release notes with metadata.
+
+    Returns:
+        List of ReleaseNotesHistoryItem with version, formats, timestamps, and tags
+    """
+    try:
+        return scan_releases_directory()
+    except Exception as e:
+        logger.error(f"Failed to scan releases directory: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load release history: {str(e)}")
+
+
+@app.get("/api/releases/{version}/download/{format}")
+async def download_release_notes(version: str, format: str):
+    """
+    Download existing release notes without regenerating.
+
+    Args:
+        version: The version name
+        format: The output format (md, txt, pdf, docx, pptx)
+
+    Returns:
+        FileResponse for the requested format
+
+    Raises:
+        404: If the file doesn't exist for that version/format
+    """
+    # Validate format
+    valid_formats = ['md', 'txt', 'pdf', 'docx', 'pptx']
+    if format not in valid_formats:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid format: {format}. Must be one of: {', '.join(valid_formats)}"
+        )
+
+    releases_dir = Path("data/releases")
+    file_path = releases_dir / f"{version}.{format}"
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Release notes for '{version}' in '{format}' format not found. Generate them first."
+        )
+
+    # Determine media type
+    media_types = {
+        'md': 'text/markdown',
+        'txt': 'text/plain',
+        'pdf': 'application/pdf',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    }
+
+    return FileResponse(
+        path=str(file_path),
+        filename=f"{version}_release_notes.{format}",
+        media_type=media_types.get(format, 'application/octet-stream'),
+    )
 
 
 @app.post("/api/releases/{version}/generate-notes", response_model=None)
@@ -1315,6 +1498,7 @@ async def generate_release_notes(
             cached = load_cached_release_notes(version)
 
         # Get or generate the base notes (always needed)
+        tags = []  # Will be populated from cache or generated fresh
         if cached:
             executive_notes = cached["executive_notes"]
             technical_notes = cached["technical_notes"]
@@ -1325,6 +1509,10 @@ async def generate_release_notes(
                 "teams": [],
                 "category_counts": {"Features": 0, "Fixes": 0, "Improvements": 0}
             }
+            # Try to load tags from metadata JSON
+            metadata = load_release_metadata(version)
+            if metadata:
+                tags = metadata.get("tags", [])
             from_cache = True
         else:
             # Fetch issues for this version
@@ -1352,12 +1540,20 @@ async def generate_release_notes(
             technical_notes = notes["technical_notes"]
             from_cache = False
 
-            # Always save markdown version as cache
+            # Generate tags for this release
+            tags = llm.generate_release_tags(
+                version_name=version,
+                issues_by_category=issues_by_category,
+                executive_notes=executive_notes,
+            )
+
+            # Always save markdown version as cache (now includes tags)
             save_release_notes(
                 version=version,
                 executive_notes=executive_notes,
                 technical_notes=technical_notes,
                 metrics=metrics,
+                tags=tags,
             )
 
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -1373,6 +1569,7 @@ async def generate_release_notes(
                 issue_count=metrics.get("total_issues", 0),
                 teams=metrics.get("teams", []),
                 from_cache=from_cache,
+                tags=tags,
             )
 
         elif output_format == OutputFormat.TEXT:
@@ -1417,6 +1614,7 @@ STATISTICS
                 issue_count=metrics.get("total_issues", 0),
                 teams=metrics.get("teams", []),
                 from_cache=from_cache,
+                tags=tags,
             )
 
         elif output_format in [OutputFormat.DOCX, OutputFormat.PPTX, OutputFormat.PDF]:

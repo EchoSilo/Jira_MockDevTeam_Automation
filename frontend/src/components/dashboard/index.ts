@@ -17,3 +17,6 @@ export { VersionListCard } from './VersionListCard';
 export { VersionProgressCard } from './VersionProgressCard';
 export { ReleaseNotesCard } from './ReleaseNotesCard';
 export { VersionIssuesCard } from './VersionIssuesCard';
+export { ReleaseNotesShelf } from './ReleaseNotesShelf';
+export { ReleaseTagBadge } from './ReleaseTagBadge';
+export { TagCloudCard } from './TagCloudCard';

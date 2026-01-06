@@ -17,16 +17,20 @@ import {
   VersionProgressCard,
   ReleaseNotesCard,
   VersionIssuesCard,
+  ReleaseNotesShelf,
+  TagCloudCard,
 } from '@/components/dashboard';
-import { useDashboardStore } from '@/store';
+import { useDashboardStore, useReleaseNotesStore } from '@/store';
 import {
   useDashboardData,
   useVersions,
   useVersionProgress,
   useVersionIssues,
   useGenerateReleaseNotes,
+  useReleaseNotesHistory,
+  useDownloadReleaseNotes,
 } from '@/hooks/useApi';
-import type { ReleaseNotesResponse, OutputFormat } from '@/lib/api';
+import type { OutputFormat } from '@/lib/api';
 import {
   transformSprint,
   transformAgents,
@@ -44,7 +48,15 @@ export function DashboardPage() {
 
   // Release view state
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
-  const [releaseNotes, setReleaseNotes] = useState<ReleaseNotesResponse | null>(null);
+
+  // Release notes store for shelf state
+  const {
+    isShelfOpen,
+    closeShelf,
+    activeNotes,
+    setActiveNotes,
+    openShelf,
+  } = useReleaseNotesStore();
 
   // Fetch real data from backend with 15 second refresh
   const { data, isLoading, error, refetch } = useDashboardData({
@@ -58,6 +70,8 @@ export function DashboardPage() {
   const { data: progressData, isLoading: progressLoading } = useVersionProgress(selectedVersion);
   const { data: issuesData, isLoading: issuesLoading } = useVersionIssues(selectedVersion);
   const { generate: generateNotes, isLoading: notesLoading } = useGenerateReleaseNotes();
+  const { data: historyData, refetch: refetchHistory } = useReleaseNotesHistory();
+  const { download: downloadNotes, isDownloading } = useDownloadReleaseNotes();
 
   // Handle release notes generation
   const handleGenerateNotes = async (format: OutputFormat, regenerate?: boolean) => {
@@ -66,10 +80,35 @@ export function DashboardPage() {
     try {
       const result = await generateNotes(selectedVersion, format, regenerate ?? false);
       if (result && (format === 'md' || format === 'txt')) {
-        setReleaseNotes(result);
+        setActiveNotes(result);
+        openShelf();
+        refetchHistory(); // Refresh history list
       }
     } catch (err) {
       console.error('Failed to generate notes:', err);
+    }
+  };
+
+  // Handle viewing existing notes
+  const handleViewNotes = async (version: string) => {
+    try {
+      // Load notes from backend (will use cache)
+      const result = await generateNotes(version, 'md', false);
+      if (result) {
+        setActiveNotes(result);
+        openShelf();
+      }
+    } catch (err) {
+      console.error('Failed to load notes:', err);
+    }
+  };
+
+  // Handle download
+  const handleDownload = async (version: string, format: OutputFormat) => {
+    try {
+      await downloadNotes(version, format);
+    } catch (err) {
+      console.error('Failed to download notes:', err);
     }
   };
 
@@ -262,43 +301,61 @@ export function DashboardPage() {
 
           {/* Release View - Fix versions and release notes */}
           <TabsContent value="release" className="space-y-6">
+            {/* Grid layout: Version list | Progress + Issues | Release Notes */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Column 1: Version list */}
-              <div>
+              {/* Column 1: Version list + Tag Cloud */}
+              <div className="space-y-6">
                 <VersionListCard
                   versions={versionsData?.versions ?? []}
                   selectedVersion={selectedVersion}
                   onSelectVersion={setSelectedVersion}
                   isLoading={versionsLoading}
                 />
+                <TagCloudCard history={historyData ?? []} />
               </div>
 
-              {/* Column 2-3: Progress and Release Notes */}
+              {/* Column 2-3: Progress + Issues stacked */}
               <div className="lg:col-span-2 space-y-6">
                 <VersionProgressCard
                   versionName={selectedVersion}
                   progress={progressData ?? null}
                   isLoading={progressLoading}
                 />
-                <ReleaseNotesCard
-                  versionName={selectedVersion}
-                  notes={releaseNotes}
-                  isGenerating={notesLoading}
-                  onGenerate={handleGenerateNotes}
-                />
-              </div>
-
-              {/* Column 4: Issues by type */}
-              <div>
                 <VersionIssuesCard
                   versionName={selectedVersion}
                   issuesByType={issuesData?.issues_by_type ?? null}
+                  issues={issuesData?.issues}
                   total={issuesData?.total ?? 0}
                   isLoading={issuesLoading}
                   jiraUrl={health?.jira_url}
                 />
               </div>
+
+              {/* Column 4: Release Notes */}
+              <div>
+                <ReleaseNotesCard
+                  versionName={selectedVersion}
+                  history={historyData ?? []}
+                  isGenerating={notesLoading}
+                  onGenerate={handleGenerateNotes}
+                  onViewNotes={handleViewNotes}
+                  onDownload={handleDownload}
+                />
+              </div>
             </div>
+
+            {/* Release Notes Shelf (outside grid, full-page overlay) */}
+            <ReleaseNotesShelf
+              notes={activeNotes}
+              isOpen={isShelfOpen}
+              onClose={closeShelf}
+              onDownload={(format) => {
+                if (activeNotes?.version) {
+                  handleDownload(activeNotes.version, format);
+                }
+              }}
+              isDownloading={isDownloading}
+            />
           </TabsContent>
 
           {/* Simulation View - Focus on simulation diagnostics */}
