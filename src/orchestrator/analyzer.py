@@ -820,7 +820,44 @@ class ScenarioAnalyzer:
                         ),
                     })
 
-            # Only do planning activities on sprint planning day (day 1)
+            # CRITICAL: Generate scenario if missing/stale for active sprint
+            # This catches cases where sprint rolled over but no scenario exists
+            # Note: Compare by name since scenario.sprint_id is number, not Jira internal ID
+            if active_sprint:
+                sprint_scenario = state.get_sprint_scenario()
+                active_sprint_name = active_sprint.get("name")
+                scenario_missing = sprint_scenario is None
+                scenario_stale = (
+                    sprint_scenario is not None
+                    and sprint_scenario.sprint_name != active_sprint_name
+                )
+
+                if scenario_missing or scenario_stale:
+                    pm_id = self._get_team_agents("alpha").get("pm")
+                    if pm_id:
+                        reason = "missing" if scenario_missing else "stale (different sprint)"
+                        opportunities.append({
+                            "type": "sprint_planning",
+                            "priority": "critical",
+                            "team": "alpha",
+                            "pm_id": pm_id,
+                            "sprint_id": active_sprint.get("id"),
+                            "sprint_name": active_sprint.get("name"),
+                            "unassigned_count": 0,
+                            "scenario_reason": reason,
+                            "description": (
+                                f"Need to generate scenario for {active_sprint.get('name')} "
+                                f"(scenario is {reason})"
+                            ),
+                        })
+                        logger.info(
+                            f"Detected {reason} scenario for sprint {active_sprint.get('name')} - "
+                            f"triggering sprint_planning"
+                        )
+                        # Return immediately - this is critical priority
+                        return opportunities
+
+            # Only do regular planning activities on sprint planning day (day 1)
             if not state.sprint.is_sprint_planning_day():
                 return opportunities
 

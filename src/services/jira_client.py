@@ -344,42 +344,91 @@ class JiraClient:
         sprint_id: int,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-    ) -> bool:
+    ) -> tuple[bool, Optional[str]]:
         """
         Activate a future sprint by setting state to 'active'.
 
         Note: If another sprint is active, it will be auto-closed by Jira.
         Requires start_date and end_date if not already set on the sprint.
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
         """
         try:
-            update_data = {"state": "active"}
+            # Jira API requires sprint name when updating state
+            sprint = self._client.sprint(sprint_id)
+            update_data = {"name": sprint.name, "state": "active"}
             if start_date:
                 update_data["startDate"] = start_date.isoformat()
             if end_date:
                 update_data["endDate"] = end_date.isoformat()
 
             self._client.update_sprint(sprint_id, **update_data)
-            return True
-        except Exception:
-            return False
+            return True, None
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to start sprint {sprint_id}: {error_msg}")
+            return False, error_msg
 
     def complete_sprint(
         self,
         sprint_id: int,
         move_incomplete_to: Optional[int] = None,
-    ) -> bool:
+    ) -> tuple[bool, Optional[str]]:
         """
         Complete an active sprint by setting state to 'closed'.
 
         Args:
             sprint_id: The sprint to complete
-            move_incomplete_to: Optional sprint ID to move incomplete issues to
+            move_incomplete_to: Optional sprint ID to move incomplete issues to.
+                               If provided, issues not in Done/Closed status will
+                               be moved to this sprint after closing.
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
         """
         try:
-            self._client.update_sprint(sprint_id, state="closed")
-            return True
-        except Exception:
-            return False
+            # Find incomplete issues before closing (if we need to move them)
+            incomplete_keys = []
+            if move_incomplete_to:
+                incomplete_issues = self._client.search_issues(
+                    f"project = {self.project_key} AND sprint = {sprint_id} "
+                    f"AND status NOT IN (Done, Closed)",
+                    maxResults=200
+                )
+                incomplete_keys = [issue.key for issue in incomplete_issues]
+                if incomplete_keys:
+                    logger.info(
+                        f"Found {len(incomplete_keys)} incomplete issues to roll over"
+                    )
+
+            # Jira API requires name and dates when updating sprint state
+            sprint = self._client.sprint(sprint_id)
+            self._client.update_sprint(
+                sprint_id,
+                name=sprint.name,
+                state="closed",
+                startDate=sprint.startDate,
+                endDate=sprint.endDate,
+            )
+
+            # Move incomplete issues to target sprint
+            if incomplete_keys and move_incomplete_to:
+                try:
+                    self._client.add_issues_to_sprint(move_incomplete_to, incomplete_keys)
+                    logger.info(
+                        f"Moved {len(incomplete_keys)} issues to sprint {move_incomplete_to}"
+                    )
+                except Exception as move_error:
+                    logger.warning(
+                        f"Sprint closed but failed to move issues: {move_error}"
+                    )
+
+            return True, None
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to close sprint {sprint_id}: {error_msg}")
+            return False, error_msg
 
     def get_issues_not_in_sprint(
         self, issue_types: Optional[list[str]] = None

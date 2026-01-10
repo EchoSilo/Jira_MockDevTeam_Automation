@@ -107,9 +107,20 @@ _health_cache = CachedHealthCheck(ttl_seconds=60)  # Check Jira every 60s
 _state_cache = CachedState(ttl_seconds=5)  # Reload state every 5s
 
 
-def check_and_handle_expired_sprint(jira_client: JiraClient) -> Optional[dict]:
+def check_and_handle_expired_sprint(
+    jira_client: JiraClient,
+    state: Optional[SimulationState] = None,
+) -> Optional[dict]:
     """
     Check if the active sprint has expired and handle it.
+
+    Delegates to SprintPlanningCrew.rollover_sprint() for the actual rollover,
+    which handles: creating new sprint, closing old sprint with issue rollover,
+    and starting the new sprint.
+
+    Args:
+        jira_client: Jira client for API calls
+        state: Optional simulation state to update when sprint rolls over
 
     Returns:
         dict with sprint action taken, or None if no action needed
@@ -138,36 +149,41 @@ def check_and_handle_expired_sprint(jira_client: JiraClient) -> Optional[dict]:
                 f"End date: {end_date_str}"
             )
 
-            # Close the expired sprint
-            if jira_client.complete_sprint(sprint_id):
-                logger.info(f"Successfully closed expired sprint '{sprint_name}'")
+            # Delegate to sprint planning crew for rollover
+            from src.crews.sprint_planning_crew import SprintPlanningCrew
 
-                # Create a new sprint
-                new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
-                start_date = now.date()
-                end_date_new = start_date + timedelta(days=7)
+            crew = SprintPlanningCrew(jira_client)
+            new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
 
-                new_sprint = jira_client.create_sprint(
-                    name=new_sprint_name,
-                    start_date=start_date,
-                    end_date=end_date_new,
-                )
+            result = crew.rollover_sprint(
+                pm_id="pm_alpha",
+                current_sprint_id=sprint_id,
+                current_sprint_name=sprint_name,
+                new_sprint_name=new_sprint_name,
+            )
 
-                if new_sprint:
-                    # Start the new sprint
-                    jira_client.start_sprint(
-                        new_sprint["id"],
-                        start_date=start_date,
-                        end_date=end_date_new,
+            if result["success"]:
+                logger.info(result["result"])
+
+                # Update simulation state for new sprint
+                if state:
+                    state.clear_sprint_scenario()
+                    state.sprint.sprint_number += 1
+                    state.sprint.sprint_day = 1
+                    state.sprint.start_date = datetime.utcnow()
+                    logger.info(
+                        f"Reset simulation state for new sprint: "
+                        f"sprint_number={state.sprint.sprint_number}, sprint_day=1"
                     )
-                    logger.info(f"Created and started new sprint '{new_sprint_name}'")
-                    return {
-                        "action": "sprint_rollover",
-                        "closed_sprint": sprint_name,
-                        "new_sprint": new_sprint_name,
-                    }
+
+                return {
+                    "action": "sprint_rollover",
+                    "closed_sprint": sprint_name,
+                    "new_sprint": new_sprint_name,
+                    **result,
+                }
             else:
-                logger.error(f"Failed to close expired sprint '{sprint_name}'")
+                logger.error(result["result"])
 
         return None
     except Exception as e:
@@ -359,8 +375,8 @@ async def trigger_simulation():
         except Exception as sync_error:
             print(f"Warning: State sync failed: {sync_error}")
 
-        # Check for and handle expired sprint
-        sprint_action = check_and_handle_expired_sprint(logged_jira)
+        # Check for and handle expired sprint (pass state so it can be updated)
+        sprint_action = check_and_handle_expired_sprint(logged_jira, state)
         if sprint_action:
             logger.info(f"Sprint action taken: {sprint_action}")
 

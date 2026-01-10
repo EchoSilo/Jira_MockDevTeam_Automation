@@ -311,11 +311,14 @@ class SprintPlanningCrew(BaseCrew):
         start_date = date.today()
         end_date = start_date + timedelta(days=7)
 
-        success = self.jira_tools.jira.start_sprint(
+        success, error = self.jira_tools.jira.start_sprint(
             sprint_id, start_date=start_date, end_date=end_date
         )
 
-        result = f"Successfully activated {sprint_name}" if success else f"Failed to activate {sprint_name}"
+        if success:
+            result = f"Successfully activated {sprint_name}"
+        else:
+            result = f"Failed to activate {sprint_name}: {error}"
 
         return {
             "action": "start_sprint",
@@ -332,6 +335,7 @@ class SprintPlanningCrew(BaseCrew):
         pm_id: str,
         sprint_id: int,
         sprint_name: str,
+        next_sprint_id: Optional[int] = None,
     ) -> dict:
         """
         PM completes the active sprint, closing it out.
@@ -340,6 +344,7 @@ class SprintPlanningCrew(BaseCrew):
             pm_id: The PM agent ID
             sprint_id: The ID of the active sprint to complete
             sprint_name: The name of the sprint
+            next_sprint_id: Optional sprint ID to move incomplete issues to
 
         Returns:
             Result dict with sprint completion details
@@ -347,9 +352,16 @@ class SprintPlanningCrew(BaseCrew):
         persona = self.get_persona(pm_id)
 
         # Complete sprint directly via Jira API
-        success = self.jira_tools.jira.complete_sprint(sprint_id)
+        success, error = self.jira_tools.jira.complete_sprint(
+            sprint_id, move_incomplete_to=next_sprint_id
+        )
 
-        result = f"Successfully completed {sprint_name}" if success else f"Failed to complete {sprint_name}"
+        if success:
+            result = f"Successfully completed {sprint_name}"
+            if next_sprint_id:
+                result += f" (incomplete issues moved to sprint {next_sprint_id})"
+        else:
+            result = f"Failed to complete {sprint_name}: {error}"
 
         return {
             "action": "complete_sprint",
@@ -358,7 +370,108 @@ class SprintPlanningCrew(BaseCrew):
             "pm_name": persona.get("display_name"),
             "sprint_id": sprint_id,
             "sprint_name": sprint_name,
+            "next_sprint_id": next_sprint_id,
             "result": result,
+        }
+
+    def rollover_sprint(
+        self,
+        pm_id: str,
+        current_sprint_id: int,
+        current_sprint_name: str,
+        new_sprint_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Complete the current sprint and start a new one, rolling over incomplete issues.
+
+        This method:
+        1. Creates a new sprint (if new_sprint_name provided) or uses existing future sprint
+        2. Closes the current sprint, moving incomplete issues to the new sprint
+        3. Starts the new sprint
+
+        Args:
+            pm_id: The PM agent ID performing the rollover
+            current_sprint_id: The ID of the sprint to close
+            current_sprint_name: The name of the sprint to close
+            new_sprint_name: Optional name for new sprint (creates one if provided)
+
+        Returns:
+            Result dict with rollover details
+        """
+        persona = self.get_persona(pm_id)
+        start_date = date.today()
+        end_date = start_date + timedelta(days=7)
+
+        # Step 1: Create or find the next sprint
+        if new_sprint_name:
+            new_sprint = self.jira_tools.jira.create_sprint(
+                name=new_sprint_name,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if not new_sprint:
+                return {
+                    "action": "rollover_sprint",
+                    "success": False,
+                    "pm_id": pm_id,
+                    "pm_name": persona.get("display_name"),
+                    "result": f"Failed to create new sprint '{new_sprint_name}'",
+                }
+            next_sprint_id = new_sprint["id"]
+        else:
+            # Use first available future sprint
+            future_sprints = self.jira_tools.jira.get_future_sprints(max_results=1)
+            if not future_sprints:
+                return {
+                    "action": "rollover_sprint",
+                    "success": False,
+                    "pm_id": pm_id,
+                    "pm_name": persona.get("display_name"),
+                    "result": "No future sprint available and no name provided to create one",
+                }
+            next_sprint_id = future_sprints[0]["id"]
+            new_sprint_name = future_sprints[0]["name"]
+
+        # Step 2: Close current sprint, moving incomplete issues to next sprint
+        close_success, close_error = self.jira_tools.jira.complete_sprint(
+            current_sprint_id, move_incomplete_to=next_sprint_id
+        )
+        if not close_success:
+            return {
+                "action": "rollover_sprint",
+                "success": False,
+                "pm_id": pm_id,
+                "pm_name": persona.get("display_name"),
+                "result": f"Failed to close sprint: {close_error}",
+            }
+
+        # Step 3: Start the new sprint
+        start_success, start_error = self.jira_tools.jira.start_sprint(
+            next_sprint_id, start_date=start_date, end_date=end_date
+        )
+        if not start_success:
+            return {
+                "action": "rollover_sprint",
+                "success": False,
+                "pm_id": pm_id,
+                "pm_name": persona.get("display_name"),
+                "result": f"Sprint closed but failed to start new sprint: {start_error}",
+            }
+
+        logger.info(
+            f"Sprint rollover complete: '{current_sprint_name}' -> '{new_sprint_name}'"
+        )
+
+        return {
+            "action": "rollover_sprint",
+            "success": True,
+            "pm_id": pm_id,
+            "pm_name": persona.get("display_name"),
+            "closed_sprint_id": current_sprint_id,
+            "closed_sprint_name": current_sprint_name,
+            "new_sprint_id": next_sprint_id,
+            "new_sprint_name": new_sprint_name,
+            "result": f"Rolled over from '{current_sprint_name}' to '{new_sprint_name}'",
         }
 
     # ========== Sprint Scenario Generation ==========

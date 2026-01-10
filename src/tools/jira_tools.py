@@ -587,12 +587,12 @@ Description:
                 start_date = date_type.today()
                 end_date = start_date + timedelta(days=7)
 
-                success = jira.start_sprint(
+                success, error = jira.start_sprint(
                     sprint_id, start_date=start_date, end_date=end_date
                 )
                 if success:
                     return f"Successfully activated sprint {sprint_id}"
-                return f"Failed to activate sprint {sprint_id}"
+                return f"Failed to activate sprint {sprint_id}: {error}"
             except Exception as e:
                 return f"Error starting sprint: {str(e)}"
 
@@ -608,10 +608,10 @@ Description:
                 Success or failure message
             """
             try:
-                success = jira.complete_sprint(sprint_id)
+                success, error = jira.complete_sprint(sprint_id)
                 if success:
                     return f"Successfully completed sprint {sprint_id}"
-                return f"Failed to complete sprint {sprint_id}"
+                return f"Failed to complete sprint {sprint_id}: {error}"
             except Exception as e:
                 return f"Error completing sprint: {str(e)}"
 

@@ -183,6 +183,21 @@ class ScenarioOrchestrator:
         self._log_event("tick_start", intensity=intensity)
 
         try:
+            # Validate sprint scenario matches active sprint in Jira
+            # Note: scenario.sprint_id is the sprint number (e.g., 6) extracted from name,
+            # while Jira's active_sprint.id is internal ID (e.g., 74). Use name for comparison.
+            active_sprint = self.jira.get_active_sprint()
+            sprint_scenario = state.get_sprint_scenario()
+            if sprint_scenario and active_sprint:
+                scenario_sprint_name = sprint_scenario.sprint_name
+                active_sprint_name = active_sprint.get("name")
+                if scenario_sprint_name != active_sprint_name:
+                    logger.warning(
+                        f"Sprint scenario mismatch: scenario is for '{scenario_sprint_name}' "
+                        f"but active sprint is '{active_sprint_name}'. Clearing stale scenario."
+                    )
+                    state.clear_sprint_scenario()
+
             # Phase 1: Analyze
             analysis = self.analyzer.analyze(state)
             results["analysis"] = {
@@ -774,6 +789,7 @@ class ScenarioOrchestrator:
             pm_id = action.get("pm_id")
             sprint_id = action.get("sprint_id")
             sprint_name = action.get("sprint_name", f"Sprint {sprint_id}")
+            next_sprint_id = action.get("next_sprint_id")
 
             if pm_id and sprint_id:
                 try:
@@ -781,10 +797,29 @@ class ScenarioOrchestrator:
                         pm_id=pm_id,
                         sprint_id=sprint_id,
                         sprint_name=sprint_name,
+                        next_sprint_id=next_sprint_id,
                     )
                     result.update(crew_result)
                 except Exception as e:
                     result["error"] = f"Complete sprint failed: {str(e)}"
+
+        elif action_type == "rollover_sprint":
+            pm_id = action.get("pm_id")
+            sprint_id = action.get("sprint_id")
+            sprint_name = action.get("sprint_name", f"Sprint {sprint_id}")
+            new_sprint_name = action.get("new_sprint_name")
+
+            if pm_id and sprint_id:
+                try:
+                    crew_result = self.sprint_planning_crew.rollover_sprint(
+                        pm_id=pm_id,
+                        current_sprint_id=sprint_id,
+                        current_sprint_name=sprint_name,
+                        new_sprint_name=new_sprint_name,
+                    )
+                    result.update(crew_result)
+                except Exception as e:
+                    result["error"] = f"Rollover sprint failed: {str(e)}"
 
         # ========== Violation Fix Actions ==========
         elif action_type == "fix_sprint_violation":
