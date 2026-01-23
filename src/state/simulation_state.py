@@ -42,11 +42,57 @@ def load_state(path: str = "data/state.json") -> SimulationState:
         else:
             state = SimulationState.model_validate(data)
 
+        # Migrate testing scenarios to assign QA agents if missing
+        _assign_qa_to_testing_scenarios(state)
+
         # Sync agent workloads from active scenarios to fix any inconsistencies
         state.sync_agent_workloads()
         return state
 
     return SimulationState()
+
+
+def _assign_qa_to_testing_scenarios(state: SimulationState) -> None:
+    """Assign QA agents to testing scenarios that don't have one.
+
+    This handles migration from before QA assignment tracking was added.
+    """
+    import yaml
+
+    # Load personas to get QA agents per team
+    personas_path = Path("config/personas.yaml")
+    if not personas_path.exists():
+        return
+
+    with open(personas_path, "r") as f:
+        personas = yaml.safe_load(f)
+
+    # Build team -> qa_agent mapping
+    team_qa = {}
+    for agent_id, config in personas.get("agents", {}).items():
+        if config.get("role") == "qa":
+            team = config.get("team")
+            if team:
+                team_qa[team] = agent_id
+
+    # Also build agent -> team mapping
+    agent_team = {}
+    for agent_id, config in personas.get("agents", {}).items():
+        team = config.get("team")
+        if team:
+            agent_team[agent_id] = team
+
+    # Assign QA to testing scenarios without one
+    for scenario in state.active_scenarios.values():
+        if scenario.current_phase in [ScenarioPhase.IN_TESTING, ScenarioPhase.RE_TESTING]:
+            if not scenario.qa_agent and scenario.assigned_agent:
+                team = agent_team.get(scenario.assigned_agent)
+                if team and team in team_qa:
+                    qa_agent_id = team_qa[team]
+                    scenario.assign_qa(qa_agent_id)
+                    logger.info(
+                        f"Migrated: Assigned QA {qa_agent_id} to testing scenario {scenario.ticket_key}"
+                    )
 
 
 def save_state(state: SimulationState, path: str = "data/state.json") -> None:
@@ -182,6 +228,9 @@ def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) ->
     Sync simulation state with actual Jira board state.
     Creates scenarios for tickets not yet tracked.
     Updates phases for tickets that have changed status.
+
+    Note: Sprint state (sprint_number, sprint_day) is handled via inject_jira_sprint()
+    at the start of each tick, not in this function. This function only syncs scenarios.
     """
     # Get all active tickets from Jira
     try:

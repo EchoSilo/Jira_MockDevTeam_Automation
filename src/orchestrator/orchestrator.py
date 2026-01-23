@@ -102,6 +102,7 @@ class ScenarioOrchestrator:
             "complete_review",
             "qa_approve",
             "qa_reject",
+            "qa_test",  # Alias for qa_approve
             "add_progress_comment",
             "inject_blocker",
             "discuss_blocker",
@@ -420,6 +421,18 @@ class ScenarioOrchestrator:
                 return agent_id
         return None
 
+    def _get_qa_for_team(self, team: str) -> Optional[str]:
+        """Get the QA agent for a specific team."""
+        for agent_id, config in self.personas.get("agents", {}).items():
+            if config.get("team") == team and config.get("role") == "qa":
+                return agent_id
+        return None
+
+    def _get_team_for_agent(self, agent_id: str) -> Optional[str]:
+        """Get the team for an agent."""
+        config = self.personas.get("agents", {}).get(agent_id, {})
+        return config.get("team")
+
     def _get_next_available_developer(self) -> dict | None:
         """Get the next available developer for assignment (round-robin)."""
         developers = []
@@ -439,6 +452,119 @@ class ScenarioOrchestrator:
         self._dev_assignment_index += 1
         return dev
 
+    def _get_unassigned_backlog_items(self) -> list[dict]:
+        """Get backlog items not in any sprint, filtered for valid types (no Epics)."""
+        try:
+            items = self.jira.get_issues_not_in_sprint(
+                issue_types=["Story", "Bug", "Task"]
+            )
+            return [
+                {
+                    "key": item.key,
+                    "type": item.fields.issuetype.name,
+                    "priority": (
+                        item.fields.priority.name
+                        if item.fields.priority
+                        else "Medium"
+                    ),
+                    "summary": item.fields.summary,
+                }
+                for item in items
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to get unassigned backlog items: {e}")
+            return []
+
+    def _auto_fix_sprint_membership(self, ticket_key: str) -> bool:
+        """
+        Attempt to add a ticket to the active sprint.
+
+        Used when a work action is planned for a ticket that's not in the active sprint.
+        Instead of failing, we auto-add the ticket and proceed.
+
+        Returns:
+            True if ticket was successfully added to active sprint
+        """
+        try:
+            active_sprint = self.jira.get_active_sprint()
+            if not active_sprint:
+                logger.warning(f"No active sprint to add {ticket_key} to")
+                return False
+
+            sprint_id = active_sprint.get("id")
+            success = self.jira.add_issue_to_sprint(sprint_id, [ticket_key])
+
+            if success:
+                self.jira.add_comment(
+                    ticket_key,
+                    "Automatically added to active sprint to complete pending work."
+                )
+                logger.info(f"Auto-added {ticket_key} to sprint {sprint_id}")
+            return success
+        except Exception as e:
+            logger.warning(f"Failed to auto-add {ticket_key} to sprint: {e}")
+            return False
+
+    def _get_or_assign_developer_for_ticket(
+        self,
+        ticket_key: str,
+        fallback_agent_id: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Get the developer for a ticket, or auto-assign one if none exists.
+
+        Priority:
+        1. Jira assignee (if already assigned)
+        2. Fallback agent_id (if provided and is a developer)
+        3. Any available developer from the team
+
+        If assigning a new developer, also updates Jira.
+
+        Returns:
+            agent_id of the developer, or None if no developer available
+        """
+        # Priority 1: Check Jira assignee
+        try:
+            issue = self.jira.get_issue(ticket_key)
+            if issue.fields.assignee:
+                jira_id = issue.fields.assignee.accountId
+                agent_id = self._find_agent_by_jira_id(jira_id)
+                if agent_id:
+                    return agent_id
+        except Exception as e:
+            logger.warning(f"Failed to get Jira assignee for {ticket_key}: {e}")
+
+        # Priority 2: Use fallback agent if it's a developer
+        if fallback_agent_id:
+            persona = self.personas.get("agents", {}).get(fallback_agent_id, {})
+            if persona.get("role") == "developer":
+                self._assign_ticket_to_agent(ticket_key, fallback_agent_id)
+                return fallback_agent_id
+
+        # Priority 3: Find any available developer
+        dev = self._get_next_available_developer()
+        if dev:
+            dev_agent_id = dev.get("agent_id")
+            self._assign_ticket_to_agent(ticket_key, dev_agent_id)
+            logger.info(f"Auto-assigned {dev_agent_id} to {ticket_key}")
+            return dev_agent_id
+
+        return None
+
+    def _assign_ticket_to_agent(self, ticket_key: str, agent_id: str) -> bool:
+        """Assign a ticket to an agent in Jira."""
+        try:
+            persona = self.personas.get("agents", {}).get(agent_id, {})
+            jira_account_id = persona.get("jira_account_id")
+            if jira_account_id:
+                success = self.jira.assign_issue(ticket_key, jira_account_id)
+                if success:
+                    logger.info(f"Assigned {ticket_key} to {agent_id}")
+                return success
+        except Exception as e:
+            logger.warning(f"Failed to assign {ticket_key} to {agent_id}: {e}")
+        return False
+
     async def _execute_action(
         self,
         action: dict,
@@ -454,13 +580,19 @@ class ScenarioOrchestrator:
         # Validate sprint requirement for work actions
         if action_type in self.sprint_required_actions and ticket_key:
             if not self._validate_sprint_requirement(ticket_key):
-                return {
-                    "action_type": action_type,
-                    "ticket_key": ticket_key,
-                    "error": "Ticket not in active sprint - work cannot proceed",
-                    "skipped": True,
-                    "reason": "sprint_violation",
-                }
+                # Try to auto-fix by adding to active sprint
+                if self._auto_fix_sprint_membership(ticket_key):
+                    logger.info(
+                        f"Auto-added {ticket_key} to active sprint before {action_type}"
+                    )
+                else:
+                    return {
+                        "action_type": action_type,
+                        "ticket_key": ticket_key,
+                        "error": "Ticket not in active sprint and could not be added",
+                        "skipped": True,
+                        "reason": "sprint_violation",
+                    }
 
         # Get scenario if exists
         scenario = None
@@ -480,18 +612,38 @@ class ScenarioOrchestrator:
                 # Create scenario if doesn't exist
                 if not scenario:
                     scenario = self._create_scenario_for_ticket(ticket_key, agent_id, state)
+                # Update assigned_agent if not set (scenario may exist from sync)
+                if scenario and not scenario.assigned_agent:
+                    scenario.assigned_agent = agent_id
+                    if agent_id not in scenario.involved_agents:
+                        scenario.involved_agents.append(agent_id)
                 result.update(
                     self.lifecycle_crew.pick_up_from_backlog(scenario, agent_id)
                 )
 
         elif action_type == "progress_to_review":
             # Create scenario if it doesn't exist (handles state reset recovery)
-            if not scenario and ticket_key and agent_id:
-                scenario = self._create_scenario_for_ticket(ticket_key, agent_id, state)
-                # Set phase to IN_PROGRESS since we're moving to review
-                scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
-            if scenario:
+            if not scenario and ticket_key:
+                dev_agent_id = self._get_or_assign_developer_for_ticket(
+                    ticket_key, fallback_agent_id=agent_id
+                )
+                if dev_agent_id:
+                    scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
+                    # Set phase to IN_PROGRESS since we're moving to review
+                    scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
+            # Update assigned_agent if scenario exists but agent is missing
+            if scenario and not scenario.assigned_agent and ticket_key:
+                dev_agent_id = self._get_or_assign_developer_for_ticket(
+                    ticket_key, fallback_agent_id=agent_id
+                )
+                if dev_agent_id:
+                    scenario.assigned_agent = dev_agent_id
+                    if dev_agent_id not in scenario.involved_agents:
+                        scenario.involved_agents.append(dev_agent_id)
+            if scenario and scenario.assigned_agent:
                 result.update(self.lifecycle_crew.progress_to_review(scenario))
+            else:
+                result["error"] = "No developer available for progress_to_review"
 
         elif action_type == "complete_review":
             tech_lead_id = action.get("tech_lead_id") or agent_id
@@ -527,7 +679,7 @@ class ScenarioOrchestrator:
             else:
                 result["error"] = "Could not create scenario - no assignee found"
 
-        elif action_type == "qa_approve":
+        elif action_type in ("qa_approve", "qa_test"):  # qa_test is alias for qa_approve
             qa_id = action.get("qa_id") or agent_id
             # Create scenario if it doesn't exist (handles state reset recovery)
             if not scenario and ticket_key:
@@ -564,25 +716,33 @@ class ScenarioOrchestrator:
         # ========== Blocker Actions ==========
         elif action_type == "inject_blocker":
             # Create scenario if it doesn't exist (handles state reset recovery)
-            if not scenario and ticket_key and agent_id:
+            if not scenario and ticket_key:
                 try:
-                    issue = self.jira.get_issue(ticket_key)
-                    dev_agent_id = None
-                    if issue.fields.assignee:
-                        assignee_id = issue.fields.assignee.accountId
-                        dev_agent_id = self._find_agent_by_jira_id(assignee_id)
-                    if not dev_agent_id:
-                        dev_agent_id = agent_id  # Use the agent from the action as fallback
+                    # Use helper that finds/assigns developer with fallback chain
+                    dev_agent_id = self._get_or_assign_developer_for_ticket(
+                        ticket_key, fallback_agent_id=agent_id
+                    )
                     if dev_agent_id:
-                        scenario = self._create_scenario_for_ticket(ticket_key, dev_agent_id, state)
+                        scenario = self._create_scenario_for_ticket(
+                            ticket_key, dev_agent_id, state
+                        )
                         scenario.advance_to_phase(ScenarioPhase.IN_PROGRESS)
                 except Exception as e:
                     logger.error(f"Failed to create/advance scenario for {ticket_key}: {e}")
-            if scenario:
+            # Update assigned_agent if scenario exists but agent is missing
+            if scenario and not scenario.assigned_agent and ticket_key:
+                dev_agent_id = self._get_or_assign_developer_for_ticket(
+                    ticket_key, fallback_agent_id=agent_id
+                )
+                if dev_agent_id:
+                    scenario.assigned_agent = dev_agent_id
+                    if dev_agent_id not in scenario.involved_agents:
+                        scenario.involved_agents.append(dev_agent_id)
+            if scenario and scenario.assigned_agent:
                 reason = details or self._generate_blocker_reason()
                 result.update(self.blocker_crew.inject_blocker(scenario, reason))
             else:
-                result["error"] = "Could not create scenario for blocker injection"
+                result["error"] = "No developer available for blocker injection"
 
         elif action_type == "discuss_blocker":
             if scenario:
@@ -718,20 +878,61 @@ class ScenarioOrchestrator:
         elif action_type == "sprint_planning":
             pm_id = action.get("pm_id")
             team = action.get("team", "alpha")
-            active_sprint = action.get("active_sprint", {})
-            unassigned_items = action.get("unassigned_items", [])
 
-            if pm_id:
-                try:
-                    crew_result = self.sprint_planning_crew.plan_current_sprint(
-                        pm_id=pm_id,
-                        team=team,
-                        active_sprint=active_sprint,
-                        unassigned_items=unassigned_items,
-                    )
-                    result.update(crew_result)
-                except Exception as e:
-                    result["error"] = f"Sprint planning failed: {str(e)}"
+            # Check if scenario generation is needed
+            scenario_reason = action.get("scenario_reason")
+            needs_scenario = scenario_reason or state.get_sprint_scenario() is None
+
+            if needs_scenario:
+                # Get sprint info from action or fetch from Jira
+                active_sprint = action.get("active_sprint")
+                if not active_sprint:
+                    sprint_id = action.get("sprint_id")
+                    sprint_name = action.get("sprint_name")
+                    if sprint_id:
+                        active_sprint = {"id": sprint_id, "name": sprint_name}
+                    else:
+                        active_sprint = self.jira.get_active_sprint()
+
+                # Get unassigned items from action or fetch from Jira
+                unassigned_items = action.get("unassigned_items", [])
+                if not unassigned_items:
+                    unassigned_items = self._get_unassigned_backlog_items()
+
+                if pm_id and active_sprint:
+                    try:
+                        crew_result = self.sprint_planning_crew.plan_sprint_with_scenario(
+                            pm_id=pm_id,
+                            team=team,
+                            active_sprint=active_sprint,
+                            unassigned_items=unassigned_items,
+                            state=state,
+                        )
+                        result.update(crew_result)
+
+                        # Save generated scenario to state
+                        if crew_result.get("scenario"):
+                            state.set_sprint_scenario(crew_result["scenario"])
+                            logger.info(
+                                f"Sprint scenario generated for {active_sprint.get('name')}"
+                            )
+                    except Exception as e:
+                        result["error"] = f"Sprint planning with scenario failed: {str(e)}"
+            else:
+                # Original flow - just plan items without scenario
+                active_sprint = action.get("active_sprint", {})
+                unassigned_items = action.get("unassigned_items", [])
+                if pm_id:
+                    try:
+                        crew_result = self.sprint_planning_crew.plan_current_sprint(
+                            pm_id=pm_id,
+                            team=team,
+                            active_sprint=active_sprint,
+                            unassigned_items=unassigned_items,
+                        )
+                        result.update(crew_result)
+                    except Exception as e:
+                        result["error"] = f"Sprint planning failed: {str(e)}"
 
         elif action_type == "create_future_sprint":
             pm_id = action.get("pm_id")
@@ -833,7 +1034,7 @@ class ScenarioOrchestrator:
                     active_sprint = self.jira.get_active_sprint()
                     if active_sprint:
                         sprint_id = active_sprint.get("id")
-                        success = self.jira.add_issue_to_sprint(ticket_key, sprint_id)
+                        success = self.jira.add_issue_to_sprint(sprint_id, [ticket_key])
                         if success:
                             # Add explanatory comment
                             persona = self.personas.get("agents", {}).get(pm_id, {})
@@ -901,6 +1102,35 @@ class ScenarioOrchestrator:
                         result["error"] = "No available developers found"
                 except Exception as e:
                     result["error"] = f"Fix unassigned sprint item failed: {str(e)}"
+
+        elif action_type == "fix_epic_sprint_violation":
+            ticket_key = action.get("ticket_key")
+            pm_id = action.get("pm_id")
+            fix_comment = action.get(
+                "fix_comment",
+                "Removed from sprint - Epics should not be assigned to sprints."
+            )
+
+            if ticket_key:
+                try:
+                    # Remove Epic from sprint
+                    success = self.jira.remove_issue_from_sprint(ticket_key)
+                    if success:
+                        # Add explanatory comment
+                        persona = self.personas.get("agents", {}).get(pm_id, {})
+                        pm_name = persona.get("display_name", "Product Manager")
+                        comment = f"{fix_comment} - {pm_name}"
+                        self.jira.add_comment(ticket_key, comment)
+                        result.update({
+                            "success": True,
+                            "ticket_key": ticket_key,
+                            "agent": pm_id,
+                            "fix_type": "removed_epic_from_sprint",
+                        })
+                    else:
+                        result["error"] = "Could not remove Epic from sprint"
+                except Exception as e:
+                    result["error"] = f"Fix epic sprint violation failed: {str(e)}"
 
         # ========== Release Management Actions ==========
         elif action_type == "create_fix_version":
@@ -1040,8 +1270,20 @@ class ScenarioOrchestrator:
                         )
                         for issue in done_issues:
                             try:
-                                self.jira.transition_issue(issue.key, "Closed")
-                                closed_count += 1
+                                success = self.jira.transition_issue(
+                                    issue.key, "Closed"
+                                )
+                                if success:
+                                    closed_count += 1
+                                else:
+                                    # Try alternate terminal status names
+                                    for alt_status in ["Close", "Close Issue", "Resolve"]:
+                                        success = self.jira.transition_issue(
+                                            issue.key, alt_status
+                                        )
+                                        if success:
+                                            closed_count += 1
+                                            break
                             except Exception as e:
                                 logger.warning(f"Failed to close {issue.key}: {e}")
 
@@ -1211,6 +1453,23 @@ class ScenarioOrchestrator:
             if new_phase:
                 scenario.advance_to_phase(new_phase)
 
+                # Assign QA when entering testing phase
+                if new_phase in [ScenarioPhase.IN_TESTING, ScenarioPhase.RE_TESTING]:
+                    dev_team = self._get_team_for_agent(scenario.assigned_agent)
+                    if dev_team:
+                        qa_agent_id = self._get_qa_for_team(dev_team)
+                        if qa_agent_id:
+                            scenario.assign_qa(qa_agent_id)
+                            qa_state = state.get_agent_state(qa_agent_id)
+                            qa_state.assign_ticket(ticket_key)
+                            logger.info(f"Assigned QA {qa_agent_id} to test {ticket_key}")
+
+                # Unassign QA when testing is complete
+                elif new_phase == ScenarioPhase.COMPLETED and scenario.qa_agent:
+                    qa_state = state.get_agent_state(scenario.qa_agent)
+                    qa_state.unassign_ticket(ticket_key)
+                    scenario.unassign_qa()
+
             # Advance script if action was from a script
             if action.get("from_script") or scenario.action_script:
                 next_action = scenario.get_next_script_action()
@@ -1232,6 +1491,11 @@ class ScenarioOrchestrator:
                     action.get("details", "QA issue found"),
                     agent_id or "unknown",
                 )
+                # Unassign QA when rejecting (ticket goes back to developer)
+                if scenario.qa_agent and ticket_key:
+                    qa_state = state.get_agent_state(scenario.qa_agent)
+                    qa_state.unassign_ticket(ticket_key)
+                    scenario.unassign_qa()
             elif action_type == "identify_dependency":
                 scenario.inject_dependency(
                     action.get("dependency_ticket", ""),

@@ -80,8 +80,13 @@ class CrewAILoggingCallback:
             input_tokens = usage_metrics.get("prompt_tokens", 0) or 0
             output_tokens = usage_metrics.get("completion_tokens", 0) or 0
 
-            # Determine if this is a complex call based on model
-            is_complex = "sonnet" in model.lower() or "opus" in model.lower()
+            # Determine if this is a complex call based on action type in complex_actions list
+            complex_actions = getattr(self, '_complex_actions', [
+                'scenario_planning', 'create_story', 'create_epic',
+                'architectural_comment', 'design_discussion', 'blocker_analysis',
+                'dependency_identification', 'generate_release_notes'
+            ])
+            is_complex = self._current_action_type in complex_actions
 
             self.log_writer.log_llm_call(
                 model=model,

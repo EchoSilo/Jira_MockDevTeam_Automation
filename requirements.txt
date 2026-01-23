@@ -11,6 +11,7 @@ crewai-tools>=0.14.0
 
 # LLM
 anthropic>=0.40.0
+litellm>=1.0.0
 
 # Configuration
 pyyaml>=6.0.1

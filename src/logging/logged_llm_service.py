@@ -8,6 +8,8 @@ responses, token usage, and timing.
 import time
 from typing import Optional
 
+import litellm
+
 from ..services.llm_service import LLMService
 from .writer import AsyncLogWriter
 
@@ -110,14 +112,14 @@ Just write the comment text directly, nothing else."""
         start_time = time.time()
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
-            response_text = response.content[0].text.strip()
+            response_text = response.choices[0].message.content.strip()
 
             # Log the call
             self._log_writer.log_llm_call(
@@ -125,8 +127,8 @@ Just write the comment text directly, nothing else."""
                 action_type=action_type,
                 prompt=prompt,
                 response=response_text,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
                 duration_ms=duration_ms,
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
@@ -134,7 +136,7 @@ Just write the comment text directly, nothing else."""
                 scenario_id=self._current_scenario_id,
                 is_complex=is_complex,
                 max_tokens=max_tokens,
-                stop_reason=response.stop_reason,
+                stop_reason=response.choices[0].finish_reason,
             )
 
             return response_text
@@ -214,14 +216,14 @@ Just the JSON, nothing else."""
         start_time = time.time()
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
-            raw_response = response.content[0].text.strip()
+            raw_response = response.choices[0].message.content.strip()
 
             # Log the call
             self._log_writer.log_llm_call(
@@ -229,8 +231,8 @@ Just the JSON, nothing else."""
                 action_type="generate_story",
                 prompt=prompt,
                 response=raw_response,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
                 duration_ms=duration_ms,
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
@@ -238,7 +240,7 @@ Just the JSON, nothing else."""
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
                 max_tokens=max_tokens,
-                stop_reason=response.stop_reason,
+                stop_reason=response.choices[0].finish_reason,
             )
 
             import json
@@ -300,14 +302,14 @@ Just the JSON, nothing else."""
         start_time = time.time()
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
-            raw_response = response.content[0].text.strip()
+            raw_response = response.choices[0].message.content.strip()
 
             # Log the call
             self._log_writer.log_llm_call(
@@ -315,8 +317,8 @@ Just the JSON, nothing else."""
                 action_type="generate_bug_report",
                 prompt=prompt,
                 response=raw_response,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
                 duration_ms=duration_ms,
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
@@ -324,7 +326,7 @@ Just the JSON, nothing else."""
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
                 max_tokens=max_tokens,
-                stop_reason=response.stop_reason,
+                stop_reason=response.choices[0].finish_reason,
             )
 
             import json
@@ -392,14 +394,14 @@ No fluff, no AI-speak. Just the comment."""
         start_time = time.time()
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
-            response_text = response.content[0].text.strip()
+            response_text = response.choices[0].message.content.strip()
 
             # Log the call
             self._log_writer.log_llm_call(
@@ -407,8 +409,8 @@ No fluff, no AI-speak. Just the comment."""
                 action_type=f"technical_comment_{comment_type}",
                 prompt=prompt,
                 response=response_text,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
                 duration_ms=duration_ms,
                 agent_id=self._current_agent_id,
                 agent_name=agent_name,
@@ -416,7 +418,7 @@ No fluff, no AI-speak. Just the comment."""
                 scenario_id=self._current_scenario_id,
                 is_complex=True,
                 max_tokens=max_tokens,
-                stop_reason=response.stop_reason,
+                stop_reason=response.choices[0].finish_reason,
             )
 
             return response_text

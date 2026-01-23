@@ -808,12 +808,15 @@ class ScenarioAnalyzer:
             if state.sprint.is_sprint_complete_day() and active_sprint:
                 pm_id = self._get_team_agents("alpha").get("pm")
                 if pm_id:
+                    # Include next_sprint_id so incomplete items roll over correctly
+                    next_sprint_id = future_sprints[0].get("id") if future_sprints else None
                     opportunities.append({
                         "type": "complete_sprint",
                         "priority": "high",
                         "pm_id": pm_id,
                         "sprint_id": active_sprint.get("id"),
                         "sprint_name": active_sprint.get("name"),
+                        "next_sprint_id": next_sprint_id,
                         "description": (
                             f"Sprint day 7 - time to complete "
                             f"{active_sprint.get('name')}"
@@ -930,6 +933,7 @@ class ScenarioAnalyzer:
         violations.extend(self._detect_sprint_violations(board_snapshot))
         violations.extend(self._detect_unassigned_sprint_items(board_snapshot))
         violations.extend(self._detect_issue_type_violations(board_snapshot))
+        violations.extend(self._detect_epic_sprint_violations())
 
         return violations
 
@@ -1044,6 +1048,42 @@ class ScenarioAnalyzer:
                     })
         except Exception as e:
             logger.warning(f"Failed to detect epic violations: {e}")
+
+        return violations
+
+    def _detect_epic_sprint_violations(self) -> list[dict]:
+        """
+        Detect Epics incorrectly placed in sprints.
+
+        Epics should never be in sprints - only Stories, Bugs, and Tasks.
+        """
+        violations = []
+
+        try:
+            epics_in_sprints = self.jira.get_epics_in_sprints()
+
+            for epic in epics_in_sprints:
+                # Find appropriate PM to fix this
+                pm_id = self._find_pm_for_epic(epic.key)
+
+                violations.append({
+                    "type": "fix_epic_sprint_violation",
+                    "priority": "high",
+                    "ticket_key": epic.key,
+                    "violation_type": "epic_in_sprint",
+                    "pm_id": pm_id,
+                    "description": (
+                        f"Epic {epic.key} is in a sprint - Epics should not "
+                        f"be assigned to sprints"
+                    ),
+                    "fix_action": "remove_from_sprint",
+                    "fix_comment": (
+                        "Removed from sprint - Epics should not be assigned "
+                        "to sprints. Only Stories, Bugs, and Tasks belong in sprints."
+                    ),
+                })
+        except Exception as e:
+            logger.warning(f"Failed to detect epic sprint violations: {e}")
 
         return violations
 

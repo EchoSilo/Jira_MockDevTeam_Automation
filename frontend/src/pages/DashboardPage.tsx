@@ -19,6 +19,7 @@ import {
   VersionIssuesCard,
   ReleaseNotesShelf,
   TagCloudCard,
+  AssignmentTrendsCard,
 } from '@/components/dashboard';
 import { useDashboardStore, useReleaseNotesStore } from '@/store';
 import {
@@ -301,6 +302,9 @@ export function DashboardPage() {
               <WorkloadCard agents={filteredAgents} />
               <StatusBreakdownChart data={statusBreakdown} />
             </div>
+
+            {/* Assignment Trends - full width chart */}
+            <AssignmentTrendsCard selectedTeam={selectedTeam} />
           </TabsContent>
 
           {/* Release View - Fix versions and release notes */}

@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yaml
+import litellm
 
 from .state import load_state, save_state, SimulationState, sync_state_with_jira, validate_state_agent_ids
 from .services import JiraClient, LLMService
@@ -165,15 +166,19 @@ def check_and_handle_expired_sprint(
             if result["success"]:
                 logger.info(result["result"])
 
-                # Update simulation state for new sprint
                 if state:
+                    # Clear sprint scenario (simulation-specific data)
                     state.clear_sprint_scenario()
-                    state.sprint.sprint_number += 1
-                    state.sprint.sprint_day = 1
-                    state.sprint.start_date = datetime.utcnow()
+
+                    # Re-inject sprint data since Jira's active sprint changed
+                    # This ensures derived values (sprint_number, sprint_day) are correct
+                    # for the rest of this tick
+                    new_active_sprint = jira_client.get_active_sprint()
+                    state.sprint.inject_jira_sprint(new_active_sprint)
                     logger.info(
-                        f"Reset simulation state for new sprint: "
-                        f"sprint_number={state.sprint.sprint_number}, sprint_day=1"
+                        f"Re-injected sprint after rollover: "
+                        f"sprint_number={state.sprint.sprint_number}, "
+                        f"sprint_day={state.sprint.sprint_day}"
                     )
 
                 return {
@@ -350,14 +355,31 @@ async def trigger_simulation():
         # Load current state
         state = load_state()
 
-        # Check if new day - advance day (resets counters and advances sprint)
+        # Create logged services for this tick (needed early for Jira calls)
+        logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
+        logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
+
+        # EARLY: Inject Jira sprint data (source of truth for sprint_number/day)
+        # This must happen before any sprint-dependent logic
+        previous_sprint_number = state.sprint.sprint_number  # From cached Jira data
+        jira_sprint = logged_jira.get_active_sprint()
+        state.sprint.inject_jira_sprint(jira_sprint)
+
+        # Detect sprint transition (e.g., Sprint 7 -> Sprint 8)
+        if state.handle_sprint_transition(previous_sprint_number):
+            logger.info(
+                f"Sprint transition detected: {previous_sprint_number} -> "
+                f"{state.sprint.sprint_number}"
+            )
+
+        # Check if new day - advance simulation day (resets daily counters only)
         if state.is_new_day():
             state.advance_day()
 
         # Determine intensity randomly
         intensity = determine_intensity()
 
-        # Start logging session for this tick
+        # Start logging session for this tick (sprint values now derived from Jira)
         session = app.state.log_writer.start_session(
             intensity=intensity,
             simulation_day=state.simulation_day,
@@ -365,11 +387,7 @@ async def trigger_simulation():
             sprint_number=state.sprint.sprint_number,
         )
 
-        # Create logged services for this tick
-        logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
-        logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
-
-        # Sync state with actual Jira board using logged client
+        # Sync scenarios with actual Jira board (sprint already injected above)
         try:
             sync_state_with_jira(state, logged_jira, app.state.personas)
         except Exception as sync_error:
@@ -576,6 +594,255 @@ async def get_sprint_data():
 
     except Exception as e:
         return {"error": str(e)}
+
+
+# =============================================================================
+# Assignment Trends API Endpoint
+# =============================================================================
+
+
+class AssignmentTrendDataPoint(BaseModel):
+    """Single data point for assignment trends."""
+    date: str
+    period_start: str
+    period_end: str
+    assignments_by_agent: dict[str, int]
+
+
+class AssignmentTrendsResponse(BaseModel):
+    """Response for assignment trends endpoint."""
+    granularity: str
+    sprint_name: Optional[str]
+    date_range: dict
+    data_points: list[AssignmentTrendDataPoint]
+    agents: list[str]
+    insights: dict
+
+
+def aggregate_assignments_to_buckets(
+    history: list[dict],
+    current_assignments: dict[str, list[str]],
+    granularity: str,
+    start_date: datetime,
+    end_date: datetime,
+    all_agents: list[str],
+) -> list[AssignmentTrendDataPoint]:
+    """
+    Aggregate assignment history into time buckets.
+
+    Uses a snapshot approach: for each bucket, calculate how many tickets
+    each person had assigned at the end of that period.
+    """
+    from collections import defaultdict
+
+    # Generate time buckets
+    buckets = []
+    current = start_date
+
+    if granularity == "daily":
+        delta = timedelta(days=1)
+        date_format = "%Y-%m-%d"
+    elif granularity == "weekly":
+        delta = timedelta(weeks=1)
+        date_format = "%Y-%m-%d"
+    else:  # monthly
+        delta = timedelta(days=30)
+        date_format = "%Y-%m"
+
+    while current <= end_date:
+        bucket_end = min(current + delta, end_date + timedelta(days=1))
+        buckets.append((current, bucket_end))
+        current = bucket_end
+
+    # Build assignment state timeline from history
+    # Start from current state and work backwards
+    assignment_counts: dict[str, int] = {}
+    for agent in all_agents:
+        assignment_counts[agent] = len(current_assignments.get(agent, []))
+
+    # Process history in reverse to build state at each point
+    # (history is sorted chronologically, we want reverse)
+    history_reversed = list(reversed(history))
+
+    data_points = []
+    now = datetime.now(timezone.utc)
+
+    for bucket_start, bucket_end in reversed(buckets):
+        # Adjust assignment counts based on changes that happened after this bucket
+        for change in history_reversed:
+            try:
+                change_time = datetime.fromisoformat(
+                    change["timestamp"].replace("Z", "+00:00")
+                )
+            except (ValueError, TypeError):
+                continue
+
+            # If change happened after this bucket, reverse it
+            if change_time > bucket_end:
+                to_agent = change.get("to_assignee")
+                from_agent = change.get("from_assignee")
+
+                # Reverse: undo the assignment change
+                if to_agent and to_agent in assignment_counts:
+                    assignment_counts[to_agent] = max(0, assignment_counts[to_agent] - 1)
+                if from_agent and from_agent in assignment_counts:
+                    assignment_counts[from_agent] = assignment_counts.get(from_agent, 0) + 1
+
+        # Record this bucket's state
+        if granularity == "daily":
+            date_label = bucket_start.strftime("%b %d")
+        elif granularity == "weekly":
+            date_label = f"Week of {bucket_start.strftime('%b %d')}"
+        else:
+            date_label = bucket_start.strftime("%B %Y")
+
+        data_points.append(AssignmentTrendDataPoint(
+            date=date_label,
+            period_start=bucket_start.isoformat(),
+            period_end=bucket_end.isoformat(),
+            assignments_by_agent={
+                agent: assignment_counts.get(agent, 0) for agent in all_agents
+            },
+        ))
+
+    # Reverse to get chronological order
+    return list(reversed(data_points))
+
+
+@app.get("/api/assignment-trends", response_model=AssignmentTrendsResponse)
+async def get_assignment_trends(
+    granularity: str = "daily",
+    sprint_id: Optional[int] = None,
+    days_back: int = 30,
+    team: Optional[str] = None,
+):
+    """
+    Get assignment trends data for visualization.
+
+    Args:
+        granularity: Time bucket size - "daily", "weekly", or "monthly"
+        sprint_id: Optional sprint ID to filter issues by
+        days_back: How far back to look (default 30 days)
+        team: Optional team filter ("alpha" or "beta")
+
+    Returns:
+        AssignmentTrendsResponse with time-bucketed assignment counts per agent
+    """
+    try:
+        jira = app.state.jira
+        personas = app.state.personas
+
+        # Validate granularity
+        if granularity not in ["daily", "weekly", "monthly"]:
+            granularity = "daily"
+
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days_back)
+
+        # Get sprint name if sprint_id provided
+        sprint_name = None
+        if sprint_id:
+            try:
+                active_sprint = jira.get_active_sprint()
+                if active_sprint and active_sprint.get("id") == sprint_id:
+                    sprint_name = active_sprint.get("name")
+            except Exception:
+                pass
+
+        # Build agent list filtered by team
+        all_agents = []
+        agent_names_by_team = {}
+        for agent_id, config in personas.get("agents", {}).items():
+            agent_team = config.get("team")
+            display_name = config.get("display_name")
+            role = config.get("role")
+
+            # Skip PMs - they don't get ticket assignments
+            if role == "pm":
+                continue
+
+            # Apply team filter
+            if team and agent_team != team:
+                continue
+
+            if display_name:
+                all_agents.append(display_name)
+                agent_names_by_team[display_name] = agent_team
+
+        # Get assignment history from Jira
+        history = jira.get_assignment_history(
+            sprint_id=sprint_id,
+            start_date=start_date,
+            end_date=end_date,
+            max_issues=200,
+        )
+
+        # Get current assignment snapshot
+        current_assignments = jira.get_current_assignments_snapshot(
+            sprint_id=sprint_id,
+        )
+
+        # Filter current assignments to only include our agents
+        filtered_assignments = {
+            agent: tickets
+            for agent, tickets in current_assignments.items()
+            if agent in all_agents
+        }
+
+        # Aggregate into buckets
+        data_points = aggregate_assignments_to_buckets(
+            history=history,
+            current_assignments=filtered_assignments,
+            granularity=granularity,
+            start_date=start_date,
+            end_date=end_date,
+            all_agents=all_agents,
+        )
+
+        # Calculate insights
+        unassigned_agents = []
+        consistently_overloaded = []
+
+        for agent in all_agents:
+            # Check if agent has had zero assignments throughout the period
+            total_assignments = sum(
+                dp.assignments_by_agent.get(agent, 0) for dp in data_points
+            )
+            if total_assignments == 0:
+                unassigned_agents.append(agent)
+
+            # Check if agent is consistently overloaded (5+ tickets average)
+            if data_points:
+                avg_assignments = total_assignments / len(data_points)
+                if avg_assignments >= 5:
+                    consistently_overloaded.append(agent)
+
+        return AssignmentTrendsResponse(
+            granularity=granularity,
+            sprint_name=sprint_name,
+            date_range={
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+            },
+            data_points=data_points,
+            agents=sorted(all_agents),
+            insights={
+                "unassigned_agents": unassigned_agents,
+                "consistently_overloaded": consistently_overloaded,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get assignment trends: {e}")
+        return AssignmentTrendsResponse(
+            granularity=granularity,
+            sprint_name=None,
+            date_range={"start": "", "end": ""},
+            data_points=[],
+            agents=[],
+            insights={"unassigned_agents": [], "consistently_overloaded": [], "error": str(e)},
+        )
 
 
 # =============================================================================
@@ -922,6 +1189,10 @@ async def force_sprint_planning():
         all_issues = logged_jira.get_project_issues(max_results=100)
         unassigned_items = []
         for issue in all_issues:
+            # Skip Epics - they should never be in sprints
+            if issue.fields.issuetype.name == "Epic":
+                continue
+
             sprint_info = logged_jira.get_issue_sprint_info(issue.key)
             # Check if issue is not in any sprint (sprint_info might be None or empty)
             if not sprint_info or not sprint_info.get("current_sprint"):
@@ -1154,12 +1425,12 @@ Respond as {pm_config.get('display_name')}:"""
 
     # Generate response using LLM
     try:
-        response = app.state.llm.client.messages.create(
+        response = litellm.completion(
             model=app.state.llm.complex_model,  # Use Sonnet for chat
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
-        pm_response = response.content[0].text.strip()
+        pm_response = response.choices[0].message.content.strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
 

@@ -32,6 +32,25 @@ npm run build
 docker-compose up --build
 ```
 
+## Docker Deployment
+
+The application runs in Docker in production. **After making code changes, you must rebuild and restart the container:**
+
+```bash
+# Rebuild and restart (recommended after code changes)
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# Quick restart (if only config changes, no code)
+docker-compose restart
+
+# View logs
+docker-compose logs -f jira-simulator
+```
+
+The Docker build includes both frontend (built during image creation) and backend. Changes to `src/`, `frontend/src/`, or `config/` require a rebuild.
+
 ## Architecture
 
 ```
@@ -80,6 +99,23 @@ n8n (cron scheduler) → POST /trigger → FastAPI Backend
 - Epic lifecycle: Epic status syncs with children; Epics auto-assigned to team PMs
 - Sprint planning: PMs plan 7-day sprints on Mondays; maintains 1-2 future sprints
 - Violation cleanup: Gradually fixes process violations with explanatory comments
+
+## Detailed Architecture Reference
+
+**IMPORTANT:** For complex debugging, feature development, or understanding execution flow, refer to `ARCHITECTURE.md`. It contains:
+
+- **Execution Flow Diagrams**: Step-by-step sequence of `/trigger` endpoint
+- **State Machine Diagrams**: Sprint lifecycle, scenario phase transitions
+- **Dependency Graph**: What depends on what for correct operation
+- **Critical Invariants**: Conditions that must always be true
+- **Known Edge Cases**: Common failure scenarios and their causes
+- **Quick Debugging Reference**: Checklist for common issues
+
+Always consult `ARCHITECTURE.md` when:
+- Modifying sprint lifecycle logic
+- Changing state synchronization
+- Debugging "state out of sync" issues
+- Adding new detection/completion mechanisms
 
 ## Configuration
 

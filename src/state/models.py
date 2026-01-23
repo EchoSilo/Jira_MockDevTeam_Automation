@@ -9,7 +9,7 @@ Sprint-level scenarios are now managed via SprintScenario in src/scenarios/.
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, PrivateAttr
 import uuid
 
 if TYPE_CHECKING:
@@ -240,7 +240,8 @@ class ActiveScenario(BaseModel):
     phase_target_end: datetime
 
     # Assignment
-    assigned_agent: Optional[str] = None
+    assigned_agent: Optional[str] = None  # Primary developer
+    qa_agent: Optional[str] = None  # QA tester assigned during testing phase
     involved_agents: list[str] = Field(default_factory=list)
 
     # Context for special scenarios
@@ -319,6 +320,16 @@ class ActiveScenario(BaseModel):
         phase_duration = max(phase_duration, min_phase_duration)
 
         self.phase_target_end = now + phase_duration
+
+    def assign_qa(self, qa_agent_id: str) -> None:
+        """Assign a QA agent to test this ticket."""
+        self.qa_agent = qa_agent_id
+        if qa_agent_id not in self.involved_agents:
+            self.involved_agents.append(qa_agent_id)
+
+    def unassign_qa(self) -> None:
+        """Remove QA assignment (when testing is complete)."""
+        self.qa_agent = None
 
     def inject_blocker(self, reason: str, agent_id: str) -> None:
         """Convert to blocker scenario."""
@@ -586,32 +597,122 @@ class RecentAction(BaseModel):
 
 
 class SprintState(BaseModel):
-    """Current sprint tracking."""
-    sprint_number: int = 1
-    sprint_day: int = Field(default=1, validation_alias="day")
-    total_days: int = 7  # 1-week sprints (Monday to Friday)
-    start_date: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    """Sprint tracking - derives sprint_number/day from Jira (source of truth).
+
+    The sprint_number and sprint_day are computed from Jira's active sprint data,
+    not stored as independent counters. This prevents drift between local state
+    and Jira's actual sprint.
+
+    Raw Jira data is stored for offline fallback when Jira is unavailable.
+    """
+
+    # Configuration (stored in state.json)
+    total_days: int = 7  # Sprint length for calculations
+
+    # Raw Jira data (stored for offline fallback)
+    jira_sprint_name: Optional[str] = None  # e.g., "ESCRUM Sprint 7"
+    jira_start_date: Optional[str] = None   # ISO format from Jira
+    jira_end_date: Optional[str] = None     # ISO format from Jira
+
+    # Cached derived values (NOT serialized - computed at tick start)
+    _sprint_number: Optional[int] = PrivateAttr(default=None)
+    _sprint_day: Optional[int] = PrivateAttr(default=None)
+    _initialized: bool = PrivateAttr(default=False)
 
     @classmethod
     def model_validate(cls, obj, **kwargs):
-        """Handle legacy format with 'name' field instead of 'sprint_number'."""
-        if isinstance(obj, dict) and "name" in obj and "sprint_number" not in obj:
-            # Parse sprint number from name like "Sprint 1"
-            try:
-                obj["sprint_number"] = int(obj["name"].split()[-1])
-            except (ValueError, IndexError):
-                obj["sprint_number"] = 1
+        """Handle migration from old format with sprint_number/sprint_day fields."""
+        if isinstance(obj, dict):
+            # Migrate from legacy "name" field
+            if "name" in obj and "jira_sprint_name" not in obj:
+                obj["jira_sprint_name"] = obj["name"]
+
+            # Migrate from old sprint_number/sprint_day format
+            if "sprint_number" in obj and "jira_sprint_name" not in obj:
+                obj["jira_sprint_name"] = f"Sprint {obj.get('sprint_number', 1)}"
+
+            # Migrate start_date to jira_start_date
+            if "start_date" in obj and "jira_start_date" not in obj:
+                start_date = obj["start_date"]
+                if isinstance(start_date, str):
+                    obj["jira_start_date"] = start_date
+                elif hasattr(start_date, 'isoformat'):
+                    obj["jira_start_date"] = start_date.isoformat()
+
+            # Remove old fields that are no longer stored
+            obj.pop("sprint_number", None)
+            obj.pop("sprint_day", None)
+            obj.pop("day", None)  # Old alias
+            obj.pop("start_date", None)
+            obj.pop("name", None)
+
         return super().model_validate(obj, **kwargs)
 
-    def advance_day(self) -> bool:
-        """Advance sprint day, returns True if new sprint started."""
-        self.sprint_day += 1
-        if self.sprint_day > self.total_days:
-            self.sprint_number += 1
-            self.sprint_day = 1
-            self.start_date = datetime.utcnow()
-            return True
-        return False
+    def inject_jira_sprint(self, jira_sprint: Optional[dict]) -> None:
+        """Inject Jira sprint data and compute derived values.
+
+        Call this at the start of each tick with the active sprint from Jira.
+        If jira_sprint is None (no active sprint or Jira unavailable),
+        uses cached data from previous run as fallback.
+        """
+        if jira_sprint:
+            self.jira_sprint_name = jira_sprint.get("name")
+            self.jira_start_date = jira_sprint.get("start_date")
+            self.jira_end_date = jira_sprint.get("end_date")
+        # Compute derived values (uses cached data if jira_sprint was None)
+        self._compute_derived_values()
+        self._initialized = True
+
+    def _compute_derived_values(self) -> None:
+        """Compute sprint_number and sprint_day from Jira data."""
+        # Parse sprint number from name (e.g., "ESCRUM Sprint 7" -> 7)
+        if self.jira_sprint_name:
+            try:
+                self._sprint_number = int(self.jira_sprint_name.split()[-1])
+            except (ValueError, IndexError):
+                self._sprint_number = 1
+        else:
+            self._sprint_number = 1
+
+        # Calculate sprint day from start date
+        if self.jira_start_date:
+            try:
+                from datetime import timezone
+                # Parse start date (handle various formats)
+                start_str = self.jira_start_date
+                if "T" in start_str:
+                    start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                else:
+                    start_date = datetime.fromisoformat(start_str)
+
+                # Calculate days since sprint started (1-indexed)
+                now = datetime.now(timezone.utc)
+                if start_date.tzinfo is None:
+                    start_date = start_date.replace(tzinfo=timezone.utc)
+
+                days_elapsed = (now.date() - start_date.date()).days + 1  # +1 for 1-indexed
+                # Clamp to valid range [1, total_days]
+                self._sprint_day = max(1, min(days_elapsed, self.total_days))
+            except Exception:
+                self._sprint_day = 1
+        else:
+            self._sprint_day = 1
+
+    @property
+    def sprint_number(self) -> int:
+        """Get sprint number (derived from Jira sprint name)."""
+        if not self._initialized:
+            self._compute_derived_values()
+            self._initialized = True
+        return self._sprint_number or 1
+
+    @property
+    def sprint_day(self) -> int:
+        """Get sprint day (derived from Jira start_date)."""
+        if not self._initialized:
+            self._compute_derived_values()
+            self._initialized = True
+        return self._sprint_day or 1
 
     def is_mid_sprint(self) -> bool:
         """Check if we're in the middle of the sprint (days 3-5 for 7-day sprint)."""
@@ -679,8 +780,8 @@ class SimulationState(BaseModel):
     last_run: Optional[datetime] = None
     simulation_day: int = 1
 
-    # Sprint tracking (alias for backwards compatibility with old state.json)
-    sprint: SprintState = Field(default_factory=SprintState, validation_alias="current_sprint")
+    # Sprint tracking (accepts both "sprint" and "current_sprint" for backwards compatibility)
+    sprint: SprintState = Field(default_factory=SprintState, validation_alias=AliasChoices("sprint", "current_sprint"))
 
     # Core scenario tracking
     active_scenarios: dict[str, ActiveScenario] = Field(default_factory=dict)
@@ -775,10 +876,22 @@ class SimulationState(BaseModel):
         # Build a map of agent_id -> assigned ticket keys from scenarios
         agent_tickets: dict[str, list[str]] = {}
         for scenario in self.active_scenarios.values():
-            if scenario.assigned_agent and scenario.current_phase != ScenarioPhase.COMPLETED:
+            if scenario.current_phase == ScenarioPhase.COMPLETED:
+                continue
+
+            # Sync developer assignments
+            if scenario.assigned_agent:
                 if scenario.assigned_agent not in agent_tickets:
                     agent_tickets[scenario.assigned_agent] = []
                 agent_tickets[scenario.assigned_agent].append(scenario.ticket_key)
+
+            # Sync QA assignments for tickets in testing phases
+            if scenario.qa_agent and scenario.current_phase in [
+                ScenarioPhase.IN_TESTING, ScenarioPhase.RE_TESTING
+            ]:
+                if scenario.qa_agent not in agent_tickets:
+                    agent_tickets[scenario.qa_agent] = []
+                agent_tickets[scenario.qa_agent].append(scenario.ticket_key)
 
         # Update each agent's assigned_tickets and workload
         for agent_id, tickets in agent_tickets.items():
@@ -852,18 +965,31 @@ class SimulationState(BaseModel):
         return datetime.utcnow().date() > self.last_run.date()
 
     def advance_day(self) -> None:
-        """Advance to new day, reset counters."""
+        """Advance to new simulation day, reset daily counters.
+
+        Note: Sprint day is derived from Jira's start_date, not incremented locally.
+        Sprint transitions are detected by comparing sprint_number before/after
+        Jira sprint injection in the /trigger endpoint.
+        """
         self.simulation_day += 1
 
         # Reset agent daily counters
         for agent in self.agents.values():
             agent.reset_daily_counters()
 
-        # Advance sprint and reset sprint counters if new sprint
-        new_sprint_started = self.sprint.advance_day()
-        if new_sprint_started:
+    def handle_sprint_transition(self, previous_sprint_number: int) -> bool:
+        """Handle sprint transition by resetting agent counters.
+
+        Call after inject_jira_sprint() to detect and handle sprint changes.
+        Returns True if a sprint transition occurred.
+        """
+        current = self.sprint.sprint_number
+        if current != previous_sprint_number:
+            # Reset agent sprint counters for new sprint
             for agent in self.agents.values():
-                agent.reset_sprint_counters(self.sprint.sprint_number)
+                agent.reset_sprint_counters(current)
+            return True
+        return False
 
     # ========== Serialization Helpers ==========
 

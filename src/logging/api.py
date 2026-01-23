@@ -478,10 +478,11 @@ HTML_VIEWER = """
         let currentTab = 'conversation';
 
         // Cost calculation helpers
-        // Pricing: Sonnet (complex) $3/$15, Haiku (routine) $1/$5 per MTok
+        // Pricing: DeepSeek V3.2 via OpenRouter ~$0.14/$0.28 per MTok (input/output)
+        // Using same rate for routine/complex since both use DeepSeek
         function calculateCost(isComplex, inputTokens, outputTokens) {
-            const inputRate = isComplex ? 3 : 1;
-            const outputRate = isComplex ? 15 : 5;
+            const inputRate = 0.14;
+            const outputRate = 0.28;
             return (inputTokens * inputRate + outputTokens * outputRate) / 1000000;
         }
 
@@ -604,8 +605,8 @@ HTML_VIEWER = """
                     data.conversation.map(c => {
                         const time = new Date(c.timestamp).toLocaleTimeString();
                         const modelBadge = c.is_complex ?
-                            '<span class="badge badge-busy">Sonnet</span>' :
-                            '<span class="badge badge-light">Haiku</span>';
+                            '<span class="badge badge-busy">Complex</span>' :
+                            '<span class="badge badge-light">Routine</span>';
                         const configInfo = [
                             `max_tokens: ${c.max_tokens || 'N/A'}`,
                             c.stop_reason ? `stop: ${c.stop_reason}` : null

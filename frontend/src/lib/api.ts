@@ -331,6 +331,34 @@ export interface ReleaseNotesHistoryItem {
 
 export type OutputFormat = 'md' | 'txt' | 'docx' | 'pptx' | 'pdf';
 
+// Assignment trends types
+export interface AssignmentTrendDataPoint {
+  date: string;
+  period_start: string;
+  period_end: string;
+  assignments_by_agent: Record<string, number>;
+}
+
+export interface AssignmentTrendsResponse {
+  granularity: 'daily' | 'weekly' | 'monthly';
+  sprint_name: string | null;
+  date_range: { start: string; end: string };
+  data_points: AssignmentTrendDataPoint[];
+  agents: string[];
+  insights: {
+    unassigned_agents: string[];
+    consistently_overloaded: string[];
+    error?: string;
+  };
+}
+
+export interface AssignmentTrendsParams {
+  granularity?: 'daily' | 'weekly' | 'monthly';
+  sprint_id?: number;
+  days_back?: number;
+  team?: 'alpha' | 'beta';
+}
+
 // API Error class
 export class ApiError extends Error {
   status: number;
@@ -398,6 +426,19 @@ export const api = {
 
   // Get sprint data from Jira (status breakdown, burndown, velocity)
   getSprintData: () => fetchApi<SprintDataResponse>('/api/sprint-data'),
+
+  // Get assignment trends data
+  getAssignmentTrends: (params?: AssignmentTrendsParams) => {
+    const searchParams = new URLSearchParams();
+    if (params?.granularity) searchParams.set('granularity', params.granularity);
+    if (params?.sprint_id) searchParams.set('sprint_id', String(params.sprint_id));
+    if (params?.days_back) searchParams.set('days_back', String(params.days_back));
+    if (params?.team) searchParams.set('team', params.team);
+    const query = searchParams.toString();
+    return fetchApi<AssignmentTrendsResponse>(
+      `/api/assignment-trends${query ? `?${query}` : ''}`
+    );
+  },
 
   // Trigger a simulation tick
   trigger: () => fetchApi<TriggerResponse>('/trigger', { method: 'POST' }),

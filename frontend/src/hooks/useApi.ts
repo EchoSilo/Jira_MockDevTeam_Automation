@@ -13,6 +13,8 @@ import api, {
   type ReleaseNotesResponse,
   type ReleaseNotesHistoryItem,
   type OutputFormat,
+  type AssignmentTrendsResponse,
+  type AssignmentTrendsParams,
   ApiError,
 } from '@/lib/api';
 
@@ -120,6 +122,20 @@ export function useScenarios(options?: UseQueryOptions) {
 
 export function useSprintData(options?: UseQueryOptions) {
   return useQuery<SprintDataResponse>(() => api.getSprintData(), options);
+}
+
+// Hook for assignment trends
+export function useAssignmentTrends(
+  params?: AssignmentTrendsParams,
+  options?: UseQueryOptions
+) {
+  return useQuery<AssignmentTrendsResponse>(
+    () => api.getAssignmentTrends(params),
+    {
+      ...options,
+      key: JSON.stringify(params), // Refetch when params change
+    }
+  );
 }
 
 export function useSessions(

@@ -35,9 +35,67 @@ class JiraClient:
             basic_auth=(self.email, self.api_token),
         )
 
+        # Status cache for workflow awareness
+        self._status_cache: Optional[list[dict]] = None
+        self._status_cache_time: Optional[datetime] = None
+        self._cache_ttl = timedelta(hours=1)
+
     def get_issue(self, issue_key: str) -> Issue:
         """Fetch a single issue by key."""
         return self._client.issue(issue_key)
+
+    # ==================== Workflow Status Methods ====================
+
+    def get_all_statuses(self, use_cache: bool = True) -> list[dict]:
+        """Get all statuses in the Jira instance with caching.
+
+        Returns list of dicts with id, name, description, and category.
+        """
+        # Check cache first
+        if use_cache and self._status_cache and self._status_cache_time:
+            if datetime.utcnow() - self._status_cache_time < self._cache_ttl:
+                return self._status_cache
+
+        try:
+            statuses = self._client.statuses()
+            self._status_cache = [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "description": getattr(s, "description", ""),
+                    "category": (
+                        s.statusCategory.name
+                        if hasattr(s, "statusCategory") and s.statusCategory
+                        else None
+                    ),
+                }
+                for s in statuses
+            ]
+            self._status_cache_time = datetime.utcnow()
+            return self._status_cache
+        except Exception as e:
+            logger.error(f"Failed to fetch statuses: {e}")
+            return []
+
+    def get_terminal_statuses(self) -> list[str]:
+        """Get all terminal (Done category) status names.
+
+        These are statuses that represent completed work.
+        """
+        all_statuses = self.get_all_statuses()
+        return [s["name"] for s in all_statuses if s.get("category") == "Done"]
+
+    def is_terminal_status(self, status_name: str) -> bool:
+        """Check if a status is a terminal (Done category) status."""
+        terminal = self.get_terminal_statuses()
+        return status_name in terminal
+
+    def invalidate_status_cache(self) -> None:
+        """Force refresh of status cache on next call."""
+        self._status_cache = None
+        self._status_cache_time = None
+
+    # ==================== Issue Methods ====================
 
     def get_project_issues(
         self,
@@ -283,9 +341,34 @@ class JiraClient:
         return self._client.search_issues(jql)
 
     def add_issue_to_sprint(self, sprint_id: int, issue_keys: list[str]) -> bool:
-        """Add issues to a sprint."""
+        """Add issues to a sprint.
+
+        Validates that no Epics are being added - Epics should not be in sprints.
+        Only Stories, Bugs, and Tasks belong in sprints.
+        """
         try:
-            self._client.add_issues_to_sprint(sprint_id, issue_keys)
+            # Filter out Epics - they should never be in sprints
+            valid_keys = []
+            for key in issue_keys:
+                try:
+                    issue = self._client.issue(key, fields="issuetype")
+                    if issue.fields.issuetype.name == "Epic":
+                        logger.warning(
+                            f"Blocked Epic {key} from being added to sprint {sprint_id}. "
+                            "Epics should not be in sprints."
+                        )
+                        continue
+                    valid_keys.append(key)
+                except Exception as e:
+                    logger.warning(f"Could not validate issue type for {key}: {e}")
+                    # Still add it if we can't check - let Jira handle any errors
+                    valid_keys.append(key)
+
+            if not valid_keys:
+                logger.info("No valid issues to add to sprint after Epic filtering")
+                return True  # No failure, just nothing valid to add
+
+            self._client.add_issues_to_sprint(sprint_id, valid_keys)
             return True
         except Exception:
             return False
@@ -303,6 +386,23 @@ class JiraClient:
             return False
         except Exception:
             return False
+
+    def get_epics_in_sprints(self) -> list[Issue]:
+        """Find Epics that are incorrectly assigned to active or future sprints.
+
+        Epics should never be in sprints - only Stories, Bugs, and Tasks.
+        This method finds violations to be cleaned up.
+        Only checks active/future sprints, not closed ones.
+        """
+        try:
+            return self._client.search_issues(
+                f"project = {self.project_key} AND issuetype = Epic "
+                "AND sprint in openSprints()",
+                maxResults=100
+            )
+        except Exception as e:
+            logger.error(f"Failed to find Epics in sprints: {e}")
+            return []
 
     def _get_sprint_field_id(self) -> Optional[str]:
         """Get the custom field ID for the sprint field."""
@@ -335,6 +435,8 @@ class JiraClient:
                 "id": sprint.id,
                 "name": sprint.name,
                 "state": sprint.state,
+                "start_date": getattr(sprint, "startDate", None),
+                "end_date": getattr(sprint, "endDate", None),
             }
         except Exception:
             return None
@@ -389,11 +491,12 @@ class JiraClient:
         """
         try:
             # Find incomplete issues before closing (if we need to move them)
+            # Use statusCategory to catch all terminal statuses (Done, Closed, Resolved, etc.)
             incomplete_keys = []
             if move_incomplete_to:
                 incomplete_issues = self._client.search_issues(
                     f"project = {self.project_key} AND sprint = {sprint_id} "
-                    f"AND status NOT IN (Done, Closed)",
+                    f'AND statusCategory != "Done"',
                     maxResults=200
                 )
                 incomplete_keys = [issue.key for issue in incomplete_issues]
@@ -812,3 +915,119 @@ class JiraClient:
             }
         except Exception:
             return None
+
+    # ==================== Assignment History Methods ====================
+
+    def get_assignment_history(
+        self,
+        sprint_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_issues: int = 200,
+    ) -> list[dict]:
+        """
+        Get assignment change history for issues from Jira changelog.
+
+        Args:
+            sprint_id: Optional sprint ID to filter issues by
+            start_date: Optional start date to filter changelog entries
+            end_date: Optional end date to filter changelog entries
+            max_issues: Maximum number of issues to fetch
+
+        Returns:
+            List of dicts with:
+            - issue_key: The issue key
+            - timestamp: ISO timestamp of the assignment change
+            - from_assignee: Previous assignee display name (or None if unassigned)
+            - to_assignee: New assignee display name (or None if unassigned)
+            - to_account_id: New assignee account ID (for team mapping)
+        """
+        try:
+            # Build JQL based on parameters
+            jql = f"project = {self.project_key}"
+            if sprint_id:
+                jql += f" AND sprint = {sprint_id}"
+            jql += " ORDER BY updated DESC"
+
+            # Fetch issues with changelog expanded
+            issues = self._client.search_issues(
+                jql,
+                maxResults=max_issues,
+                expand="changelog",
+            )
+
+            history = []
+            for issue in issues:
+                if not hasattr(issue, "changelog") or not issue.changelog:
+                    continue
+
+                for change in issue.changelog.histories:
+                    # Parse the change timestamp
+                    try:
+                        change_date = datetime.fromisoformat(
+                            change.created.replace("Z", "+00:00")
+                        )
+                    except (ValueError, AttributeError):
+                        continue
+
+                    # Apply date filters
+                    if start_date and change_date < start_date:
+                        continue
+                    if end_date and change_date > end_date:
+                        continue
+
+                    # Look for assignee field changes
+                    for item in change.items:
+                        if item.field == "assignee":
+                            history.append({
+                                "issue_key": issue.key,
+                                "timestamp": change.created,
+                                "from_assignee": item.fromString,
+                                "to_assignee": item.toString,
+                                "to_account_id": getattr(item, "to", None),
+                            })
+
+            # Sort by timestamp
+            return sorted(history, key=lambda x: x["timestamp"])
+        except Exception as e:
+            logger.error(f"Failed to fetch assignment history: {e}")
+            return []
+
+    def get_current_assignments_snapshot(
+        self,
+        sprint_id: Optional[int] = None,
+        issue_types: Optional[list[str]] = None,
+    ) -> dict[str, list[str]]:
+        """
+        Get current ticket assignments grouped by assignee.
+
+        Args:
+            sprint_id: Optional sprint ID to filter issues by
+            issue_types: Optional list of issue types to filter
+
+        Returns:
+            Dict mapping assignee display name to list of issue keys
+        """
+        try:
+            jql = f"project = {self.project_key} AND assignee IS NOT EMPTY"
+            if sprint_id:
+                jql += f" AND sprint = {sprint_id}"
+            if issue_types:
+                type_str = ", ".join(f'"{t}"' for t in issue_types)
+                jql += f" AND issuetype IN ({type_str})"
+
+            issues = self._client.search_issues(jql, maxResults=500)
+
+            assignments: dict[str, list[str]] = {}
+            for issue in issues:
+                assignee = issue.fields.assignee
+                if assignee:
+                    name = assignee.displayName
+                    if name not in assignments:
+                        assignments[name] = []
+                    assignments[name].append(issue.key)
+
+            return assignments
+        except Exception as e:
+            logger.error(f"Failed to fetch current assignments: {e}")
+            return {}

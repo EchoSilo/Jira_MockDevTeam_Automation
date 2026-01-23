@@ -23,10 +23,22 @@ class QAAgent(BaseAgent):
         """Select a QA-appropriate action."""
         actions = []
 
-        # Get tickets ready for testing (filtered to allowed issue types - no Epics)
+        # First, check tickets assigned to this QA in state
+        agent_state = state.get_agent_state(self.agent_id)
+        assigned_tickets = agent_state.assigned_tickets if agent_state else []
+
+        # Get tickets ready for testing from Jira (filtered to allowed issue types)
         ready_for_qa = self.jira.get_issues_ready_for_testing(
             issue_types=QA_ALLOWED_ISSUE_TYPES
         )
+
+        # Prioritize tickets that are both assigned to us AND ready for testing
+        if assigned_tickets and ready_for_qa:
+            # Filter to tickets we're assigned to
+            ready_keys = {t.key for t in ready_for_qa}
+            my_tickets = [t for t in ready_for_qa if t.key in assigned_tickets]
+            if my_tickets:
+                ready_for_qa = my_tickets  # Only work on our assigned tickets
 
         if ready_for_qa:
             ticket = random.choice(ready_for_qa)

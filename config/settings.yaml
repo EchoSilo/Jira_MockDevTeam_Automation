@@ -97,9 +97,15 @@ cycle_times:
     typical_hours: 280 # ~2 weeks typical
 
 # LLM configuration
+# Uses LiteLLM for provider flexibility. Model format: "provider/model-name"
+# Supported providers:
+#   - anthropic/model-name: Direct Anthropic API (requires ANTHROPIC_API_KEY)
+#   - openrouter/provider/model: OpenRouter (requires OPENROUTER_API_KEY)
+#     Examples: openrouter/anthropic/claude-3.5-sonnet, openrouter/openai/gpt-4o
+#   - openai/model-name: Direct OpenAI API (requires OPENAI_API_KEY)
 llm:
-  routine_model: "claude-haiku-4-5"
-  complex_model: "claude-sonnet-4-5"
+  routine_model: "openrouter/deepseek/deepseek-v3.2"
+  complex_model: "openrouter/deepseek/deepseek-v3.2"
 
   # Temperature settings
   planning_temperature: 0.7   # Higher for creative scenario decisions

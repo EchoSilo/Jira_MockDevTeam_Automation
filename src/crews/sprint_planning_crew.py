@@ -115,7 +115,16 @@ class SprintPlanningCrew(BaseCrew):
         items: list[dict],
         max_items: int = 8,
     ) -> list[dict]:
-        """Select items for sprint based on priority and type."""
+        """Select items for sprint based on priority and type.
+
+        Filters out Epics - only Stories, Bugs, and Tasks belong in sprints.
+        """
+        # Filter out Epics first - they should never be in sprints
+        non_epic_items = [item for item in items if item.get("type") != "Epic"]
+        if len(non_epic_items) < len(items):
+            filtered_count = len(items) - len(non_epic_items)
+            logger.warning(f"Filtered {filtered_count} Epics from sprint planning")
+
         # Sort: bugs first, then by priority
         priority_order = {"Highest": 0, "High": 1, "Medium": 2, "Low": 3, "Lowest": 4}
 
@@ -124,7 +133,7 @@ class SprintPlanningCrew(BaseCrew):
             priority = priority_order.get(item.get("priority", "Medium"), 2)
             return (is_bug, priority)
 
-        sorted_items = sorted(items, key=sort_key)
+        sorted_items = sorted(non_epic_items, key=sort_key)
         return sorted_items[:max_items]
 
     def create_future_sprint(
@@ -330,6 +339,58 @@ class SprintPlanningCrew(BaseCrew):
             "result": result,
         }
 
+    def _transition_done_to_closed(self, sprint_id: int) -> int:
+        """Transition all Done items in sprint to Closed before completing.
+
+        This ensures that items in "Done" status are properly closed before
+        the sprint ends, so they don't get incorrectly identified as incomplete.
+
+        Args:
+            sprint_id: The sprint ID to check for Done items
+
+        Returns:
+            Count of items successfully transitioned to Closed
+        """
+        closed_count = 0
+        jira = self.jira_tools.jira
+
+        try:
+            # Get Done items in the sprint (excluding Epics)
+            done_issues = jira._client.search_issues(
+                f"project = {jira.project_key} AND sprint = {sprint_id} "
+                f"AND status = Done AND issuetype != Epic",
+                maxResults=200
+            )
+
+            for issue in done_issues:
+                try:
+                    success = jira.transition_issue(issue.key, "Closed")
+                    if success:
+                        closed_count += 1
+                        logger.debug(f"Transitioned {issue.key} from Done to Closed")
+                    else:
+                        # Try alternate terminal status names
+                        for alt_status in ["Close", "Close Issue", "Resolve"]:
+                            success = jira.transition_issue(issue.key, alt_status)
+                            if success:
+                                closed_count += 1
+                                logger.debug(
+                                    f"Transitioned {issue.key} to {alt_status}"
+                                )
+                                break
+                except Exception as e:
+                    logger.warning(f"Failed to close {issue.key}: {e}")
+
+            if closed_count > 0:
+                logger.info(
+                    f"Transitioned {closed_count} Done items to Closed "
+                    f"before sprint completion"
+                )
+        except Exception as e:
+            logger.warning(f"Error transitioning Done items to Closed: {e}")
+
+        return closed_count
+
     def complete_sprint(
         self,
         pm_id: str,
@@ -339,6 +400,9 @@ class SprintPlanningCrew(BaseCrew):
     ) -> dict:
         """
         PM completes the active sprint, closing it out.
+
+        Transitions Done items to Closed before completing to ensure
+        they are properly finalized.
 
         Args:
             pm_id: The PM agent ID
@@ -351,6 +415,9 @@ class SprintPlanningCrew(BaseCrew):
         """
         persona = self.get_persona(pm_id)
 
+        # Transition Done items to Closed before completing sprint
+        closed_count = self._transition_done_to_closed(sprint_id)
+
         # Complete sprint directly via Jira API
         success, error = self.jira_tools.jira.complete_sprint(
             sprint_id, move_incomplete_to=next_sprint_id
@@ -358,6 +425,8 @@ class SprintPlanningCrew(BaseCrew):
 
         if success:
             result = f"Successfully completed {sprint_name}"
+            if closed_count > 0:
+                result += f" (transitioned {closed_count} items to Closed)"
             if next_sprint_id:
                 result += f" (incomplete issues moved to sprint {next_sprint_id})"
         else:
@@ -371,6 +440,7 @@ class SprintPlanningCrew(BaseCrew):
             "sprint_id": sprint_id,
             "sprint_name": sprint_name,
             "next_sprint_id": next_sprint_id,
+            "items_closed": closed_count,
             "result": result,
         }
 

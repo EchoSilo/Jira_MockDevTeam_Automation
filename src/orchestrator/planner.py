@@ -13,6 +13,8 @@ import time
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
+import litellm
+
 from ..services.llm_service import LLMService
 from ..state import SimulationState, ScenarioType, PlannedAction, ReleaseDirective
 from ..scenarios import ScriptExecutor, SprintScenario
@@ -110,6 +112,39 @@ class ScenarioPlanner:
             logger.info(f"Release directives filled all {len(directive_actions)} action slots")
             return directive_actions[:target_actions]
 
+        # Phase 0.5: Force-execute CRITICAL priority opportunities
+        # These MUST be done - don't leave to LLM discretion
+        critical_actions = []
+        critical_opps = [
+            o for o in analysis.get("opportunities", [])
+            if o.get("priority") == "critical"
+        ]
+        for opp in critical_opps:
+            agent_id = opp.get("pm_id") or opp.get("agent_id")
+            if agent_id and agent_id not in directive_agent_ids:
+                critical_actions.append({
+                    "type": opp.get("type"),
+                    "pm_id": opp.get("pm_id"),
+                    "agent_id": agent_id,
+                    "sprint_id": opp.get("sprint_id"),
+                    "sprint_name": opp.get("sprint_name"),
+                    "scenario_reason": opp.get("scenario_reason"),
+                    "ticket_key": opp.get("ticket_key"),
+                    "details": opp.get("description"),
+                })
+                directive_agent_ids.add(agent_id)
+                logger.info(f"Force-adding critical action: {opp.get('type')}")
+
+        # Combine with directive actions
+        directive_actions = directive_actions + critical_actions
+
+        # If directives + critical filled all slots, return those
+        if len(directive_actions) >= target_actions:
+            logger.info(f"Directives + critical actions filled all slots")
+            return self._validate_actions(
+                directive_actions, analysis, state
+            )[:target_actions]
+
         # Phase 1: Get script-based actions (exclude agents already used by directives)
         script_actions = self._get_script_based_actions(state)
         # Filter out script actions that would use directive agents
@@ -142,14 +177,14 @@ class ScenarioPlanner:
             start_time = time.time()
             model = self.llm.complex_model  # Use Sonnet for planning
 
-            response = self.llm.client.messages.create(
+            response = litellm.completion(
                 model=model,
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
-            raw_response = response.content[0].text.strip()
+            raw_response = response.choices[0].message.content.strip()
             self.last_raw_response = raw_response
 
             # Log the LLM call
@@ -159,8 +194,8 @@ class ScenarioPlanner:
                     action_type="scenario_planning",
                     prompt=prompt,
                     response=raw_response,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
+                    input_tokens=response.usage.prompt_tokens,
+                    output_tokens=response.usage.completion_tokens,
                     duration_ms=duration_ms,
                     agent_id=None,
                     agent_name="Orchestrator",
@@ -449,12 +484,19 @@ Remember:
         if not opportunities:
             return "No specific opportunities detected"
 
-        # Group by priority
+        # Group by priority (include critical!)
+        critical = [o for o in opportunities if o.get("priority") == "critical"]
         high = [o for o in opportunities if o.get("priority") == "high"]
         medium = [o for o in opportunities if o.get("priority") == "medium"]
         low = [o for o in opportunities if o.get("priority") == "low"]
 
         lines = []
+
+        if critical:
+            lines.append("**CRITICAL - MUST DO FIRST:**")
+            for o in critical:
+                lines.append(f"  - [{o['type']}] {o['description']}")
+            lines.append("")
 
         if high:
             lines.append("**High Priority:**")

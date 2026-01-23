@@ -8,16 +8,28 @@ import logging
 import time
 from typing import Optional
 import anthropic
+import litellm
 import yaml
 
 logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    """Handles all LLM interactions with model routing."""
+    """Handles all LLM interactions with model routing via LiteLLM.
+
+    Supports multiple providers through LiteLLM:
+    - anthropic/model-name: Direct Anthropic API
+    - openrouter/provider/model: OpenRouter (100+ models)
+    - openai/model-name: Direct OpenAI API
+    """
 
     def __init__(self, config_path: str = "config/settings.yaml"):
-        self.client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        # Keep Anthropic client only for Skills API (beta feature not in LiteLLM)
+        self._anthropic_client = anthropic.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", "")
+        )
+        # LiteLLM uses environment variables automatically for API keys:
+        # ANTHROPIC_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, etc.
 
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
@@ -81,13 +93,13 @@ Just write the comment text directly, nothing else."""
 
         model = self._get_model(action_type)
 
-        response = self.client.messages.create(
+        response = litellm.completion(
             model=model,
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
         )
 
-        return response.content[0].text.strip()
+        return response.choices[0].message.content.strip()
 
     def generate_story(
         self,
@@ -131,14 +143,14 @@ Respond in this exact JSON format:
 
 Just the JSON, nothing else."""
 
-        response = self.client.messages.create(
+        response = litellm.completion(
             model=self.complex_model,
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
 
         import json
-        return json.loads(response.content[0].text.strip())
+        return json.loads(response.choices[0].message.content.strip())
 
     def generate_bug_report(
         self,
@@ -172,14 +184,14 @@ Respond in this exact JSON format:
 
 Just the JSON, nothing else."""
 
-        response = self.client.messages.create(
+        response = litellm.completion(
             model=self.complex_model,
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
 
         import json
-        return json.loads(response.content[0].text.strip())
+        return json.loads(response.choices[0].message.content.strip())
 
     def generate_technical_comment(
         self,
@@ -219,13 +231,13 @@ Write a realistic technical comment (2-4 sentences) that:
 
 No fluff, no AI-speak. Just the comment."""
 
-        response = self.client.messages.create(
+        response = litellm.completion(
             model=self.complex_model,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
 
-        return response.content[0].text.strip()
+        return response.choices[0].message.content.strip()
 
     def generate_release_notes(
         self,
@@ -275,12 +287,12 @@ Write polished, engaging release notes similar to video game patch notes (like C
 
 Write the release notes in Markdown format. Just the notes, no preamble."""
 
-        executive_response = self.client.messages.create(
+        executive_response = litellm.completion(
             model=self.complex_model,
             max_tokens=2000,
             messages=[{"role": "user", "content": executive_prompt}],
         )
-        executive_notes = executive_response.content[0].text.strip()
+        executive_notes = executive_response.choices[0].message.content.strip()
 
         # Generate technical notes
         technical_prompt = f"""You are a release manager creating internal technical release notes for {version_name}.
@@ -308,12 +320,12 @@ Write detailed technical release notes for the engineering team and stakeholders
 
 Write the technical release notes in Markdown format. Just the notes, no preamble."""
 
-        technical_response = self.client.messages.create(
+        technical_response = litellm.completion(
             model=self.complex_model,
             max_tokens=2500,
             messages=[{"role": "user", "content": technical_prompt}],
         )
-        technical_notes = technical_response.content[0].text.strip()
+        technical_notes = technical_response.choices[0].message.content.strip()
 
         return {
             "executive_notes": executive_notes,
@@ -399,14 +411,14 @@ Respond with ONLY a JSON array of tag strings, nothing else.
 Example: ["New Features", "Performance", "Bug Fixes"]"""
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=self.routine_model,  # Use Haiku for speed/cost
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}],
             )
 
             # Parse the JSON array from response
-            response_text = response.content[0].text.strip()
+            response_text = response.choices[0].message.content.strip()
 
             # Handle potential markdown code blocks
             if response_text.startswith("```"):
@@ -476,7 +488,8 @@ Create a polished, professional document with:
         try:
             logger.info(f"[Skills API] Calling beta.messages.create with skill_id={skill_id}")
 
-            response = self.client.beta.messages.create(
+            # Skills API requires direct Anthropic client (not available via LiteLLM)
+            response = self._anthropic_client.beta.messages.create(
                 model="claude-sonnet-4-5-20250929",
                 max_tokens=16384,
                 betas=["code-execution-2025-08-25", "skills-2025-10-02"],
@@ -531,7 +544,7 @@ Create a polished, professional document with:
 
             # Download the file
             logger.info(f"[Skills API] Downloading file...")
-            file_response = self.client.beta.files.download(
+            file_response = self._anthropic_client.beta.files.download(
                 file_id=file_id,
                 betas=["files-api-2025-04-14"]
             )

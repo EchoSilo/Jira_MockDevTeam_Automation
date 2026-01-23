@@ -9,6 +9,7 @@ services:
       - JIRA_EMAIL=${JIRA_EMAIL}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - PROJECT_KEY=${PROJECT_KEY}
     volumes:
       - ./data:/app/data
