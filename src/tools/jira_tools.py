@@ -583,9 +583,18 @@ Description:
                 if not sprint_info:
                     return f"Sprint {sprint_id} not found or not in 'future' state"
 
-                # Use today as start, 7 days from now as end
-                start_date = date_type.today()
-                end_date = start_date + timedelta(days=7)
+                # Sprint starts on Monday and ends on Sunday (2 weeks)
+                today = date_type.today()
+                # Find next Monday if today isn't Monday
+                if today.weekday() == 0:  # Already Monday
+                    start_date = today
+                else:
+                    days_until_monday = (7 - today.weekday()) % 7
+                    if days_until_monday == 0:
+                        days_until_monday = 7
+                    start_date = today + timedelta(days=days_until_monday)
+                # Sprint is 2 weeks: Monday + 13 days = Sunday
+                end_date = start_date + timedelta(days=13)
 
                 success, error = jira.start_sprint(
                     sprint_id, start_date=start_date, end_date=end_date

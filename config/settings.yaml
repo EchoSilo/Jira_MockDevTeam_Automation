@@ -104,8 +104,9 @@ cycle_times:
 #     Examples: openrouter/anthropic/claude-3.5-sonnet, openrouter/openai/gpt-4o
 #   - openai/model-name: Direct OpenAI API (requires OPENAI_API_KEY)
 llm:
-  routine_model: "openrouter/deepseek/deepseek-v3.2"
-  complex_model: "openrouter/deepseek/deepseek-v3.2"
+  routine_model: "gemini/gemini-2.5-flash-lite"
+  complex_model: "gemini/gemini-2.5-flash-lite"
+  orchestrator_thinking: true
 
   # Temperature settings
   planning_temperature: 0.7   # Higher for creative scenario decisions

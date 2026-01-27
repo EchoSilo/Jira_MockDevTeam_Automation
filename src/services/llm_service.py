@@ -21,6 +21,7 @@ class LLMService:
     - anthropic/model-name: Direct Anthropic API
     - openrouter/provider/model: OpenRouter (100+ models)
     - openai/model-name: Direct OpenAI API
+    - gemini/model-name: Google Gemini API
     """
 
     def __init__(self, config_path: str = "config/settings.yaml"):

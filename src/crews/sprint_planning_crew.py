@@ -142,6 +142,7 @@ class SprintPlanningCrew(BaseCrew):
         team: str,
         sprint_number: int,
         start_date: date,
+        current_date: Optional[date] = None,
     ) -> dict:
         """
         PM creates a future sprint.
@@ -151,6 +152,7 @@ class SprintPlanningCrew(BaseCrew):
             team: Team name
             sprint_number: The sprint number to create
             start_date: When the sprint should start
+            current_date: Current simulation date (defaults to today)
 
         Returns:
             Result dict with created sprint info
@@ -239,6 +241,7 @@ class SprintPlanningCrew(BaseCrew):
         current_sprint_number: int,
         future_sprints: list[dict],
         target_count: int = 2,
+        current_date: Optional[date] = None,
     ) -> list[dict]:
         """
         Ensure we have enough future sprints planned.
@@ -248,10 +251,12 @@ class SprintPlanningCrew(BaseCrew):
             current_sprint_number: Current sprint number
             future_sprints: List of existing future sprints
             target_count: How many future sprints to maintain
+            current_date: Current simulation date (defaults to today)
 
         Returns:
             List of results from creating any needed sprints
         """
+        today = current_date or date.today()
         results = []
         existing_count = len(future_sprints)
 
@@ -272,11 +277,11 @@ class SprintPlanningCrew(BaseCrew):
             next_number = last_number + 1
             # Assume sprints start on Monday, 7 days after previous
             # For simplicity, start from next Monday
-            start_date = self._next_monday(date.today())
+            start_date = self._next_monday(today)
             start_date += timedelta(weeks=existing_count)
         else:
             next_number = current_sprint_number + 1
-            start_date = self._next_monday(date.today())
+            start_date = self._next_monday(today)
 
         for i in range(sprints_needed):
             sprint_start = start_date + timedelta(weeks=i)
@@ -285,6 +290,7 @@ class SprintPlanningCrew(BaseCrew):
                 team="alpha",  # PMs can create for both teams
                 sprint_number=next_number + i,
                 start_date=sprint_start,
+                current_date=today,
             )
             results.append(result)
 
@@ -302,6 +308,7 @@ class SprintPlanningCrew(BaseCrew):
         pm_id: str,
         sprint_id: int,
         sprint_name: str,
+        current_date: Optional[date] = None,
     ) -> dict:
         """
         PM activates a future sprint to make it the current active sprint.
@@ -310,15 +317,23 @@ class SprintPlanningCrew(BaseCrew):
             pm_id: The PM agent ID
             sprint_id: The ID of the future sprint to activate
             sprint_name: The name of the sprint
+            current_date: Current simulation date (defaults to today)
 
         Returns:
             Result dict with sprint activation details
         """
         persona = self.get_persona(pm_id)
+        base_date = current_date or date.today()
 
-        # Start sprint directly via Jira API
-        start_date = date.today()
-        end_date = start_date + timedelta(days=7)
+        # Sprint should start on Monday and end on Sunday (2 weeks)
+        # Find the next Monday if today isn't Monday
+        if base_date.weekday() == 0:  # Already Monday
+            start_date = base_date
+        else:
+            start_date = self._next_monday(base_date)
+
+        # Sprint is 2 weeks: start Monday, end Sunday (14 days - 1 = 13 days later)
+        end_date = start_date + timedelta(days=13)
 
         success, error = self.jira_tools.jira.start_sprint(
             sprint_id, start_date=start_date, end_date=end_date
@@ -450,48 +465,80 @@ class SprintPlanningCrew(BaseCrew):
         current_sprint_id: int,
         current_sprint_name: str,
         new_sprint_name: Optional[str] = None,
+        current_date: Optional[date] = None,
     ) -> dict:
         """
         Complete the current sprint and start a new one, rolling over incomplete issues.
 
         This method:
-        1. Creates a new sprint (if new_sprint_name provided) or uses existing future sprint
+        1. Checks for existing future sprint matching the name, or creates one
         2. Closes the current sprint, moving incomplete issues to the new sprint
         3. Starts the new sprint
+
+        Sprint constraints:
+        - Sprints are 2 weeks long (14 days)
+        - Sprints start on Monday and end on Sunday
+        - Next sprint starts the day after the previous sprint ends
 
         Args:
             pm_id: The PM agent ID performing the rollover
             current_sprint_id: The ID of the sprint to close
             current_sprint_name: The name of the sprint to close
             new_sprint_name: Optional name for new sprint (creates one if provided)
+            current_date: Current simulation date (defaults to today)
 
         Returns:
             Result dict with rollover details
         """
         persona = self.get_persona(pm_id)
-        start_date = date.today()
-        end_date = start_date + timedelta(days=7)
+        base_date = current_date or date.today()
 
-        # Step 1: Create or find the next sprint
+        # Calculate sprint dates: start on next Monday, end on Sunday (2 weeks)
+        # Find the next Monday from base_date
+        days_until_monday = (7 - base_date.weekday()) % 7
+        if days_until_monday == 0 and base_date.weekday() != 0:
+            days_until_monday = 7  # If today isn't Monday, find next Monday
+        start_date = base_date + timedelta(days=days_until_monday)
+
+        # Sprint is 2 weeks: start Monday, end Sunday (14 days - 1 = 13 days later)
+        end_date = start_date + timedelta(days=13)  # Monday + 13 days = Sunday
+
+        # Step 1: Check for existing future sprint before creating
+        future_sprints = self.jira_tools.jira.get_future_sprints(max_results=4)
+        next_sprint_id = None
+
+        # Check if a sprint with matching name already exists
         if new_sprint_name:
-            new_sprint = self.jira_tools.jira.create_sprint(
-                name=new_sprint_name,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            if not new_sprint:
-                return {
-                    "action": "rollover_sprint",
-                    "success": False,
-                    "pm_id": pm_id,
-                    "pm_name": persona.get("display_name"),
-                    "result": f"Failed to create new sprint '{new_sprint_name}'",
-                }
-            next_sprint_id = new_sprint["id"]
-        else:
-            # Use first available future sprint
-            future_sprints = self.jira_tools.jira.get_future_sprints(max_results=1)
-            if not future_sprints:
+            for fs in future_sprints:
+                if fs["name"] == new_sprint_name:
+                    logger.info(f"Using existing future sprint: {new_sprint_name} (ID: {fs['id']})")
+                    next_sprint_id = fs["id"]
+                    break
+
+        # If no matching sprint found, create a new one
+        if next_sprint_id is None:
+            if new_sprint_name:
+                new_sprint = self.jira_tools.jira.create_sprint(
+                    name=new_sprint_name,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if not new_sprint:
+                    return {
+                        "action": "rollover_sprint",
+                        "success": False,
+                        "pm_id": pm_id,
+                        "pm_name": persona.get("display_name"),
+                        "result": f"Failed to create new sprint '{new_sprint_name}'",
+                    }
+                next_sprint_id = new_sprint["id"]
+                logger.info(f"Created new sprint: {new_sprint_name} (ID: {next_sprint_id})")
+            elif future_sprints:
+                # Use first available future sprint
+                next_sprint_id = future_sprints[0]["id"]
+                new_sprint_name = future_sprints[0]["name"]
+                logger.info(f"Using first future sprint: {new_sprint_name} (ID: {next_sprint_id})")
+            else:
                 return {
                     "action": "rollover_sprint",
                     "success": False,
@@ -499,8 +546,6 @@ class SprintPlanningCrew(BaseCrew):
                     "pm_name": persona.get("display_name"),
                     "result": "No future sprint available and no name provided to create one",
                 }
-            next_sprint_id = future_sprints[0]["id"]
-            new_sprint_name = future_sprints[0]["name"]
 
         # Step 2: Close current sprint, moving incomplete issues to next sprint
         close_success, close_error = self.jira_tools.jira.complete_sprint(
@@ -515,7 +560,7 @@ class SprintPlanningCrew(BaseCrew):
                 "result": f"Failed to close sprint: {close_error}",
             }
 
-        # Step 3: Start the new sprint
+        # Step 3: Start the new sprint with proper 2-week duration
         start_success, start_error = self.jira_tools.jira.start_sprint(
             next_sprint_id, start_date=start_date, end_date=end_date
         )
@@ -583,7 +628,7 @@ class SprintPlanningCrew(BaseCrew):
             # Could look up previous scenario completion rate here
             pass
 
-        # Generate the scenario
+        # Generate the scenario (2-week sprints = 14 days)
         scenario = planner.plan_scenario(
             sprint_id=sprint_id,
             sprint_name=sprint_name,
@@ -591,7 +636,7 @@ class SprintPlanningCrew(BaseCrew):
             team_capacity=team_capacity,
             release_context=release_context,
             previous_sprint_completion=previous_completion,
-            sprint_duration_days=7,
+            sprint_duration_days=14,
         )
 
         logger.info(

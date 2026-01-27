@@ -332,7 +332,7 @@ class ScenarioAnalyzer:
             ScenarioPhase.ASSIGNED: "start_work",
             ScenarioPhase.IN_PROGRESS: "progress_to_review",
             ScenarioPhase.IN_REVIEW: "complete_review",
-            ScenarioPhase.IN_TESTING: "qa_test",
+            ScenarioPhase.IN_TESTING: "qa_approve",  # Fixed: Use qa_approve instead of qa_test
             ScenarioPhase.BLOCKED: "discuss_blocker",
             ScenarioPhase.BLOCKER_DISCUSSED: "resolve_blocker",
             ScenarioPhase.REJECTED: "acknowledge_rejection",

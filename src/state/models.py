@@ -607,7 +607,7 @@ class SprintState(BaseModel):
     """
 
     # Configuration (stored in state.json)
-    total_days: int = 7  # Sprint length for calculations
+    total_days: int = 14  # Sprint length (2 weeks: Monday to Sunday)
 
     # Raw Jira data (stored for offline fallback)
     jira_sprint_name: Optional[str] = None  # e.g., "ESCRUM Sprint 7"
@@ -648,7 +648,7 @@ class SprintState(BaseModel):
 
         return super().model_validate(obj, **kwargs)
 
-    def inject_jira_sprint(self, jira_sprint: Optional[dict]) -> None:
+    def inject_jira_sprint(self, jira_sprint: Optional[dict], current_time: Optional[datetime] = None) -> None:
         """Inject Jira sprint data and compute derived values.
 
         Call this at the start of each tick with the active sprint from Jira.
@@ -660,10 +660,10 @@ class SprintState(BaseModel):
             self.jira_start_date = jira_sprint.get("start_date")
             self.jira_end_date = jira_sprint.get("end_date")
         # Compute derived values (uses cached data if jira_sprint was None)
-        self._compute_derived_values()
+        self._compute_derived_values(current_time)
         self._initialized = True
 
-    def _compute_derived_values(self) -> None:
+    def _compute_derived_values(self, current_time: Optional[datetime] = None) -> None:
         """Compute sprint_number and sprint_day from Jira data."""
         # Parse sprint number from name (e.g., "ESCRUM Sprint 7" -> 7)
         if self.jira_sprint_name:
@@ -686,9 +686,17 @@ class SprintState(BaseModel):
                     start_date = datetime.fromisoformat(start_str)
 
                 # Calculate days since sprint started (1-indexed)
-                now = datetime.now(timezone.utc)
+                if current_time:
+                    now = current_time
+                else:
+                    now = datetime.now(timezone.utc)
+
                 if start_date.tzinfo is None:
                     start_date = start_date.replace(tzinfo=timezone.utc)
+
+                # Ensure now is timezone aware if start_date is
+                if now.tzinfo is None and start_date.tzinfo:
+                    now = now.replace(tzinfo=timezone.utc)
 
                 days_elapsed = (now.date() - start_date.date()).days + 1  # +1 for 1-indexed
                 # Clamp to valid range [1, total_days]
@@ -715,24 +723,28 @@ class SprintState(BaseModel):
         return self._sprint_day or 1
 
     def is_mid_sprint(self) -> bool:
-        """Check if we're in the middle of the sprint (days 3-5 for 7-day sprint)."""
-        return 3 <= self.sprint_day <= 5
+        """Check if we're in the middle of the sprint (days 4-11 for 14-day sprint)."""
+        # Middle portion is roughly 25%-75% of sprint
+        quarter = self.total_days // 4
+        return quarter < self.sprint_day <= (self.total_days - quarter)
 
     def is_sprint_end(self) -> bool:
-        """Check if we're near sprint end (last 2 days for 7-day sprint)."""
-        return self.sprint_day > self.total_days - 2
+        """Check if we're near sprint end (last 3 days for 14-day sprint)."""
+        end_days = max(2, self.total_days // 5)  # ~3 days for 14-day sprint
+        return self.sprint_day > self.total_days - end_days
 
     def is_sprint_planning_day(self) -> bool:
         """Check if it's sprint planning day (day 1 = Monday)."""
         return self.sprint_day == 1
 
     def is_sprint_start(self) -> bool:
-        """Check if we're at the start of the sprint (first 2 days)."""
-        return self.sprint_day <= 2
+        """Check if we're at the start of the sprint (first 3 days for 14-day sprint)."""
+        start_days = max(2, self.total_days // 5)  # ~3 days for 14-day sprint
+        return self.sprint_day <= start_days
 
     def is_sprint_complete_day(self) -> bool:
-        """Check if it's sprint completion day (last day of sprint)."""
-        return self.sprint_day == self.total_days  # day 7
+        """Check if it's sprint completion day (last day = Sunday)."""
+        return self.sprint_day == self.total_days
 
 
 class ScenarioDistribution(BaseModel):
@@ -780,6 +792,10 @@ class SimulationState(BaseModel):
     last_run: Optional[datetime] = None
     simulation_day: int = 1
 
+    # Virtual Clock
+    simulation_time: Optional[datetime] = None
+    tick_duration_hours: float = 4.0
+
     # Sprint tracking (accepts both "sprint" and "current_sprint" for backwards compatibility)
     sprint: SprintState = Field(default_factory=SprintState, validation_alias=AliasChoices("sprint", "current_sprint"))
 
@@ -798,6 +814,12 @@ class SimulationState(BaseModel):
 
     # NEW: Sprint-level scenario (replaces per-ticket active_scenarios)
     # Stored as dict for JSON serialization, converted to SprintScenario when accessed
+
+    def model_post_init(self, __context: Any) -> None:
+        from datetime import timezone
+        if self.simulation_time is None:
+            self.simulation_time = datetime.now(timezone.utc)
+        super().model_post_init(__context)
     sprint_scenario: Optional[dict[str, Any]] = None
     completed_sprint_scenarios: list[str] = Field(default_factory=list)  # scenario_ids
 

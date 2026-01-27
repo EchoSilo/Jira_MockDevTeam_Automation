@@ -111,6 +111,8 @@ _state_cache = CachedState(ttl_seconds=5)  # Reload state every 5s
 def check_and_handle_expired_sprint(
     jira_client: JiraClient,
     state: Optional[SimulationState] = None,
+    personas: Optional[dict] = None,
+    settings: Optional[dict] = None,
 ) -> Optional[dict]:
     """
     Check if the active sprint has expired and handle it.
@@ -122,6 +124,8 @@ def check_and_handle_expired_sprint(
     Args:
         jira_client: Jira client for API calls
         state: Optional simulation state to update when sprint rolls over
+        personas: Persona configuration from personas.yaml (required for crew)
+        settings: Settings configuration from settings.yaml (required for LLM config)
 
     Returns:
         dict with sprint action taken, or None if no action needed
@@ -138,7 +142,7 @@ def check_and_handle_expired_sprint(
 
         # Parse end date and check if expired
         end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
+        now = state.simulation_time if state and state.simulation_time else datetime.now(timezone.utc)
 
         if now > end_date:
             days_overdue = (now - end_date).days
@@ -150,17 +154,34 @@ def check_and_handle_expired_sprint(
                 f"End date: {end_date_str}"
             )
 
-            # Delegate to sprint planning crew for rollover
+            # Load configs if not provided
+            if personas is None or settings is None:
+                _settings, _personas, _ = load_config()
+                personas = personas or _personas
+                settings = settings or _settings
+
+            # Create JiraTools and LLM config for the crew
+            from src.tools.jira_tools import JiraTools
             from src.crews.sprint_planning_crew import SprintPlanningCrew
 
-            crew = SprintPlanningCrew(jira_client)
+            jira_tools = JiraTools(jira_client)
+            llm_config = {
+                "routine_model": settings.get("llm", {}).get("routine_model", "haiku"),
+                "complex_model": settings.get("llm", {}).get("complex_model", "sonnet"),
+            }
+
+            crew = SprintPlanningCrew(personas, jira_tools, llm_config)
             new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
 
+            # Use virtual time if available
+            current_date = state.simulation_time.date() if state and state.simulation_time else datetime.now(timezone.utc).date()
+
             result = crew.rollover_sprint(
-                pm_id="pm_alpha",
+                pm_id="alpha_pm",
                 current_sprint_id=sprint_id,
                 current_sprint_name=sprint_name,
                 new_sprint_name=new_sprint_name,
+                current_date=current_date,
             )
 
             if result["success"]:
@@ -174,7 +195,7 @@ def check_and_handle_expired_sprint(
                     # This ensures derived values (sprint_number, sprint_day) are correct
                     # for the rest of this tick
                     new_active_sprint = jira_client.get_active_sprint()
-                    state.sprint.inject_jira_sprint(new_active_sprint)
+                    state.sprint.inject_jira_sprint(new_active_sprint, current_time=state.simulation_time)
                     logger.info(
                         f"Re-injected sprint after rollover: "
                         f"sprint_number={state.sprint.sprint_number}, "
@@ -354,6 +375,11 @@ async def trigger_simulation():
     try:
         # Load current state
         state = load_state()
+        
+        # Initialize virtual clock if missing
+        if not state.simulation_time:
+             state.simulation_time = datetime.now(timezone.utc)
+             logger.info(f"Initialized simulation time to {state.simulation_time}")
 
         # Create logged services for this tick (needed early for Jira calls)
         logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
@@ -363,7 +389,7 @@ async def trigger_simulation():
         # This must happen before any sprint-dependent logic
         previous_sprint_number = state.sprint.sprint_number  # From cached Jira data
         jira_sprint = logged_jira.get_active_sprint()
-        state.sprint.inject_jira_sprint(jira_sprint)
+        state.sprint.inject_jira_sprint(jira_sprint, current_time=state.simulation_time)
 
         # Detect sprint transition (e.g., Sprint 7 -> Sprint 8)
         if state.handle_sprint_transition(previous_sprint_number):
@@ -394,7 +420,12 @@ async def trigger_simulation():
             print(f"Warning: State sync failed: {sync_error}")
 
         # Check for and handle expired sprint (pass state so it can be updated)
-        sprint_action = check_and_handle_expired_sprint(logged_jira, state)
+        sprint_action = check_and_handle_expired_sprint(
+            logged_jira,
+            state,
+            personas=app.state.personas,
+            settings=app.state.settings,
+        )
         if sprint_action:
             logger.info(f"Sprint action taken: {sprint_action}")
 
@@ -536,7 +567,7 @@ async def get_sprint_data():
         from datetime import datetime, timedelta
 
         start_date = datetime.fromisoformat(active_sprint["start_date"].replace("Z", "+00:00")) if active_sprint["start_date"] else datetime.utcnow()
-        end_date = datetime.fromisoformat(active_sprint["end_date"].replace("Z", "+00:00")) if active_sprint["end_date"] else start_date + timedelta(days=7)
+        end_date = datetime.fromisoformat(active_sprint["end_date"].replace("Z", "+00:00")) if active_sprint["end_date"] else start_date + timedelta(days=14)
         total_days = max(1, (end_date - start_date).days)
         total_items = len(sprint_issues)
         done_items = status_counts["done"]

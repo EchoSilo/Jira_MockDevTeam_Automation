@@ -6,7 +6,7 @@ Combines the Analyzer, Planner, and Crews to execute simulation ticks.
 
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
 
 from ..services.jira_client import JiraClient
@@ -102,7 +102,6 @@ class ScenarioOrchestrator:
             "complete_review",
             "qa_approve",
             "qa_reject",
-            "qa_test",  # Alias for qa_approve
             "add_progress_comment",
             "inject_blocker",
             "discuss_blocker",
@@ -336,6 +335,15 @@ class ScenarioOrchestrator:
                 "errors": len(results["errors"]),
             },
         )
+
+        # Advance simulation time
+        if state.simulation_time:
+            state.simulation_time += timedelta(hours=state.tick_duration_hours)
+            logger.info(f"Advanced simulation time to {state.simulation_time}")
+        else:
+            # Initialize if missing (fallback)
+            state.simulation_time = datetime.now(timezone.utc)
+            logger.info(f"Initialized simulation time to {state.simulation_time}")
 
         return results
 
@@ -679,7 +687,7 @@ class ScenarioOrchestrator:
             else:
                 result["error"] = "Could not create scenario - no assignee found"
 
-        elif action_type in ("qa_approve", "qa_test"):  # qa_test is alias for qa_approve
+        elif action_type == "qa_approve":
             qa_id = action.get("qa_id") or agent_id
             # Create scenario if it doesn't exist (handles state reset recovery)
             if not scenario and ticket_key:
@@ -942,11 +950,15 @@ class ScenarioOrchestrator:
 
             if pm_id and start_date:
                 try:
+                    # Use virtual time if available
+                    current_date = state.simulation_time.date() if state.simulation_time else datetime.now(timezone.utc).date()
+                    
                     crew_result = self.sprint_planning_crew.create_future_sprint(
                         pm_id=pm_id,
                         team=team,
                         sprint_number=sprint_number,
                         start_date=start_date,
+                        current_date=current_date,
                     )
                     result.update(crew_result)
                 except Exception as e:
@@ -977,10 +989,14 @@ class ScenarioOrchestrator:
 
             if pm_id and sprint_id:
                 try:
+                    # Use virtual time if available
+                    current_date = state.simulation_time.date() if state.simulation_time else datetime.now(timezone.utc).date()
+                    
                     crew_result = self.sprint_planning_crew.start_sprint(
                         pm_id=pm_id,
                         sprint_id=sprint_id,
                         sprint_name=sprint_name,
+                        current_date=current_date,
                     )
                     result.update(crew_result)
                 except Exception as e:

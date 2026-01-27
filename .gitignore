@@ -51,3 +51,10 @@ data/logs.db
 nul
 
 .claude/
+.codemachine/logs
+.codemachine/memory
+.codemachine/prompts
+.codemachine/agents
+.codemachine/template.json
+.roo/
+memory-bank/

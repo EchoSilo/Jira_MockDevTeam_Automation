@@ -6,7 +6,7 @@ uvicorn[standard]>=0.27.0
 jira>=3.6.0
 
 # CrewAI for agent orchestration
-crewai>=0.80.0
+crewai[google-genai]>=0.80.0
 crewai-tools>=0.14.0
 
 # LLM

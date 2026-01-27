@@ -177,11 +177,18 @@ class ScenarioPlanner:
             start_time = time.time()
             model = self.llm.complex_model  # Use Sonnet for planning
 
-            response = litellm.completion(
-                model=model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            # Prepare completion arguments
+            completion_kwargs = {
+                "model": model,
+                "max_tokens": 2000,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+
+            # Add thinking parameter if enabled
+            if self.settings.get("llm", {}).get("orchestrator_thinking"):
+                completion_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 16000}
+
+            response = litellm.completion(**completion_kwargs)
 
             duration_ms = int((time.time() - start_time) * 1000)
             raw_response = response.choices[0].message.content.strip()
@@ -310,7 +317,7 @@ There are {ready_count} scenarios OVERDUE and past their target completion time.
 
 **BINDING RULES:**
 1. At least {min_advancements} of your {target_actions} actions MUST be advancement actions
-2. Advancement actions include: complete_review, qa_approve, qa_test, verify_fix, progress_to_review
+2. Advancement actions include: complete_review, qa_approve, verify_fix, progress_to_review
 3. DO NOT plan "pick_up_task" when the above items are waiting for review or QA
 4. If you choose "pick_up_task" over advancing overdue items, your plan is INVALID
 
@@ -921,7 +928,7 @@ Remember:
 
         # Safety net: Ensure at least one phase advancement if any are available
         advancement_action_types = {
-            "complete_review", "qa_approve", "qa_test", "verify_fix",
+            "complete_review", "qa_approve", "verify_fix",
             "progress_to_review", "resolve_blocker", "complete_fix"
         }
         has_advancement = any(a.get("type") in advancement_action_types for a in validated)
