@@ -19,6 +19,14 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 
 **Dependencies:** None (foundational)
 
+**Plans:** 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md - Clock abstraction module with RealClock/FakeClock using Pendulum
+- [ ] 01-02-PLAN.md - Remove virtual time fields from SimulationState, reset state.json
+- [ ] 01-03-PLAN.md - Migrate all datetime.utcnow() to Clock/pendulum.now("UTC")
+- [ ] 01-04-PLAN.md - Business hours gate, DST detection, sprint cadence tests
+
 **Requirements:**
 - TIME-01: UTC timezone-aware datetime handling throughout codebase
 - TIME-02: Virtual clock with injectable Clock abstraction (RealClock/FakeClock)
@@ -40,6 +48,11 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 **Goal:** System validates Jira state before every action and adapts gracefully when reality diverges from simulation plan.
 
 **Dependencies:** Phase 1 (needs consistent time comparisons)
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (created by /gsd:plan-phase)
 
 **Requirements:**
 - RECON-01: Pre-execution validation checks Jira ticket state (status, assignee, sprint)
@@ -64,6 +77,11 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 
 **Dependencies:** Phase 2 (needs reconciliation for scheduled action validation)
 
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (created by /gsd:plan-phase)
+
 **Requirements:**
 - SCHED-01: Priority queue maintains actions sorted by scheduled_time (heap operations)
 - SCHED-02: Scheduler provides "what's due now?" query with execution window logic
@@ -81,11 +99,11 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 - PLAN-05: Velocity tracker records committed vs completed points per sprint
 - PLAN-06: Average velocity calculation from last 3 sprints
 - PLAN-07: SprintPlan model (sprint_id, dates, committed_items, scenario_id, status)
-- PLAN-08: Sprint planning flow (fetch backlog → prioritize → select → generate scenario → schedule actions → create Jira sprint)
+- PLAN-08: Sprint planning flow (fetch backlog -> prioritize -> select -> generate scenario -> schedule actions -> create Jira sprint)
 - CONFIG-02: Add planning_horizon and action_queue to SimulationState
 - CONFIG-04: Sprint configuration (duration_days=7, start_day=wednesday, horizon=3)
 - EXEC-01: TickExecutor replaces orchestrator time-advancement logic
-- EXEC-02: Each tick: check events → get ready actions → reconcile → execute → update state
+- EXEC-02: Each tick: check events -> get ready actions -> reconcile -> execute -> update state
 - EXEC-03: Execution via existing CrewAI crews (preserve agent personalities)
 - EXEC-04: Mark actions completed/skipped/adapted with timestamps
 - EXEC-05: Handle overdue actions by marking skipped with log entry
@@ -102,6 +120,11 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 **Goal:** System injects random realistic disruptions and adapts scenario scripts when Jira state diverges from expectations.
 
 **Dependencies:** Phase 3 (needs scheduler to insert chaos events and reschedule adapted actions)
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (created by /gsd:plan-phase)
 
 **Requirements:**
 - CHAOS-01: RandomEventGenerator with per-event-type probabilities (outage, bug, absence, blocker, priority_shift, scope_change)
@@ -132,6 +155,11 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 
 **Dependencies:** Phase 4 (needs baseline chaos implementation to tune against)
 
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (created by /gsd:plan-phase)
+
 **Requirements:**
 - PERF-01: Async action execution with asyncio.gather for independent actions
 - PERF-02: Aggressive timeout budgets (15s planning, 10s per action) prevent tick overruns
@@ -151,7 +179,7 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 
 | Phase | Status | Requirements | Completed | Progress |
 |-------|--------|--------------|-----------|----------|
-| Phase 1: Time Infrastructure & UTC Migration | Not Started | 7 | 0 | 0% |
+| Phase 1: Time Infrastructure & UTC Migration | Planned | 7 | 0 | 0% |
 | Phase 2: State Reconciliation & Validation | Not Started | 8 | 0 | 0% |
 | Phase 3: Event Scheduler & Queue System | Not Started | 24 | 0 | 0% |
 | Phase 4: Adaptive Pathfinding & Chaos Injection | Not Started | 14 | 0 | 0% |
@@ -163,14 +191,14 @@ The 5-phase structure follows natural requirement boundaries: foundational time 
 
 ```
 Phase 1: Time Infrastructure
-    ↓
-Phase 2: State Reconciliation ← depends on consistent time comparisons
-    ↓
-Phase 3: Event Scheduler ← depends on reconciliation for validation
-    ↓
-Phase 4: Chaos & Adaptation ← depends on scheduler to insert/reschedule events
-    ↓
-Phase 5: Performance Tuning ← depends on baseline chaos to tune against
+    |
+Phase 2: State Reconciliation <- depends on consistent time comparisons
+    |
+Phase 3: Event Scheduler <- depends on reconciliation for validation
+    |
+Phase 4: Chaos & Adaptation <- depends on scheduler to insert/reschedule events
+    |
+Phase 5: Performance Tuning <- depends on baseline chaos to tune against
 ```
 
 ## Notes
@@ -187,4 +215,4 @@ Phase 5: Performance Tuning ← depends on baseline chaos to tune against
 - Phase 4 may need graph search algorithm research for Jira workflow transitions (Dijkstra vs A* vs BFS for status transition graphs with cycles)
 
 ---
-*Last updated: 2026-01-27*
+*Last updated: 2026-01-28*
