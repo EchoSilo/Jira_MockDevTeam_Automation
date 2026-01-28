@@ -4,6 +4,7 @@ from .models import SprintPlan, PlanningHorizon, SprintPlanStatus
 from .velocity_tracker import VelocityTracker, SprintVelocityRecord
 from .capacity_planner import CapacityPlanner
 from .scenario_scheduler import ScenarioScheduler
+from .sprint_planner import SprintPlanner
 
 # BacklogPrioritizer has missing dependency (litellm) - import conditionally
 try:
@@ -20,6 +21,7 @@ __all__ = [
     "SprintVelocityRecord",
     "CapacityPlanner",
     "ScenarioScheduler",
+    "SprintPlanner",
 ]
 
 if _has_backlog:
