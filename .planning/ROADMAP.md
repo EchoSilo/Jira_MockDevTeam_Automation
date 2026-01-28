@@ -134,10 +134,16 @@ Plans:
 
 **Dependencies:** Phase 3 (needs scheduler to insert chaos events and reschedule adapted actions)
 
-**Plans:** 0 plans
+**Plans:** 7 plans
 
 Plans:
-- [ ] TBD (created by /gsd:plan-phase)
+- [ ] 04-01-PLAN.md - Chaos models and configuration (RandomEvent, ChaosConfig, settings.yaml)
+- [ ] 04-02-PLAN.md - RandomEventGenerator with probability rolling (TDD)
+- [ ] 04-03-PLAN.md - Event catalog with archetype-specific weights
+- [ ] 04-04-PLAN.md - ScenarioAdapter for event-driven scenario modification
+- [ ] 04-05-PLAN.md - ConfidenceTracker with accept reality mode (TDD)
+- [ ] 04-06-PLAN.md - PathfindingAdapter for RECALCULATE strategy handling
+- [ ] 04-07-PLAN.md - Integration: Wire chaos components into /trigger endpoint
 
 **Requirements:**
 - CHAOS-01: RandomEventGenerator with per-event-type probabilities (outage, bug, absence, blocker, priority_shift, scope_change)
@@ -195,7 +201,7 @@ Plans:
 | Phase 1: Time Infrastructure & UTC Migration | Complete | 7 | 7 | 100% |
 | Phase 2: State Reconciliation & Validation | Complete | 8 | 8 | 100% |
 | Phase 3: Event Scheduler & Queue System | Complete | 24 | 24 | 100% |
-| Phase 4: Adaptive Pathfinding & Chaos Injection | Not Started | 14 | 0 | 0% |
+| Phase 4: Adaptive Pathfinding & Chaos Injection | Planned | 14 | 0 | 0% |
 | Phase 5: Performance Optimization & Dynamic Tuning | Not Started | 6 | 0 | 0% |
 
 **Total:** 59 requirements, 39 completed (66%)
@@ -228,4 +234,4 @@ Phase 5: Performance Tuning <- depends on baseline chaos to tune against
 - Phase 4 may need graph search algorithm research for Jira workflow transitions (Dijkstra vs A* vs BFS for status transition graphs with cycles)
 
 ---
-*Last updated: 2026-01-28 after Phase 3 execution complete (9 plans, all verified)*
+*Last updated: 2026-01-28 after Phase 4 planning complete (7 plans in 5 waves)*
