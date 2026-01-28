@@ -14,11 +14,11 @@
 ## Current Position
 
 **Phase:** 1 of 5 - Time Infrastructure & UTC Migration
-**Plan:** 3 of 4 complete
-**Status:** In Progress
-**Last activity:** 2026-01-28 - Completed 01-03-PLAN.md (Clock injection & UTC migration)
+**Plan:** 4 of 4 complete
+**Status:** Phase Complete
+**Last activity:** 2026-01-28 - Completed 01-04-PLAN.md (Business hours & sprint cadence)
 
-**Progress:** [██████████████████░░] 75% (3/4 plans in phase)
+**Progress:** [████████████████████] 100% (4/4 plans in phase)
 
 **Phase Goal:** All time handling operates in timezone-aware UTC with business hours enforcement and DST-safe sprint calculations.
 
@@ -70,6 +70,9 @@
 | Use pendulum for all timestamps | Consistent timezone-aware datetime handling across codebase | 01-03 | 2026-01-28 |
 | Inject Clock only into ScenarioOrchestrator | Main execution path where time control matters for testing | 01-03 | 2026-01-28 |
 | Replace datetime.now(timezone.utc) with pendulum | Unified time handling, prepares for business hours/DST work | 01-03 | 2026-01-28 |
+| ISO day-of-week (1-7) in config, Pendulum 0-based (0-6) internally | Config uses standard ISO numbering, converted for Pendulum compatibility | 01-04 | 2026-01-28 |
+| Business hours config cached globally | Avoid repeated file reads on every /trigger request | 01-04 | 2026-01-28 |
+| DST transitions logged as warnings, not errors | Detection for debugging without blocking execution | 01-04 | 2026-01-28 |
 
 ### Open Questions
 
@@ -94,30 +97,31 @@
 
 ## Session Continuity
 
-**Last Session:** Plan 01-03 execution (2026-01-28)
+**Last Session:** Plan 01-04 execution (2026-01-28)
 
 **What Happened:**
-- Executed 01-03-PLAN.md (Clock injection & UTC migration)
-- Migrated all Pydantic model defaults to use pendulum.now("UTC")
-- Replaced 40+ datetime.utcnow() and datetime.now(timezone.utc) calls with pendulum
-- Injected Clock parameter into ScenarioOrchestrator with RealClock default
-- Updated 12 files: models, orchestrator, agents, main, services, logging
-- Committed Task 1 (refactor: Pydantic models) - f4cd242
-- Committed Task 2 (refactor: orchestrator/agents) - 2d62f94
-- Committed Task 3 (refactor: main & services) - 5fd8be9
-- Created 01-03-SUMMARY.md with full execution documentation
-- Updated STATE.md with progress (3/4 plans in Phase 1 complete)
+- Executed 01-04-PLAN.md (Business hours & sprint cadence)
+- Created business hours validation module with DST detection
+- Wired validate_business_hours dependency into POST /trigger endpoint
+- Created 12 comprehensive tests for business hours and sprint cadence
+- Fixed day-of-week mapping bug (ISO 1-7 vs Pendulum 0-6)
+- Committed Task 1 (feat: business hours module) - 43e95c6
+- Committed Task 2 (feat: /trigger dependency) - ca12d46
+- Committed Task 3 (test: business hours tests + bug fix) - 3af3fdb
+- Created 01-04-SUMMARY.md with full execution documentation
+- Updated STATE.md with Phase 1 completion (4/4 plans complete)
 
 **Next Session Should:**
-1. Continue Phase 1 execution with plan 01-04 (Business hours enforcement)
-2. Implement business hours gate in /trigger endpoint (M-F 9-5)
+1. Begin Phase 2: State Reconciliation & Jira Sync
+2. Implement state snapshot comparison and drift detection
 
 **Context for Next Agent:**
-- All datetime calls migrated to pendulum.now("UTC") - zero naive datetimes
-- Clock injected into ScenarioOrchestrator for testability
-- Tests can inject FakeClock for deterministic time control
-- Ready for business hours logic using pendulum and Clock abstraction
-- Phase 1 is 75% complete (3 of 4 plans)
+- Phase 1 complete: All time infrastructure in place
+- /trigger endpoint enforces M-F 9-5 business hours (returns 403 outside hours)
+- DST transitions detected and logged without breaking execution
+- Sprint cadence validated with 7-day Wed-Tue calculations
+- FakeClock enables deterministic time testing throughout codebase
+- All datetime operations use timezone-aware pendulum UTC
 
 ---
 *State initialized: 2026-01-27*
