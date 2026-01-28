@@ -13,6 +13,10 @@ import yaml
 import pendulum
 
 
+# Valid severity levels for chaos events
+VALID_SEVERITIES = ["low", "medium", "high", "critical"]
+
+
 class ChaosEventType(Enum):
     """Types of chaos events that can be injected."""
     production_outage = "production_outage"
@@ -42,10 +46,9 @@ class RandomEvent:
 
     def __post_init__(self):
         """Validate fields after initialization."""
-        valid_severities = ["low", "medium", "high", "critical"]
-        if self.severity not in valid_severities:
+        if self.severity not in VALID_SEVERITIES:
             raise ValueError(
-                f"severity must be one of {valid_severities}, got '{self.severity}'"
+                f"severity must be one of {VALID_SEVERITIES}, got '{self.severity}'"
             )
 
         if not isinstance(self.triggered_at, pendulum.DateTime):
