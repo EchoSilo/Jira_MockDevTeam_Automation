@@ -1,0 +1,111 @@
+# Project State: Real-Time Scripted Jira Team Simulator
+
+**Last Updated:** 2026-01-27
+**Current Phase:** Phase 1: Time Infrastructure & UTC Migration
+**Current Plan:** Not yet planned
+**Status:** Roadmap created, awaiting Phase 1 planning
+
+## Project Reference
+
+**Core Value:** The simulation must operate in Jira's time domain (real calendar time), producing realistic sprint timelines and activity patterns that analytics tools can consume as if observing a real development team.
+
+**Current Focus:** Transform virtual-time simulation (5.33x speedup) to real-time calendar execution with pre-scripted scenarios spanning 2-3 sprints. Shift from reactive immediate execution to scheduled event queues with state reconciliation, chaos injection, and adaptive pathfinding.
+
+## Current Position
+
+**Phase:** 1 of 5 - Time Infrastructure & UTC Migration
+**Plan:** None (roadmap just created)
+**Status:** Not Started
+**Progress:** [░░░░░░░░░░░░░░░░░░░░] 0% (0/7 requirements)
+
+**Phase Goal:** All time handling operates in timezone-aware UTC with business hours enforcement and DST-safe sprint calculations.
+
+**Phase Requirements:**
+- TIME-01: UTC timezone-aware datetime handling throughout codebase
+- TIME-02: Virtual clock with injectable Clock abstraction (RealClock/FakeClock)
+- TIME-03: Business hours gate in /trigger endpoint (M-F 9-5)
+- TIME-04: DST transition detection and graceful handling
+- TIME-05: Sprint cadence with Pendulum (Wednesday start, Tuesday end, 7 days)
+- CONFIG-01: Remove simulation_time and tick_duration_hours from state
+- CONFIG-05: Fresh state initialization (no virtual-time migration)
+
+**Phase Success Criteria:**
+1. Developer can set business hours schedule in settings.yaml and /trigger endpoint respects it (rejects requests outside M-F 9-5)
+2. Developer can inject FakeClock in tests to freeze time and advance deterministically (no flaky time-dependent tests)
+3. System detects DST transitions (spring forward, fall back) and logs warning without duplicate/skipped executions
+4. Sprint start/end dates calculated with Pendulum match expected calendar dates (7 real days Wednesday-Tuesday)
+5. All datetime comparisons use timezone-aware UTC (no naive datetime warnings in logs)
+
+## Performance Metrics
+
+**Overall Milestone Progress:** 0/59 requirements completed (0%)
+
+**Phase Breakdown:**
+- Phase 1: 0/7 (0%)
+- Phase 2: 0/8 (0%)
+- Phase 3: 0/24 (0%)
+- Phase 4: 0/14 (0%)
+- Phase 5: 0/6 (0%)
+
+**Recent Velocity:** N/A (no phases completed yet)
+
+## Accumulated Context
+
+### Key Decisions
+
+| Decision | Rationale | Phase | Date |
+|----------|-----------|-------|------|
+| 5-phase structure aligned with research | Research suggests optimal grouping by time → reconciliation → scheduling → chaos → perf | All | 2026-01-27 |
+| Replace virtual time with real-time scheduling | Jira operates in real time; virtual time creates unrealistic patterns | 1 | 2026-01-27 |
+| Preserve existing agent personalities and LLM system | Agent behavior is sophisticated and working well; problem is orchestration timing | 3 | 2026-01-27 |
+| Start fresh rather than migrate existing data | Existing data is based on flawed time model; clean slate is simpler | 1 | 2026-01-27 |
+
+### Open Questions
+
+- None yet (roadmap just created)
+
+### Todos
+
+- [ ] Plan Phase 1 (Time Infrastructure & UTC Migration)
+- [ ] Review roadmap with stakeholders
+- [ ] Validate success criteria are observable and testable
+
+### Known Blockers
+
+- None
+
+### Technical Debt
+
+- Current simulation uses virtual-time model (5.33x speedup) producing unrealistic patterns
+- No state reconciliation with Jira (assumes script executes perfectly)
+- No realistic disruptions or randomness beyond scenario scripts
+- Sprint timelines compressed (1.3 real days per 7-day sprint)
+
+## Session Continuity
+
+**Last Session:** Roadmap creation (2026-01-27)
+
+**What Happened:**
+- Loaded PROJECT.md, REQUIREMENTS.md, research/SUMMARY.md, config.json
+- Validated 59 v1 requirements across 9 categories (corrected from initial count of 56)
+- Adopted research-suggested 5-phase structure (Time → Reconciliation → Scheduling → Chaos → Performance)
+- Mapped all 59 requirements to phases (100% coverage)
+- Derived 2-5 success criteria per phase (observable user/developer behaviors)
+- Created ROADMAP.md with phase structure, dependencies, success criteria
+- Created STATE.md for project memory initialization
+- Updated REQUIREMENTS.md traceability section with corrected totals
+
+**Next Session Should:**
+1. Review roadmap with user for approval
+2. If approved, proceed to `/gsd:plan-phase 1` for detailed Phase 1 planning
+3. If revisions needed, incorporate feedback and update files
+
+**Context for Next Agent:**
+- Roadmap follows research-suggested structure (5 phases, not arbitrary)
+- Phase dependencies are strict: each phase builds on previous
+- Success criteria are user/developer observable behaviors (not implementation tasks)
+- All 59 requirements mapped with 100% coverage validated
+- Depth = comprehensive but research justified 5 phases as optimal (not arbitrary compression)
+
+---
+*State initialized: 2026-01-27*

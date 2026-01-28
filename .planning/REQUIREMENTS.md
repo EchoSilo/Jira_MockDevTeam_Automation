@@ -199,10 +199,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXEC-05 | Phase 3 | Pending |
 
 **Coverage:**
-- v1 requirements: 56 total
-- Mapped to phases: 56
+- v1 requirements: 59 total
+- Mapped to phases: 59
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-01-27*
-*Last updated: 2026-01-27 after initial definition*
+*Last updated: 2026-01-27 after roadmap creation*
