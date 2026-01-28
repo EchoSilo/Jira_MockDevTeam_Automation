@@ -65,6 +65,8 @@ class ChaosConfig:
     enabled: bool
     base_event_chance: float
     event_probabilities: dict[str, float]
+    confidence_threshold: float = 0.7
+    external_override_limit: int = 3
 
     def __post_init__(self):
         """Validate probability ranges."""
@@ -81,19 +83,39 @@ class ChaosConfig:
                     f"got {prob}"
                 )
 
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError(
+                f"confidence_threshold must be between 0.0 and 1.0, "
+                f"got {self.confidence_threshold}"
+            )
+
+        if self.external_override_limit < 0:
+            raise ValueError(
+                f"external_override_limit must be >= 0, "
+                f"got {self.external_override_limit}"
+            )
+
     @classmethod
-    def load_from_settings(cls, settings_path: str = "config/settings.yaml") -> "ChaosConfig":
+    def load_from_settings(cls, settings_or_path: str | dict = "config/settings.yaml") -> "ChaosConfig":
         """
-        Load chaos configuration from settings.yaml.
+        Load chaos configuration from settings.yaml or dict.
+
+        Args:
+            settings_or_path: Either path to settings.yaml or settings dict
 
         Returns default values if random_events section is missing.
         """
-        try:
-            with open(settings_path, "r") as f:
-                settings = yaml.safe_load(f)
-        except FileNotFoundError:
-            # Return defaults if file doesn't exist
-            return cls._get_defaults()
+        if isinstance(settings_or_path, dict):
+            # Already loaded settings dict
+            settings = settings_or_path
+        else:
+            # Path to settings file
+            try:
+                with open(settings_or_path, "r") as f:
+                    settings = yaml.safe_load(f)
+            except FileNotFoundError:
+                # Return defaults if file doesn't exist
+                return cls._get_defaults()
 
         # Get random_events section with defaults if missing
         random_events = settings.get("random_events", {})
@@ -105,7 +127,9 @@ class ChaosConfig:
         return cls(
             enabled=random_events.get("enabled", True),
             base_event_chance=random_events.get("base_event_chance", 0.1),
-            event_probabilities=random_events.get("event_probabilities", cls._default_probabilities())
+            event_probabilities=random_events.get("event_probabilities", cls._default_probabilities()),
+            confidence_threshold=random_events.get("confidence_threshold", 0.7),
+            external_override_limit=random_events.get("external_override_limit", 3),
         )
 
     @staticmethod
@@ -126,5 +150,7 @@ class ChaosConfig:
         return cls(
             enabled=True,
             base_event_chance=0.1,
-            event_probabilities=cls._default_probabilities()
+            event_probabilities=cls._default_probabilities(),
+            confidence_threshold=0.7,
+            external_override_limit=3,
         )
