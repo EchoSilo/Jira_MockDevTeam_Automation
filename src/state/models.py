@@ -9,7 +9,7 @@ Sprint-level scenarios are now managed via SprintScenario in src/scenarios/.
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
-from pydantic import AliasChoices, BaseModel, Field, PrivateAttr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
 import uuid
 
 if TYPE_CHECKING:
@@ -788,13 +788,11 @@ class ScenarioDistribution(BaseModel):
 
 class SimulationState(BaseModel):
     """Complete simulation state with scenario tracking."""
+    model_config = ConfigDict(extra="ignore")
+
     # Timing
     last_run: Optional[datetime] = None
     simulation_day: int = 1
-
-    # Virtual Clock
-    simulation_time: Optional[datetime] = None
-    tick_duration_hours: float = 4.0
 
     # Sprint tracking (accepts both "sprint" and "current_sprint" for backwards compatibility)
     sprint: SprintState = Field(default_factory=SprintState, validation_alias=AliasChoices("sprint", "current_sprint"))
@@ -815,11 +813,6 @@ class SimulationState(BaseModel):
     # NEW: Sprint-level scenario (replaces per-ticket active_scenarios)
     # Stored as dict for JSON serialization, converted to SprintScenario when accessed
 
-    def model_post_init(self, __context: Any) -> None:
-        from datetime import timezone
-        if self.simulation_time is None:
-            self.simulation_time = datetime.now(timezone.utc)
-        super().model_post_init(__context)
     sprint_scenario: Optional[dict[str, Any]] = None
     completed_sprint_scenarios: list[str] = Field(default_factory=list)  # scenario_ids
 
