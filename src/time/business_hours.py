@@ -72,8 +72,12 @@ def validate_business_hours(
     # Convert to local timezone for business hours check
     local_time = now_utc.in_timezone(config.timezone)
 
-    # Check day of week (Pendulum: 1=Monday, 7=Sunday)
-    if local_time.day_of_week not in config.days:
+    # Check day of week
+    # Config uses ISO day numbering: 1=Monday, 7=Sunday
+    # Pendulum uses 0-based: 0=Monday, 6=Sunday
+    # Convert Pendulum's day_of_week to ISO format for comparison
+    iso_day_of_week = local_time.day_of_week + 1
+    if iso_day_of_week not in config.days:
         day_name = local_time.format("dddd")
         raise HTTPException(
             status_code=403,
