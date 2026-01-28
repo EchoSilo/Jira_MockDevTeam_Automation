@@ -2,8 +2,8 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 4 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Current Plan:** 04-03 complete (3 of 5)
-**Status:** Phase 4 Wave 1 complete, Wave 2 started
+**Current Plan:** 04-05 complete (4 of 5)
+**Status:** Phase 4 Wave 1 complete, Wave 2 complete, Wave 3 started
 
 ## Project Reference
 
@@ -14,22 +14,22 @@
 ## Current Position
 
 **Phase:** 4 of 5 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Plans:** 3 of 5 complete in current phase
+**Plans:** 4 of 5 complete in current phase
 **Status:** In progress
-**Last activity:** 2026-01-28 - Completed 04-03-PLAN.md
-**Progress:** [███████████████░░░░░] 73% (43/59 requirements)
+**Last activity:** 2026-01-28 - Completed 04-05-PLAN.md
+**Progress:** [███████████████░░░░░] 75% (44/59 requirements)
 
 **Phase Goal:** Chaos event injection with adaptive pathfinding for workflow transitions; system handles disruptions intelligently.
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 42/59 requirements completed (71%)
+**Overall Milestone Progress:** 44/59 requirements completed (75%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
 - Phase 2: 8/8 (100%) ✓
 - Phase 3: 24/24 (100%) ✓
-- Phase 4: 3/14 (21%)
+- Phase 4: 5/14 (36%)
 - Phase 5: 0/6 (0%)
 
 ## Accumulated Context
@@ -55,6 +55,8 @@
 | Seeded random.Random for deterministic testing | Optional seed parameter enables reliable test assertions while preserving production randomness | 4 | 2026-01-28 |
 | Weight multipliers for archetype chaos | Archetype-specific multipliers adjust event probabilities (smooth: 0.2-0.5x, blocker_heavy: 2.0x external_blocker) | 4 | 2026-01-28 |
 | Event catalog pattern | Central registry provides templates with response actions; enables scenario-aware chaos intensity | 4 | 2026-01-28 |
+| Positive adaptations don't hurt fidelity | Early completion treated as success in fidelity calculation; formula: (executed_as_planned + positive_adaptations) / total | 4 | 2026-01-28 |
+| Dual-threshold accept reality | Both fidelity < 0.7 AND external_overrides >= 3 required to abandon script; prevents premature abandonment | 4 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -121,34 +123,33 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 4 Plan 02 Execution (2026-01-28)
+**Last Session:** Phase 4 Plan 05 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 04-02: Chaos Event Generator (TDD)
-- Created RandomEventGenerator with probability-based dice rolling
-- Implemented two-stage event generation: base chance then weighted selection
-- Event-specific creation logic for all 6 chaos types
-- Deterministic seed support for testing
-- TDD cycle: RED (failing tests) → GREEN (implementation)
-- All 13 tests pass
+- Completed 04-05: Confidence Tracker (TDD)
+- Created ConfidenceTracker for scenario script fidelity measurement
+- Implemented dual-threshold accept reality mode (< 0.7 fidelity AND 3+ overrides)
+- Positive adaptations (early completion) count as success, not failure
+- TDD cycle: RED (failing tests) → GREEN (implementation) → REFACTOR (none needed)
+- All 14 tests pass
 
 **Commits This Session:**
-- `feb97f2`: test(04-02): add failing tests for RandomEventGenerator
-- `caa7596`: feat(04-02): implement RandomEventGenerator with probability-based rolling
+- `e08db7b`: test(04-05): add failing tests for ConfidenceTracker
+- `6320a8a`: feat(04-05): implement ConfidenceTracker for scenario fidelity
 
 **Next Session Should:**
-Execute 04-04: Random Event Generator Integration
+Execute 04-04: Scenario Adapter (if remaining in Wave 3) or proceed to Wave 4
 
 **Context for Next Agent:**
-- EventCatalog provides scenario-aware chaos templates
-- Archetype weight multipliers adjust probabilities (smooth: 0.2-0.5x, blocker_heavy: 2.0x external_blocker)
-- chaos_events.yaml loaded with 6 event templates and 6 archetype profiles
-- Response action patterns defined (production_outage → tech_lead emergency_response)
-- Ready for generator integration with archetype awareness
+- ConfidenceTracker ready for scenario orchestration integration
+- Formula: script_fidelity = (executed_as_planned + positive_adaptations) / total_events
+- Accept reality logic: fidelity < 0.7 AND external_overrides >= 3
+- Stateless tracker, thread-safe, configurable thresholds
+- Ready for PathfindingOrchestrator integration
 
 **Phase 4: Adaptive Pathfinding & Chaos Injection** (IN PROGRESS)
-- 3 plans executed (04-01, 04-02, 04-03)
-- 38 chaos tests pass (10 models + 13 generator + 15 catalog)
+- 4 plans executed (04-01, 04-02, 04-03, 04-05)
+- 52 chaos tests pass (10 models + 13 generator + 15 catalog + 14 confidence)
 - Key deliverables so far:
   - ChaosEventType enum with 6 event types
   - RandomEvent dataclass with validation
@@ -156,6 +157,8 @@ Execute 04-04: Random Event Generator Integration
   - RandomEventGenerator with probability rolling
   - EventCatalog with archetype-aware weight adjustment
   - chaos_events.yaml configuration
+  - ConfidenceTracker with dual-threshold logic
+  - ConfidenceScore metrics dataclass
 
 ---
-*State updated: 2026-01-28 after 04-03 execution complete*
+*State updated: 2026-01-28 after 04-05 execution complete*
