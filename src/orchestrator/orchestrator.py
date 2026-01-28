@@ -941,9 +941,8 @@ class ScenarioOrchestrator:
 
             if pm_id and start_date:
                 try:
-                    # Use virtual time if available
-                    current_date = state.simulation_time.date() if state.simulation_time else datetime.now(timezone.utc).date()
-                    
+                    current_date = datetime.now(timezone.utc).date()
+
                     crew_result = self.sprint_planning_crew.create_future_sprint(
                         pm_id=pm_id,
                         team=team,
@@ -980,9 +979,8 @@ class ScenarioOrchestrator:
 
             if pm_id and sprint_id:
                 try:
-                    # Use virtual time if available
-                    current_date = state.simulation_time.date() if state.simulation_time else datetime.now(timezone.utc).date()
-                    
+                    current_date = datetime.now(timezone.utc).date()
+
                     crew_result = self.sprint_planning_crew.start_sprint(
                         pm_id=pm_id,
                         sprint_id=sprint_id,
