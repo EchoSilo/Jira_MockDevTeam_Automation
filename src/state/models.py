@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
 import uuid
+import pendulum
 
 if TYPE_CHECKING:
     from src.scenarios import SprintScenario
@@ -129,7 +130,7 @@ class ReleaseDirective(BaseModel):
     directive_type: str                # create_version | assign_version | release_reminder
     target_pm_id: str
     parameters: dict = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     executed: bool = False
     execution_result: Optional[str] = None
 
@@ -176,7 +177,7 @@ class ReleaseState(BaseModel):
 
     def cleanup_old_directives(self, max_age_hours: int = 48) -> int:
         """Remove executed directives older than max_age_hours."""
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = pendulum.now("UTC") - timedelta(hours=max_age_hours)
         original_count = len(self.active_directives)
         self.active_directives = [
             d for d in self.active_directives
@@ -211,7 +212,7 @@ class ActionRecord(BaseModel):
     """Record of an action taken within a scenario."""
     action_type: str
     agent_id: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     details: Optional[str] = None
 
 
@@ -233,10 +234,10 @@ class ActiveScenario(BaseModel):
     complexity: TicketComplexity
 
     # Timeline
-    started: datetime = Field(default_factory=datetime.utcnow)
+    started: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     target_completion: datetime
     current_phase: ScenarioPhase
-    phase_started: datetime = Field(default_factory=datetime.utcnow)
+    phase_started: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     phase_target_end: datetime
 
     # Assignment
@@ -276,7 +277,7 @@ class ActiveScenario(BaseModel):
             import random
             cycle_days = random.randint(min_days, max_days)
 
-        now = datetime.utcnow()
+        now = pendulum.now("UTC")
         target_completion = now + timedelta(days=cycle_days)
 
         # Initial phase duration
@@ -298,7 +299,7 @@ class ActiveScenario(BaseModel):
 
     def advance_to_phase(self, new_phase: ScenarioPhase) -> None:
         """Advance scenario to a new phase."""
-        now = datetime.utcnow()
+        now = pendulum.now("UTC")
 
         # Record the phase transition
         self.actions_taken.append(ActionRecord(
@@ -401,7 +402,7 @@ class ActiveScenario(BaseModel):
 
     def is_phase_ready_to_advance(self) -> bool:
         """Check if current phase has exceeded its target duration and minimum time."""
-        now = datetime.utcnow()
+        now = pendulum.now("UTC")
         time_in_phase = now - self.phase_started
 
         # Check minimum hours requirement for current phase
@@ -414,16 +415,16 @@ class ActiveScenario(BaseModel):
 
     def is_overdue(self) -> bool:
         """Check if scenario has exceeded target completion."""
-        return datetime.utcnow() > self.target_completion
+        return pendulum.now("UTC") > self.target_completion
 
     def get_days_in_current_phase(self) -> float:
         """Get number of days in current phase."""
-        delta = datetime.utcnow() - self.phase_started
+        delta = pendulum.now("UTC") - self.phase_started
         return delta.total_seconds() / 86400
 
     def get_total_cycle_days(self) -> float:
         """Get total days since scenario started."""
-        delta = datetime.utcnow() - self.started
+        delta = pendulum.now("UTC") - self.started
         return delta.total_seconds() / 86400
 
     # ========== Script Management ==========
@@ -526,7 +527,7 @@ class AgentState(BaseModel):
 
     def record_action(self, ticket_key: Optional[str] = None) -> None:
         """Record that agent took an action."""
-        self.last_action = datetime.utcnow()
+        self.last_action = pendulum.now("UTC")
         self.actions_today += 1
 
     def _update_workload(self) -> None:
@@ -592,7 +593,7 @@ class RecentAction(BaseModel):
     action_type: str
     ticket_key: Optional[str] = None
     scenario_id: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     details: Optional[str] = None
 
 
@@ -689,7 +690,7 @@ class SprintState(BaseModel):
                 if current_time:
                     now = current_time
                 else:
-                    now = datetime.now(timezone.utc)
+                    now = pendulum.now("UTC")
 
                 if start_date.tzinfo is None:
                     start_date = start_date.replace(tzinfo=timezone.utc)
@@ -932,7 +933,7 @@ class SimulationState(BaseModel):
         agent = self.get_agent_state(agent_id)
         if not agent.last_action:
             return False
-        threshold = datetime.utcnow() - timedelta(minutes=minutes)
+        threshold = pendulum.now("UTC") - timedelta(minutes=minutes)
         return agent.last_action > threshold
 
     # ========== Action Recording ==========
@@ -969,7 +970,7 @@ class SimulationState(BaseModel):
         if scenario_id and scenario_id in self.active_scenarios:
             self.active_scenarios[scenario_id].record_action(action_type, agent_id, details)
 
-        self.last_run = datetime.utcnow()
+        self.last_run = pendulum.now("UTC")
 
     # ========== Day/Sprint Management ==========
 
@@ -977,7 +978,7 @@ class SimulationState(BaseModel):
         """Check if this is a new simulation day."""
         if not self.last_run:
             return True
-        return datetime.utcnow().date() > self.last_run.date()
+        return pendulum.now("UTC").date() > self.last_run.date()
 
     def advance_day(self) -> None:
         """Advance to new simulation day, reset daily counters.

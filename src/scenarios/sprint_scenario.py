@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 import uuid
+import pendulum
 
 from pydantic import BaseModel, Field
 
@@ -123,7 +124,7 @@ class ScriptEvent(BaseModel):
     def mark_executed(self, result: Optional[dict[str, Any]] = None) -> None:
         """Mark this event as executed."""
         self.executed = True
-        self.executed_at = datetime.now()
+        self.executed_at = pendulum.now("UTC")
         self.execution_result = result or {}
 
 
@@ -197,7 +198,7 @@ class SprintScenario(BaseModel):
 
     def start(self) -> None:
         """Start the scenario."""
-        self.started_at = datetime.now()
+        self.started_at = pendulum.now("UTC")
         self.current_day = 1
         # Set initial mood from day 1 if available
         day_1 = self.get_day(1)
@@ -206,7 +207,7 @@ class SprintScenario(BaseModel):
 
     def complete(self) -> None:
         """Complete the scenario."""
-        self.completed_at = datetime.now()
+        self.completed_at = pendulum.now("UTC")
         # Calculate actual completion rate
         if self.sprint_items:
             self.actual_completion_rate = len(self.items_completed) / len(self.sprint_items)

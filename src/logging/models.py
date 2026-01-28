@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Optional, Any
 from pydantic import BaseModel, Field
 import uuid
+import pendulum
 
 
 class LogCategory(str, Enum):
@@ -26,7 +27,7 @@ class LLMCallLog(BaseModel):
     """Log entry for LLM API calls - captures full prompt and response."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     category: LogCategory = LogCategory.LLM_CALL
     session_id: str
     tick_id: str
@@ -69,7 +70,7 @@ class JiraAPILog(BaseModel):
     """Log entry for Jira API calls."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     category: LogCategory = LogCategory.JIRA_API
     session_id: str
     tick_id: str
@@ -103,7 +104,7 @@ class AgentDecisionLog(BaseModel):
     """Log entry for agent decision making."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     category: LogCategory = LogCategory.AGENT_DECISION
     session_id: str
     tick_id: str
@@ -130,7 +131,7 @@ class OrchestratorLog(BaseModel):
     """Log entry for orchestrator decisions and phases."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     category: LogCategory = LogCategory.ORCHESTRATOR
     session_id: str
     tick_id: str
@@ -165,7 +166,7 @@ class SessionLog(BaseModel):
     tick_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     category: LogCategory = LogCategory.SESSION
 
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: pendulum.now("UTC"))
     ended_at: Optional[datetime] = None
 
     # Tick metadata
