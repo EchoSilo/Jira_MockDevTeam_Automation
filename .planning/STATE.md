@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 1: Time Infrastructure & UTC Migration
-**Current Plan:** 01-02 completed (2 of 4)
+**Current Plan:** 01-03 completed (3 of 4)
 **Status:** In progress - executing Phase 1 plans
 
 ## Project Reference
@@ -14,11 +14,11 @@
 ## Current Position
 
 **Phase:** 1 of 5 - Time Infrastructure & UTC Migration
-**Plan:** 2 of 4 complete
+**Plan:** 3 of 4 complete
 **Status:** In Progress
-**Last activity:** 2026-01-28 - Completed 01-02-PLAN.md (Virtual time cleanup)
+**Last activity:** 2026-01-28 - Completed 01-03-PLAN.md (Clock injection & UTC migration)
 
-**Progress:** [████████████░░░░░░░░] 50% (2/4 plans in phase)
+**Progress:** [██████████████████░░] 75% (3/4 plans in phase)
 
 **Phase Goal:** All time handling operates in timezone-aware UTC with business hours enforcement and DST-safe sprint calculations.
 
@@ -67,6 +67,9 @@
 | ConfigDict backwards compatibility for state | Use extra="ignore" to allow old state.json files to load gracefully | 01-02 | 2026-01-28 |
 | Backup state before destructive reset | Preserve old state as .backup.virtual-time for rollback capability | 01-02 | 2026-01-28 |
 | Temporary datetime.now(timezone.utc) stopgap | Replace simulation_time with real-time calls until Clock injection | 01-02 | 2026-01-28 |
+| Use pendulum for all timestamps | Consistent timezone-aware datetime handling across codebase | 01-03 | 2026-01-28 |
+| Inject Clock only into ScenarioOrchestrator | Main execution path where time control matters for testing | 01-03 | 2026-01-28 |
+| Replace datetime.now(timezone.utc) with pendulum | Unified time handling, prepares for business hours/DST work | 01-03 | 2026-01-28 |
 
 ### Open Questions
 
@@ -91,31 +94,30 @@
 
 ## Session Continuity
 
-**Last Session:** Plan 01-02 execution (2026-01-28)
+**Last Session:** Plan 01-03 execution (2026-01-28)
 
 **What Happened:**
-- Executed 01-02-PLAN.md (Virtual time cleanup)
-- Removed simulation_time and tick_duration_hours from SimulationState model
-- Added ConfigDict(extra="ignore") for backwards compatibility
-- Backed up old state.json as .backup.virtual-time
-- Created fresh state.json without virtual time fields
-- Replaced all state.simulation_time with datetime.now(timezone.utc) in main.py and orchestrator.py
-- Committed Task 1 (refactor: remove fields) - 3ba8918
-- Committed Task 2 (chore: backup and reset state) - a0beb4d
-- Committed Task 3 (refactor: update callers) - ed0e4d7, b921ec6
-- Created 01-02-SUMMARY.md with full execution documentation
-- Updated STATE.md with progress (2/4 plans in Phase 1 complete)
+- Executed 01-03-PLAN.md (Clock injection & UTC migration)
+- Migrated all Pydantic model defaults to use pendulum.now("UTC")
+- Replaced 40+ datetime.utcnow() and datetime.now(timezone.utc) calls with pendulum
+- Injected Clock parameter into ScenarioOrchestrator with RealClock default
+- Updated 12 files: models, orchestrator, agents, main, services, logging
+- Committed Task 1 (refactor: Pydantic models) - f4cd242
+- Committed Task 2 (refactor: orchestrator/agents) - 2d62f94
+- Committed Task 3 (refactor: main & services) - 5fd8be9
+- Created 01-03-SUMMARY.md with full execution documentation
+- Updated STATE.md with progress (3/4 plans in Phase 1 complete)
 
 **Next Session Should:**
-1. Continue Phase 1 execution with plan 01-03 (Clock injection into codebase)
-2. Replace all datetime.now(timezone.utc) with Clock injection pattern
+1. Continue Phase 1 execution with plan 01-04 (Business hours enforcement)
+2. Implement business hours gate in /trigger endpoint (M-F 9-5)
 
 **Context for Next Agent:**
-- Virtual time model completely removed from codebase
-- State.json is fresh, no virtual time fields
-- All datetime.now(timezone.utc) calls are temporary stopgap (marked for Clock injection)
-- Clock abstraction ready from 01-01 (src.time module)
-- Phase 1 is 50% complete (2 of 4 plans)
+- All datetime calls migrated to pendulum.now("UTC") - zero naive datetimes
+- Clock injected into ScenarioOrchestrator for testability
+- Tests can inject FakeClock for deterministic time control
+- Ready for business hours logic using pendulum and Clock abstraction
+- Phase 1 is 75% complete (3 of 4 plans)
 
 ---
 *State initialized: 2026-01-27*
