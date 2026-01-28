@@ -23,3 +23,9 @@ try:
     __all__.append("BusinessHoursScheduler")
 except ImportError:
     pass
+
+try:
+    from .scheduler import Scheduler
+    __all__.append("Scheduler")
+except ImportError:
+    pass
