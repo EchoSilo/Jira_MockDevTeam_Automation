@@ -56,7 +56,7 @@ class LoggingCircuitBreakerListener(CircuitBreakerListener):
     def state_change(self, cb: CircuitBreaker, old_state: Any, new_state: Any) -> None:
         """Log when circuit breaker changes state."""
         logger.warning(
-            f"Circuit breaker '{cb.name}' changed from {old_state.name} to {new_state.name}"
+            f"Circuit breaker '{cb.name}' changed from {old_state} to {new_state}"
         )
 
     def failure(self, cb: CircuitBreaker, exc: Exception) -> None:
@@ -180,8 +180,8 @@ class ResilientJiraClient:
             States are: 'closed' (normal), 'open' (failing), 'half-open' (testing).
         """
         return {
-            "reads": jira_read_breaker.current_state.name,
-            "writes": jira_write_breaker.current_state.name,
+            "reads": jira_read_breaker.current_state,
+            "writes": jira_write_breaker.current_state,
         }
 
     # ==================== Pass-through ====================
