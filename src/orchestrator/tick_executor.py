@@ -17,6 +17,7 @@ from src.reconciliation.circuit_breaker import ResilientJiraClient, CircuitBreak
 if TYPE_CHECKING:
     from src.services.jira_client import JiraClient
     from src.state import SimulationState
+    from src.chaos.pathfinding_adapter import PathfindingAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,11 @@ class TickExecutor:
         scheduler: Scheduler,
         jira_client: "JiraClient",
         max_actions_per_tick: int = 4,
+        pathfinding_adapter: Optional["PathfindingAdapter"] = None,
     ):
         self.scheduler = scheduler
         self.max_actions_per_tick = max_actions_per_tick
+        self.pathfinding_adapter = pathfinding_adapter
 
         # Reconciliation components (from Phase 2)
         self.resilient_jira = ResilientJiraClient(jira_client)
@@ -54,6 +57,7 @@ class TickExecutor:
             "skipped": 0,
             "overdue_skipped": 0,
             "reconciliation_skips": 0,
+            "recalculations": 0,
         }
 
     def execute_tick(
@@ -184,6 +188,33 @@ class TickExecutor:
                         action_type,
                     )
 
+                    # Handle RECALCULATE strategy with pathfinding adapter
+                    if reconciliation.strategy == AdaptationStrategy.RECALCULATE:
+                        if self.pathfinding_adapter:
+                            pathfinding_result = self.pathfinding_adapter.handle_reconciliation_result(
+                                reconciliation,
+                                scheduled_action,
+                            )
+                            if pathfinding_result:
+                                logger.info(
+                                    f"Recalculated path for {ticket_key}: "
+                                    f"{pathfinding_result.to_dict()}"
+                                )
+                                self._tick_metrics["recalculations"] += 1
+                        # Mark original action as skipped (handled by recalculation)
+                        self.scheduler.mark_action_skipped(
+                            action_id,
+                            f"reconciliation_recalculate: {reconciliation.reason}"
+                        )
+                        self._tick_metrics["reconciliation_skips"] += 1
+                        return {
+                            "action_id": action_id,
+                            "action_type": action_type,
+                            "skipped": True,
+                            "reason": reconciliation.reason,
+                            "recalculated": True,
+                        }
+
                     if reconciliation.strategy in [
                         AdaptationStrategy.CANCEL,
                         AdaptationStrategy.SKIP,
@@ -251,4 +282,5 @@ class TickExecutor:
             "skipped": 0,
             "overdue_skipped": 0,
             "reconciliation_skips": 0,
+            "recalculations": 0,
         }
