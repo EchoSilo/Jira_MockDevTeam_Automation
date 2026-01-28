@@ -1,0 +1,96 @@
+# Chaos Event Catalog
+#
+# Defines templates for chaos events and archetype-specific weight multipliers.
+# Used by EventCatalog to provide scenario-aware chaos injection.
+
+event_templates:
+  production_outage:
+    description_template: "Production outage affecting {affected_count} tickets"
+    default_severity: critical
+    requires_response_action: true
+    response_agent_role: tech_lead
+    response_action_type: emergency_response
+    pause_non_critical: true
+
+  urgent_bug:
+    description_template: "Urgent bug discovered in {ticket_key}"
+    default_severity: high
+    requires_response_action: true
+    response_agent_role: developer
+    response_action_type: fix_urgent_bug
+
+  team_absence:
+    description_template: "{agent_id} unavailable for {duration_ticks} ticks"
+    default_severity: medium
+    requires_reassignment: true
+    default_duration_ticks: 3
+
+  external_blocker:
+    description_template: "External blocker on {ticket_key}: waiting for {blocker_detail}"
+    default_severity: medium
+    requires_response_action: true
+    response_agent_role: pm
+    response_action_type: blocker_discussion
+    extends_timeline: true
+
+  priority_shift:
+    description_template: "Priority changed for {affected_count} tickets"
+    default_severity: low
+    reorders_backlog: true
+
+  scope_change:
+    description_template: "Scope change on {ticket_key}: {change_detail}"
+    default_severity: medium
+    extends_timeline: true
+
+# Archetype-specific weight multipliers
+# Applied to base probabilities to adjust chaos intensity by sprint type.
+# 1.0 = no change, 2.0 = double likelihood, 0.5 = half likelihood
+archetype_weights:
+  smooth_sprint:
+    production_outage: 0.2    # Minimal disruptions
+    urgent_bug: 0.5
+    team_absence: 0.5
+    external_blocker: 0.3
+    priority_shift: 0.3
+    scope_change: 0.3
+
+  blocker_heavy:
+    production_outage: 1.5
+    urgent_bug: 1.0
+    team_absence: 0.8
+    external_blocker: 2.0    # Double external blockers
+    priority_shift: 1.0
+    scope_change: 1.2
+
+  overloaded_sprint:
+    production_outage: 1.2
+    urgent_bug: 1.5
+    team_absence: 0.7
+    external_blocker: 1.3
+    priority_shift: 1.5      # More priority shifts
+    scope_change: 1.5
+
+  rework_sprint:
+    production_outage: 0.8
+    urgent_bug: 1.5          # More bugs from rework
+    team_absence: 0.6
+    external_blocker: 0.8
+    priority_shift: 0.5
+    scope_change: 0.5
+
+  crunch_sprint:
+    production_outage: 1.0
+    urgent_bug: 1.2
+    team_absence: 0.3        # No absences during crunch
+    external_blocker: 0.5
+    priority_shift: 0.3
+    scope_change: 0.3
+
+  recovery_sprint:
+    production_outage: 0.3   # Minimal new disruptions
+    urgent_bug: 0.5
+    team_absence: 1.0        # Normal absences
+    external_blocker: 0.5
+    priority_shift: 0.3
+    scope_change: 0.2
