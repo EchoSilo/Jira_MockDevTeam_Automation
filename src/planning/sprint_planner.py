@@ -200,7 +200,7 @@ class SprintPlanner:
         state.set_planning_horizon(horizon)
 
         result["success"] = True
-        result["sprint_plan"] = sprint_plan.model_dump()
+        result["sprint_plan"] = sprint_plan.model_dump(mode='json')
         result["actions_scheduled"] = len(scheduled_actions)
 
         return result
