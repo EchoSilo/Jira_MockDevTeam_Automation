@@ -7,5 +7,6 @@ into the simulation to test adaptive pathfinding.
 
 from .models import RandomEvent, ChaosConfig, ChaosEventType
 from .event_catalog import EventCatalog
+from .event_generator import RandomEventGenerator
 
-__all__ = ["RandomEvent", "ChaosConfig", "ChaosEventType", "EventCatalog"]
+__all__ = ["RandomEvent", "ChaosConfig", "ChaosEventType", "EventCatalog", "RandomEventGenerator"]

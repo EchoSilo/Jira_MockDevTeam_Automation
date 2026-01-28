@@ -104,7 +104,11 @@ class TestRandomEventGenerator:
                 # Verify it's a valid RandomEvent
                 assert isinstance(event, RandomEvent)
                 assert event.event_type in ChaosEventType
-                assert len(event.affected_tickets) > 0
+                # team_absence affects agents, others affect tickets
+                if event.event_type != ChaosEventType.team_absence:
+                    assert len(event.affected_tickets) > 0
+                else:
+                    assert len(event.affected_agents) > 0
                 assert event.severity in ["low", "medium", "high", "critical"]
 
         # With 50% chance, we should see some events
