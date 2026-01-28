@@ -201,25 +201,29 @@ class TestAutomaticCleanup:
         tracker = ExecutionTracker(clock=clock, cleanup_age_hours=1)
 
         # Record multiple executions over time
+        # Timeline: record at 10:00, 10:30, 11:00, 11:30, 12:00
+        # Clock advances AFTER each record, ending at 12:30
         ids = []
         for i in range(5):
             exec_id = tracker.generate_execution_id("transition", f"ESCRUM-{i}", "dev_alice")
             tracker.record_execution(exec_id, "transition", f"ESCRUM-{i}", "success")
             ids.append(exec_id)
-            clock.advance(minutes=30)  # 30 min between each
+            clock.advance(minutes=30)
 
-        # After 2.5 hours total, first 3 records should be gone (older than 1h)
-        # Record a new one to trigger cleanup
+        # Final record at 12:30, cleanup threshold is 11:30
+        # Records with executed_at > 11:30 are kept (strictly greater)
         final_id = tracker.generate_execution_id("transition", "ESCRUM-999", "dev_alice")
         tracker.record_execution(final_id, "transition", "ESCRUM-999", "success")
 
-        # First 3 should be cleaned up (recorded at 0, 30, 60 mins - all >1h ago now at 150 mins)
-        assert tracker.is_executed(ids[0]) is False
-        assert tracker.is_executed(ids[1]) is False
-        assert tracker.is_executed(ids[2]) is False
-        # Last 2 should remain (recorded at 90, 120 mins - both <1h ago at 150 mins)
-        assert tracker.is_executed(ids[3]) is True
-        assert tracker.is_executed(ids[4]) is True
+        # Records at 10:00, 10:30, 11:00, 11:30 - all <= 11:30, cleaned up
+        assert tracker.is_executed(ids[0]) is False  # 10:00 - cleaned
+        assert tracker.is_executed(ids[1]) is False  # 10:30 - cleaned
+        assert tracker.is_executed(ids[2]) is False  # 11:00 - cleaned
+        assert tracker.is_executed(ids[3]) is False  # 11:30 - exactly at cutoff, cleaned
+        # Record at 12:00 - strictly > 11:30, kept
+        assert tracker.is_executed(ids[4]) is True   # 12:00 - kept
+        # Final record at 12:30 - kept
+        assert tracker.is_executed(final_id) is True
 
 
 class TestExecutionRecord:
