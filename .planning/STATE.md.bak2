@@ -1,9 +1,9 @@
 # Project State: Real-Time Scripted Jira Team Simulator
 
-**Last Updated:** 2026-01-28 21:07 UTC
-**Current Phase:** Phase 4 - Adaptive Pathfinding & Chaos Injection (COMPLETE)
-**Current Plan:** 04-07 complete (7 of 7)
-**Status:** Phase 4 complete, ready for Phase 5
+**Last Updated:** 2026-01-28
+**Current Phase:** Phase 4 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
+**Current Plan:** 04-02 complete (2 of 5)
+**Status:** Phase 4 Wave 1 complete, Wave 2 started
 
 ## Project Reference
 
@@ -13,23 +13,23 @@
 
 ## Current Position
 
-**Phase:** 4 of 5 - Adaptive Pathfinding & Chaos Injection (COMPLETE)
-**Plans:** 7 of 7 complete in current phase
-**Status:** Phase complete
-**Last activity:** 2026-01-28 - Completed 04-07-PLAN.md (Orchestrator Integration)
-**Progress:** [█████████████████████] 100% (7/7 plans in phase 4)
+**Phase:** 4 of 5 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
+**Plans:** 2 of 5 complete in current phase
+**Status:** In progress
+**Last activity:** 2026-01-28 - Completed 04-02-PLAN.md
+**Progress:** [███████████████░░░░░] 71% (42/59 requirements)
 
 **Phase Goal:** Chaos event injection with adaptive pathfinding for workflow transitions; system handles disruptions intelligently.
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 53/59 requirements completed (90%)
+**Overall Milestone Progress:** 42/59 requirements completed (71%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
 - Phase 2: 8/8 (100%) ✓
 - Phase 3: 24/24 (100%) ✓
-- Phase 4: 14/14 (100%) ✓
+- Phase 4: 3/14 (21%)
 - Phase 5: 0/6 (0%)
 
 ## Accumulated Context
@@ -53,19 +53,6 @@
 | Default chaos weights favor blockers/shifts | external_blocker (0.15) and priority_shift (0.12) reflect realistic disruption patterns | 4 | 2026-01-28 |
 | Two-stage dice rolling for chaos events | Stage 1: base_event_chance, Stage 2: weighted selection; separates "if event" from "which event" | 4 | 2026-01-28 |
 | Seeded random.Random for deterministic testing | Optional seed parameter enables reliable test assertions while preserving production randomness | 4 | 2026-01-28 |
-| Weight multipliers for archetype chaos | Archetype-specific multipliers adjust event probabilities (smooth: 0.2-0.5x, blocker_heavy: 2.0x external_blocker) | 4 | 2026-01-28 |
-| Event catalog pattern | Central registry provides templates with response actions; enables scenario-aware chaos intensity | 4 | 2026-01-28 |
-| Positive adaptations don't hurt fidelity | Early completion treated as success in fidelity calculation; formula: (executed_as_planned + positive_adaptations) / total | 4 | 2026-01-28 |
-| Dual-threshold accept reality | Both fidelity < 0.7 AND external_overrides >= 3 required to abandon script; prevents premature abandonment | 4 | 2026-01-28 |
-| Direct queue heap access for adaptation | Use _get_pending_actions() to scan queue._heap; get_due_actions() filters by time window | 4 | 2026-01-28 |
-| Track postponed actions in actions_inserted | Postponed actions ARE inserted into queue, should appear in insertion list for transparency | 4 | 2026-01-28 |
-| Simple replacement agent mapping | Phase 4 focuses on pathfinding logic, not state management; hardcoded role mapping sufficient | 4 | 2026-01-28 |
-| Use WorkflowPathfinder for recalculation | Leverages existing pathfinding logic for consistency with workflow topology | 4 | 2026-01-28 |
-| Mark all pending actions for ticket as ADAPTED | Prevents conflicting actions after recalculation; maintains action queue consistency | 4 | 2026-01-28 |
-| Stagger recalculated action timing | 15-minute intervals for recalculated actions creates realistic action spacing | 4 | 2026-01-28 |
-| Chaos injection after tick execution | Chaos phase runs after TickExecutor but before orchestrator planning; ensures chaos can modify queue before new actions planned | 4 | 2026-01-28 |
-| ChaosConfig accepts dict or path | load_from_settings accepts either dict or file path for flexible loading from lifespan | 4 | 2026-01-28 |
-| Confidence tracking requires sprint scenario | Only calculate confidence when sprint scenario exists; avoids errors on legacy per-ticket scenarios | 4 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -107,22 +94,6 @@
   - SimulationState planning fields (planning_horizon, velocity_tracker, action_queue)
   - Full integration: Scheduler, TickExecutor, SprintPlanner wired into /trigger
 
-**Phase 4: Adaptive Pathfinding & Chaos Injection** (Completed 2026-01-28)
-- 7 plans executed across 5 waves
-- 84 chaos tests pass
-- 14/14 requirements verified (100%)
-- Key deliverables:
-  - ChaosEventType enum with 6 event types
-  - RandomEvent dataclass with validation
-  - ChaosConfig with dict/path loading and threshold configuration
-  - RandomEventGenerator with probability rolling and seeded testing
-  - EventCatalog with archetype-aware weight adjustment
-  - ConfidenceTracker with dual-threshold accept reality logic
-  - ScenarioAdapter with event-specific handlers
-  - PathfindingAdapter with RECALCULATE handling
-  - Full /trigger integration with chaos metrics
-  - Comprehensive integration test suite
-
 ### Minor Gaps
 
 **Phase 3 minor gap (non-blocking):**
@@ -148,34 +119,40 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 4 Plan 07 Execution (2026-01-28)
+**Last Session:** Phase 4 Plan 01 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 04-07: Orchestrator Integration - Final Phase 4 plan
-- Wired all Phase 4 chaos components into /trigger endpoint
-- Chaos injection phase runs after tick execution, before orchestrator planning
-- Event generator rolls per tick with configurable probabilities
-- Scenario adapter modifies action queue when chaos events trigger
-- Confidence tracker monitors script fidelity and accept reality thresholds
-- Chaos metrics visible in tick response
-- 6 integration tests verify end-to-end chaos flow
+- Completed 04-01: Chaos Event Models & Configuration (TDD)
+- Created ChaosEventType enum with 6 event types
+- Created RandomEvent dataclass with validation
+- Created ChaosConfig with load_from_settings()
+- Added random_events section to settings.yaml
+- TDD cycle: RED (failing tests) → GREEN (implementation) → REFACTOR (extract constant)
+- All 10 tests pass
 
 **Commits This Session:**
-- `9d69e11`: feat(04-07): integrate chaos components into main.py
-- `1f7727d`: feat(04-07): add accept reality thresholds to settings.yaml
-- `c4af398`: fix(04-07): update ChaosConfig to accept dict or path
-- `729e8dd`: test(04-07): add chaos integration tests
+- `741d0c2`: test(04-01): add failing tests for chaos event models
+- `9cde8ba`: feat(04-01): implement chaos event models and configuration
+- `c5ea45d`: refactor(04-01): extract VALID_SEVERITIES constant
 
 **Next Session Should:**
-Begin Phase 5 (Performance Optimization) - profiling, caching, and optimization of Phase 1-4 systems
+Execute 04-02: Chaos Event Generator
 
 **Context for Next Agent:**
-- Phase 4 complete - all chaos components integrated and tested
-- Chaos flow: roll for event -> adapt scenario -> track confidence
-- Chaos metrics available in tick response for monitoring
-- Configuration via settings.yaml random_events section
-- Integration tests verify chaos flow without full app stack
-- Potential optimization targets: confidence scanning O(n), event generation overhead
+- Chaos models foundation complete
+- RandomEvent provides strongly-typed events with validation
+- ChaosConfig loads probabilities from settings.yaml
+- 6 event types: production_outage, urgent_bug, team_absence, external_blocker, priority_shift, scope_change
+- Ready for event generation logic
+
+**Phase 4: Adaptive Pathfinding & Chaos Injection** (IN PROGRESS)
+- 1 plan executed (04-01)
+- 10 chaos model tests pass
+- Key deliverables so far:
+  - ChaosEventType enum with 6 event types
+  - RandomEvent dataclass with validation
+  - ChaosConfig with YAML configuration loading
+  - random_events section in settings.yaml
 
 ---
-*State updated: 2026-01-28 21:07 UTC after Phase 4 complete*
+*State updated: 2026-01-28 after 04-01 execution complete*
