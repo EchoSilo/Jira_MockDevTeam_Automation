@@ -259,6 +259,10 @@ class ActiveScenario(BaseModel):
     comments_added: int = 0
     times_rejected: int = 0
 
+    # Staleness tracking (for RECON-05)
+    last_validated: Optional[datetime] = Field(default_factory=lambda: pendulum.now("UTC"))
+    validation_tick_count: int = 0  # Ticks since last successful validation
+
     # Pre-planned action script (sequence only, no timing)
     action_script: list[PlannedAction] = Field(default_factory=list)
     script_index: int = 0  # Current position in script
@@ -501,6 +505,25 @@ class ActiveScenario(BaseModel):
             for a in actions
         ]
         self.script_index = 0
+
+    # ========== Staleness Detection (RECON-05) ==========
+
+    def mark_validated(self) -> None:
+        """Mark scenario as validated this tick."""
+        self.last_validated = pendulum.now("UTC")
+        self.validation_tick_count = 0
+
+    def increment_validation_miss(self) -> None:
+        """Record that validation was skipped/failed this tick."""
+        self.validation_tick_count += 1
+
+    def is_stale(self, staleness_threshold: int = 4) -> bool:
+        """Check if scenario hasn't been validated for too many ticks.
+
+        Uses tick count, not wall-clock time, to handle business hours correctly.
+        4 ticks at 45-minute cadence = ~3 hours, but could span overnight.
+        """
+        return self.validation_tick_count >= staleness_threshold
 
 
 class AgentState(BaseModel):
