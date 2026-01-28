@@ -850,6 +850,9 @@ class SimulationState(BaseModel):
     # Velocity tracking for capacity planning
     velocity_tracker: Optional[dict] = None  # Serialized VelocityTracker
 
+    # Action queue for scheduled actions (Phase 3)
+    action_queue: Optional[list] = None  # Serialized ScheduledAction list
+
     # ========== Sprint Scenario Management (NEW) ==========
 
     def get_sprint_scenario(self) -> Optional["SprintScenario"]:
@@ -899,6 +902,14 @@ class SimulationState(BaseModel):
     def set_velocity_tracker(self, tracker: "VelocityTracker") -> None:
         """Set velocity tracker."""
         self.velocity_tracker = tracker.model_dump()
+
+    def get_action_queue(self) -> list:
+        """Get action queue."""
+        return self.action_queue or []
+
+    def set_action_queue(self, actions: list) -> None:
+        """Set action queue."""
+        self.action_queue = actions
 
     def needs_sprint_planning(self) -> bool:
         """Check if sprint planning is needed (horizon < 2 sprints)."""
