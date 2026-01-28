@@ -207,6 +207,16 @@ class ScenarioOrchestrator:
             "errors": [],
         }
 
+        # Reset reconciliation metrics for this tick
+        self._tick_metrics = {
+            "validated": 0,
+            "skipped": 0,
+            "cancelled": 0,
+            "rescheduled": 0,
+            "executed": 0,
+            "idempotent_skips": 0,
+        }
+
         # Log tick start
         self._log_event("tick_start", intensity=intensity)
 
@@ -304,6 +314,20 @@ class ScenarioOrchestrator:
                     action_result = await self._execute_action(action, state)
                     results["actions"].append(action_result)
 
+                    # Track execution metrics and record for idempotency
+                    if not action_result.get("skipped") and not action_result.get("error"):
+                        self._tick_metrics["executed"] += 1
+                        # Record successful execution for idempotency (RECON-04)
+                        # Use the SAME execution_id generated during validation
+                        recorded_id = action_result.get("execution_id")
+                        if recorded_id:
+                            self.execution_tracker.record_execution(
+                                recorded_id,
+                                action_type,
+                                ticket_key or "",
+                                "success",
+                            )
+
                     # Clear logging context after action
                     if self.crewai_callback:
                         self.crewai_callback.clear_context()
@@ -350,6 +374,26 @@ class ScenarioOrchestrator:
 
             # Log orchestration error
             self._log_event("orchestration_error", error=str(e))
+
+        # Cleanup stale scenarios (RECON-05)
+        tombstones = cleanup_stale_scenarios(state, staleness_threshold=4)
+        if tombstones:
+            results["stale_scenarios_removed"] = len(tombstones)
+            for t in tombstones:
+                logger.info(f"Removed stale scenario: {t['ticket_key']} - {t['reason']}")
+
+        # Log reconciliation metrics (RECON-08 visibility)
+        results["reconciliation_metrics"] = self._tick_metrics.copy()
+        if sum(self._tick_metrics.values()) > 0:
+            logger.info(
+                f"Reconciliation metrics: "
+                f"validated={self._tick_metrics['validated']}, "
+                f"executed={self._tick_metrics['executed']}, "
+                f"skipped={self._tick_metrics['skipped']}, "
+                f"cancelled={self._tick_metrics['cancelled']}, "
+                f"rescheduled={self._tick_metrics['rescheduled']}, "
+                f"idempotent_skips={self._tick_metrics['idempotent_skips']}"
+            )
 
         results["tick_end"] = self.clock.now().isoformat()
         results["actions_completed"] = len(results["actions"])
