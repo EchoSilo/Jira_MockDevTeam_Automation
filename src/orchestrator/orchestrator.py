@@ -592,6 +592,23 @@ class ScenarioOrchestrator:
             logger.warning(f"Failed to assign {ticket_key} to {agent_id}: {e}")
         return False
 
+    def _get_expected_status_for_action(self, action_type: str, scenario) -> Optional[str]:
+        """Get the expected Jira status for an action to be valid."""
+        # Map action types to their expected precondition statuses
+        status_preconditions = {
+            "pick_up_task": "To Do",
+            "progress_to_review": "In Progress",
+            "complete_review": "Code Review",
+            "qa_approve": "Ready for QA",
+            "qa_reject": "Ready for QA",
+            "inject_blocker": "In Progress",
+            "resolve_blocker": "In Progress",
+            "acknowledge_rejection": "In Progress",
+            "complete_fix": "In Progress",
+            "verify_fix": "Ready for QA",
+        }
+        return status_preconditions.get(action_type)
+
     async def _execute_action(
         self,
         action: dict,
@@ -604,6 +621,114 @@ class ScenarioOrchestrator:
         agent_id = action.get("agent_id")
         details = action.get("details", "")
 
+        result = {"action_type": action_type, "ticket_key": ticket_key}
+
+        # === Pre-execution validation (Phase 2: RECON-01, RECON-04, RECON-07, RECON-08) ===
+        execution_id = None  # Store for recording after successful execution
+        if ticket_key:
+            # Generate execution ID for idempotency check
+            # NOTE: Same execution_id is used for both check and recording (stored in result dict)
+            execution_id = self.execution_tracker.generate_execution_id(
+                action_type, ticket_key, agent_id or "unknown"
+            )
+
+            # Check idempotency - skip if already executed
+            if self.execution_tracker.is_executed(execution_id):
+                self._tick_metrics["idempotent_skips"] += 1
+                logger.info(f"Skipping duplicate execution: {execution_id}")
+                return {
+                    **result,
+                    "skipped": True,
+                    "reason": "idempotent_skip",
+                    "execution_id": execution_id,
+                }
+
+            # Get scenario for validation context
+            scenario_for_validation = None
+            if scenario_id and scenario_id in state.active_scenarios:
+                scenario_for_validation = state.active_scenarios[scenario_id]
+            elif ticket_key:
+                scenario_for_validation = state.get_scenario_by_ticket(ticket_key)
+
+            # Validate Jira state before execution
+            try:
+                expected_status = self._get_expected_status_for_action(action_type, scenario_for_validation)
+
+                if expected_status:
+                    validation = self.validator.validate_status(ticket_key, expected_status)
+
+                    # Also validate assignee if action requires it (RECON-01)
+                    if validation.valid and action.get("expected_assignee"):
+                        assignee_validation = self.validator.validate_assignee(
+                            ticket_key, action.get("expected_assignee")
+                        )
+                        if not assignee_validation.valid:
+                            validation = assignee_validation  # Use assignee failure
+
+                    if not validation.valid:
+                        # Apply reconciliation strategy
+                        actual_status = validation.actual_state.get("status") if validation.actual_state else "unknown"
+                        reconciliation = self.reconciler.reconcile_status_mismatch(
+                            ticket_key, expected_status, actual_status, action_type
+                        )
+
+                        if reconciliation.strategy == AdaptationStrategy.CANCEL:
+                            self._tick_metrics["cancelled"] += 1
+                            if scenario_for_validation:
+                                state.complete_scenario(scenario_for_validation.scenario_id)
+                                state.record_action(
+                                    agent_id="system",
+                                    agent_name="System",
+                                    action_type="scenario_cancelled",
+                                    ticket_key=ticket_key,
+                                    scenario_id=scenario_for_validation.scenario_id,
+                                    details=f"Tombstone: {reconciliation.tombstone_reason}",
+                                )
+                            return {
+                                **result,
+                                "skipped": True,
+                                "reason": "cancelled",
+                                "reconciliation_reason": reconciliation.reason,
+                                "tombstone": reconciliation.tombstone_reason,
+                            }
+
+                        elif reconciliation.strategy == AdaptationStrategy.SKIP:
+                            self._tick_metrics["skipped"] += 1
+                            if scenario_for_validation:
+                                scenario_for_validation.mark_validated()  # Still valid, just skipping this action
+                            return {
+                                **result,
+                                "skipped": True,
+                                "reason": "skipped",
+                                "reconciliation_reason": reconciliation.reason,
+                            }
+
+                        elif reconciliation.strategy == AdaptationStrategy.RESCHEDULE:
+                            self._tick_metrics["rescheduled"] += 1
+                            # Don't record execution - will retry next tick
+                            return {
+                                **result,
+                                "skipped": True,
+                                "reason": "rescheduled",
+                                "reconciliation_reason": reconciliation.reason,
+                            }
+                        # PROCEED continues to execution below
+
+                    else:
+                        self._tick_metrics["validated"] += 1
+                        if scenario_for_validation:
+                            scenario_for_validation.mark_validated()
+
+            except CircuitBreakerError:
+                self._tick_metrics["rescheduled"] += 1
+                logger.warning(f"Circuit breaker open, rescheduling {action_type} on {ticket_key}")
+                return {
+                    **result,
+                    "skipped": True,
+                    "reason": "circuit_breaker_open",
+                    "reconciliation_reason": "Jira API circuit breaker open, will retry next tick",
+                }
+
         # Validate sprint requirement for work actions
         if action_type in self.sprint_required_actions and ticket_key:
             if not self._validate_sprint_requirement(ticket_key):
@@ -614,8 +739,7 @@ class ScenarioOrchestrator:
                     )
                 else:
                     return {
-                        "action_type": action_type,
-                        "ticket_key": ticket_key,
+                        **result,
                         "error": "Ticket not in active sprint and could not be added",
                         "skipped": True,
                         "reason": "sprint_violation",
@@ -627,9 +751,6 @@ class ScenarioOrchestrator:
             scenario = state.active_scenarios[scenario_id]
         elif ticket_key:
             scenario = state.get_scenario_by_ticket(ticket_key)
-
-        # Route to appropriate crew method
-        result = {"action_type": action_type, "ticket_key": ticket_key}
 
         # ========== Lifecycle Actions ==========
         if action_type == "pick_up_task":
@@ -1417,6 +1538,10 @@ class ScenarioOrchestrator:
 
         else:
             result["error"] = f"Unknown action type: {action_type}"
+
+        # Include execution_id for recording in caller (idempotency tracking)
+        if execution_id:
+            result["execution_id"] = execution_id
 
         return result
 
