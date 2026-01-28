@@ -39,6 +39,7 @@ from .validators import PreExecutionValidator, OptimisticLockingValidator
 from .adapters import AdaptationStrategy
 from .execution_tracker import ExecutionTracker, ExecutionRecord
 from .reconciler import ReconciliationEngine, ReconciliationResult
+from .staleness import cleanup_stale_scenarios
 
 __all__ = [
     # Validation models
@@ -54,4 +55,6 @@ __all__ = [
     # Reconciliation engine
     "ReconciliationEngine",
     "ReconciliationResult",
+    # Staleness detection
+    "cleanup_stale_scenarios",
 ]
