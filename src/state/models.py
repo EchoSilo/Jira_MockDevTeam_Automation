@@ -844,6 +844,12 @@ class SimulationState(BaseModel):
     recent_actions: list[RecentAction] = Field(default_factory=list)
     recent_narrative: str = ""  # LLM's last planning reasoning
 
+    # Planning horizon for sprint lookahead (Phase 3)
+    planning_horizon: Optional[dict] = None  # Serialized PlanningHorizon
+
+    # Velocity tracking for capacity planning
+    velocity_tracker: Optional[dict] = None  # Serialized VelocityTracker
+
     # ========== Sprint Scenario Management (NEW) ==========
 
     def get_sprint_scenario(self) -> Optional["SprintScenario"]:
@@ -869,6 +875,35 @@ class SimulationState(BaseModel):
     def has_active_sprint_scenario(self) -> bool:
         """Check if there's an active sprint scenario."""
         return self.sprint_scenario is not None
+
+    # ========== Planning Horizon Management (Phase 3) ==========
+
+    def get_planning_horizon(self) -> "PlanningHorizon":
+        """Get planning horizon, creating if needed."""
+        from src.planning import PlanningHorizon
+        if self.planning_horizon is None:
+            return PlanningHorizon()
+        return PlanningHorizon.model_validate(self.planning_horizon)
+
+    def set_planning_horizon(self, horizon: "PlanningHorizon") -> None:
+        """Set planning horizon."""
+        self.planning_horizon = horizon.model_dump()
+
+    def get_velocity_tracker(self) -> "VelocityTracker":
+        """Get velocity tracker, creating if needed."""
+        from src.planning import VelocityTracker
+        if self.velocity_tracker is None:
+            return VelocityTracker()
+        return VelocityTracker.model_validate(self.velocity_tracker)
+
+    def set_velocity_tracker(self, tracker: "VelocityTracker") -> None:
+        """Set velocity tracker."""
+        self.velocity_tracker = tracker.model_dump()
+
+    def needs_sprint_planning(self) -> bool:
+        """Check if sprint planning is needed (horizon < 2 sprints)."""
+        horizon = self.get_planning_horizon()
+        return horizon.needs_planning()
 
     # ========== Legacy Scenario Management (DEPRECATED) ==========
 
