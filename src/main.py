@@ -16,6 +16,7 @@ from typing import Optional, Union
 from contextlib import asynccontextmanager
 from enum import Enum
 import pendulum
+import asyncio  # For async/sync bridge in TickExecutor callback
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,11 @@ from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
 from .time import Clock, RealClock, get_clock, validate_business_hours
+from .scheduling import Scheduler
+from .scheduling.persistence import ScheduledActionStore
+from .scheduling.virtual_clock import VirtualClock
+from .orchestrator.tick_executor import TickExecutor
+from .planning import SprintPlanner
 
 
 # ============ Caching for Performance ============
@@ -259,6 +265,24 @@ async def lifespan(app: FastAPI):
     app.state.jira = JiraClient()
     app.state.llm = LLMService()
 
+    # Initialize Scheduler with VirtualClock and SQLite persistence (Phase 3)
+    scheduler_config = settings.get("scheduler", {})
+    tick_duration = scheduler_config.get("tick_duration_hours", 0.75)
+    scheduler_db_path = scheduler_config.get("db_path", "data/scheduler.db")
+
+    store = ScheduledActionStore(db_path=scheduler_db_path)
+    virtual_clock = VirtualClock(pendulum.now("UTC"), tick_duration_hours=tick_duration)
+    app.state.scheduler = Scheduler(store=store, virtual_clock=virtual_clock)
+
+    # Initialize SprintPlanner (Phase 3)
+    app.state.sprint_planner = SprintPlanner(
+        jira_client=app.state.jira,
+        llm_service=app.state.llm,
+        scheduler=app.state.scheduler,
+        settings=settings,
+    )
+
+    print(f"Scheduler initialized (tick={tick_duration}h, db={scheduler_db_path})")
     print("Jira Team Simulator started (scenario-driven mode with logging)")
     yield
 
