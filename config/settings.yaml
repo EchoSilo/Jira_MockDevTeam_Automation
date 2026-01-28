@@ -235,3 +235,18 @@ release_management:
   directives:
     max_per_tick: 3                     # Max directives RM can issue per tick
     directive_cooldown_hours: 4         # Hours between similar directives
+
+# Random Events / Chaos Injection Configuration
+random_events:
+  enabled: true
+  base_event_chance: 0.1  # 10% chance of any event per tick
+
+  # Per-event-type probabilities (relative weights)
+  # These are relative probabilities - doesn't need to sum to 1.0
+  event_probabilities:
+    production_outage: 0.05   # Production issues requiring immediate response
+    urgent_bug: 0.10          # Critical bugs discovered in production
+    team_absence: 0.03        # Team member unavailable (sick, vacation)
+    external_blocker: 0.15    # External dependency blocking progress
+    priority_shift: 0.12      # Sudden priority changes from stakeholders
+    scope_change: 0.05        # Mid-sprint scope adjustments
