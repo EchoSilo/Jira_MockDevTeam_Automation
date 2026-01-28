@@ -42,6 +42,14 @@ from .scheduling.persistence import ScheduledActionStore
 from .scheduling.virtual_clock import VirtualClock
 from .orchestrator.tick_executor import TickExecutor
 from .planning import SprintPlanner
+from .chaos import (
+    RandomEventGenerator,
+    ScenarioAdapter,
+    ConfidenceTracker,
+    ChaosConfig,
+    EventCatalog,
+    PathfindingAdapter,
+)
 
 
 # ============ Caching for Performance ============
@@ -114,6 +122,53 @@ class CachedState:
 # Global caches
 _health_cache = CachedHealthCheck(ttl_seconds=60)  # Check Jira every 60s
 _state_cache = CachedState(ttl_seconds=5)  # Reload state every 5s
+
+# Chaos injection components (Phase 4)
+_event_generator: Optional[RandomEventGenerator] = None
+_scenario_adapter: Optional[ScenarioAdapter] = None
+_confidence_tracker: Optional[ConfidenceTracker] = None
+_pathfinding_adapter: Optional[PathfindingAdapter] = None
+
+
+def _build_agent_registry() -> dict:
+    """Build agent registry from personas config for chaos adapters."""
+    registry = {}
+    personas_path = Path("config/personas.yaml")
+    if personas_path.exists():
+        with open(personas_path) as f:
+            personas = yaml.safe_load(f) or {}
+        for agent_id, persona in personas.get("agents", {}).items():
+            role = persona.get("role", "developer")
+            if role not in registry:
+                registry[role] = []
+            registry[role].append(agent_id)
+    return registry
+
+
+def _initialize_chaos_components(settings: dict, scheduler: Scheduler):
+    """Initialize chaos injection components if enabled in config."""
+    global _event_generator, _scenario_adapter, _confidence_tracker, _pathfinding_adapter
+
+    # Load chaos config from settings
+    chaos_config = ChaosConfig.load_from_settings(settings)
+
+    if not chaos_config.enabled:
+        logger.info("Chaos injection disabled in settings")
+        return
+
+    # Build agent registry from personas
+    agent_registry = _build_agent_registry()
+
+    # Initialize components
+    _event_generator = RandomEventGenerator(chaos_config)
+    _scenario_adapter = ScenarioAdapter(scheduler, EventCatalog(), agent_registry)
+    _confidence_tracker = ConfidenceTracker(
+        threshold=chaos_config.confidence_threshold,
+        override_limit=chaos_config.external_override_limit,
+    )
+    _pathfinding_adapter = PathfindingAdapter(scheduler, None, agent_registry)
+
+    logger.info(f"Chaos injection enabled: base_chance={chaos_config.base_event_chance}")
 
 
 def check_and_handle_expired_sprint(
@@ -281,6 +336,9 @@ async def lifespan(app: FastAPI):
         scheduler=app.state.scheduler,
         settings=settings,
     )
+
+    # Initialize chaos components (Phase 4)
+    _initialize_chaos_components(settings, app.state.scheduler)
 
     print(f"Scheduler initialized (tick={tick_duration}h, db={scheduler_db_path})")
     print("Jira Team Simulator started (scenario-driven mode with logging)")
@@ -495,6 +553,51 @@ async def trigger_simulation():
         # Flow: mark overdue -> get due actions -> reconcile -> execute -> advance time
         tick_results = tick_executor.execute_tick(state, action_executor)
 
+        # --- Chaos injection phase (Phase 4) ---
+        chaos_metrics = {}
+        if _event_generator:
+            # Get current context for chaos event generation
+            current_tickets = [t.ticket_key for t in state.active_tickets] if hasattr(state, 'active_tickets') else []
+            agent_registry = _build_agent_registry()
+            flat_agents = [agent for agents in agent_registry.values() for agent in agents]
+
+            # Roll for chaos event
+            chaos_event = _event_generator.roll_for_event(current_tickets, flat_agents)
+
+            if chaos_event:
+                logger.info(f"Chaos event triggered: {chaos_event.event_type.value} ({chaos_event.event_id})")
+                chaos_metrics["event_triggered"] = True
+                chaos_metrics["event_type"] = chaos_event.event_type.value
+                chaos_metrics["event_id"] = chaos_event.event_id
+
+                # Adapt scenario to event
+                if _scenario_adapter:
+                    adaptation_result = _scenario_adapter.adapt_to_event(chaos_event)
+                    chaos_metrics["adapted_actions"] = len(adaptation_result.adapted_actions)
+                    chaos_metrics["inserted_actions"] = len(adaptation_result.inserted_actions)
+                    logger.info(
+                        f"Scenario adapted: {len(adaptation_result.adapted_actions)} adapted, "
+                        f"{len(adaptation_result.inserted_actions)} inserted"
+                    )
+            else:
+                chaos_metrics["event_triggered"] = False
+
+        # --- Confidence tracking ---
+        active_scenario = state.get_sprint_scenario() if hasattr(state, 'get_sprint_scenario') else None
+        if _confidence_tracker and active_scenario:
+            confidence = _confidence_tracker.calculate_confidence(active_scenario)
+            chaos_metrics["script_fidelity"] = confidence.script_fidelity
+            chaos_metrics["accept_reality"] = confidence.accept_reality
+            chaos_metrics["external_overrides"] = confidence.external_overrides
+            chaos_metrics["executed_as_planned"] = confidence.executed_as_planned
+            chaos_metrics["total_executed"] = confidence.total_executed
+
+            if confidence.accept_reality:
+                logger.warning(
+                    f"Scenario confidence low: fidelity={confidence.script_fidelity:.2f}, "
+                    f"overrides={confidence.external_overrides} - accepting reality"
+                )
+
         # Run the scenario orchestrator (Analyze + Plan ONLY)
         # Execution is handled by TickExecutor above (EXEC-01: single execution path)
         orchestrator_results = await orchestrator.run_tick(
@@ -503,7 +606,7 @@ async def trigger_simulation():
             skip_execution=True,  # TickExecutor is the SOLE executor
         )
 
-        # Merge results (TickExecutor actions + orchestrator planning)
+        # Merge results (TickExecutor actions + orchestrator planning + chaos metrics)
         results = tick_results  # Start with tick executor results
         results["analysis"] = orchestrator_results.get("analysis", {})
         results["planning_reasoning"] = orchestrator_results.get("planning_reasoning")
@@ -512,6 +615,7 @@ async def trigger_simulation():
         results["total_input_tokens"] = orchestrator_results.get("total_input_tokens", 0)
         results["total_output_tokens"] = orchestrator_results.get("total_output_tokens", 0)
         results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
+        results["chaos"] = chaos_metrics  # Phase 4: Include chaos injection metrics
 
         # Note: actions_completed comes from tick_results, not orchestrator
         # since TickExecutor handles execution
