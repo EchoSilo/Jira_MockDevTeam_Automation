@@ -12,6 +12,14 @@ import pendulum
 
 from ..services.jira_client import JiraClient
 from ..time import Clock, RealClock
+from ..reconciliation import (
+    PreExecutionValidator,
+    ReconciliationEngine,
+    ExecutionTracker,
+    AdaptationStrategy,
+    cleanup_stale_scenarios,
+)
+from ..reconciliation.circuit_breaker import ResilientJiraClient, CircuitBreakerError
 
 logger = logging.getLogger(__name__)
 from ..services.llm_service import LLMService
@@ -113,6 +121,22 @@ class ScenarioOrchestrator:
             "acknowledge_rejection",
             "complete_fix",
             "verify_fix",
+        }
+
+        # Reconciliation components (Phase 2)
+        self.resilient_jira = ResilientJiraClient(jira_client)
+        self.validator = PreExecutionValidator(self.resilient_jira)
+        self.reconciler = ReconciliationEngine()
+        self.execution_tracker = ExecutionTracker(cleanup_age_hours=48)
+
+        # Reconciliation metrics for logging
+        self._tick_metrics = {
+            "validated": 0,
+            "skipped": 0,
+            "cancelled": 0,
+            "rescheduled": 0,
+            "executed": 0,
+            "idempotent_skips": 0,
         }
 
     def set_log_writer(self, log_writer: "AsyncLogWriter") -> None:
