@@ -15,6 +15,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import Optional
+import pendulum
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,7 @@ class ReleaseManagerAgent(CoordinatorAgent):
         2. Generates release_version directive to complete the release
         """
         directives = []
-        now = datetime.utcnow()
+        now = pendulum.now("UTC")
         schedule = self.rm_settings.get("schedule", {})
         release_day = schedule.get("release_day", 5)  # Friday
 
@@ -418,7 +419,7 @@ class ReleaseManagerAgent(CoordinatorAgent):
         For past-due releases, returns the current month's release.
         For future releases, returns the next in sequence.
         """
-        now = datetime.utcnow()
+        now = pendulum.now("UTC")
 
         # If current release is past-due, use current month's release
         if current_release.target_date and now >= current_release.target_date:
@@ -642,7 +643,7 @@ class ReleaseManagerAgent(CoordinatorAgent):
             release_day
         )
 
-        return datetime.utcnow() + timedelta(days=days_until_release)
+        return pendulum.now("UTC") + timedelta(days=days_until_release)
 
     async def generate_release_communication(
         self,

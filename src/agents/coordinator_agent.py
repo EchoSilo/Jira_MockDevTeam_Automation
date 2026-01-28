@@ -15,6 +15,7 @@ Key differences from BaseAgent:
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
+import pendulum
 
 from ..services.llm_service import LLMService
 from ..state import SimulationState, ReleaseDirective
@@ -180,5 +181,5 @@ class CoordinatorAgent(ABC):
             "directives": directives,
             "coordinator_id": self.agent_id,
             "coordinator_name": self.display_name,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": pendulum.now("UTC").isoformat(),
         }

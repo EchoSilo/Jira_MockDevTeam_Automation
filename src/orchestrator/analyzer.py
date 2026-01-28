@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import random
+import pendulum
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ class ScenarioAnalyzer:
             "board_snapshot": board_snapshot,
             "opportunities": opportunities,
             "metrics": metrics,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": pendulum.now("UTC").isoformat(),
         }
 
     def detect_opportunities(

@@ -8,8 +8,10 @@ import logging
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
+import pendulum
 
 from ..services.jira_client import JiraClient
+from ..time import Clock, RealClock
 
 logger = logging.getLogger(__name__)
 from ..services.llm_service import LLMService
@@ -56,7 +58,9 @@ class ScenarioOrchestrator:
         personas: dict,
         templates: dict,
         settings: dict,
+        clock: Clock = None,
     ):
+        self.clock = clock or RealClock()
         self.jira = jira_client
         self.llm = llm_service
         self.personas = personas
@@ -171,7 +175,7 @@ class ScenarioOrchestrator:
         Returns:
             Dict with tick results including actions taken and updated state
         """
-        tick_start = datetime.utcnow()
+        tick_start = self.clock.now()
         results = {
             "tick_start": tick_start.isoformat(),
             "intensity": intensity,
@@ -323,7 +327,7 @@ class ScenarioOrchestrator:
             # Log orchestration error
             self._log_event("orchestration_error", error=str(e))
 
-        results["tick_end"] = datetime.utcnow().isoformat()
+        results["tick_end"] = self.clock.now().isoformat()
         results["actions_completed"] = len(results["actions"])
 
         # Log tick completion
@@ -941,7 +945,7 @@ class ScenarioOrchestrator:
 
             if pm_id and start_date:
                 try:
-                    current_date = datetime.now(timezone.utc).date()
+                    current_date = self.clock.today()
 
                     crew_result = self.sprint_planning_crew.create_future_sprint(
                         pm_id=pm_id,
@@ -979,7 +983,7 @@ class ScenarioOrchestrator:
 
             if pm_id and sprint_id:
                 try:
-                    current_date = datetime.now(timezone.utc).date()
+                    current_date = self.clock.today()
 
                     crew_result = self.sprint_planning_crew.start_sprint(
                         pm_id=pm_id,
