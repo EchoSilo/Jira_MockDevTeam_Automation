@@ -2,8 +2,8 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 3: Event Scheduler & Queue System (IN PROGRESS)
-**Current Plan:** 03-07 complete
-**Status:** Phase 3 in progress - tick executor and scheduler integration complete
+**Current Plan:** 03-08 complete
+**Status:** Phase 3 in progress - sprint planning flow and state integration complete
 
 ## Project Reference
 
@@ -14,9 +14,9 @@
 ## Current Position
 
 **Phase:** 3 of 5 - Event Scheduler & Queue System (IN PROGRESS)
-**Plans:** 4 of 8 complete (03-02, 03-04, 03-05, 03-07)
+**Plans:** 5 of 8 complete (03-02, 03-04, 03-05, 03-07, 03-08)
 **Status:** In progress
-**Progress:** [██████████░░░░░░░░░░] 34% (20/59 requirements)
+**Progress:** [███████████░░░░░░░░░] 36% (21/59 requirements)
 
 **Phase Goal:** System validates Jira state before every action and adapts gracefully when reality diverges from simulation plan.
 
@@ -114,6 +114,12 @@
 | Overdue actions auto-skipped each tick | Prevents queue buildup from missed windows, logs "overdue - past execution window" | 3 | 2026-01-28 |
 | action_executor callable bridge | TickExecutor receives ScenarioOrchestrator._execute_action, preserves CrewAI crews | 3 | 2026-01-28 |
 | max_actions_per_tick limit | Default 4 actions prevents API overload, remaining execute in next tick | 3 | 2026-01-28 |
+| Serialized planning state in SimulationState | Store planning_horizon and velocity_tracker as dicts, convert to models on access to avoid circular imports | 3 | 2026-01-28 |
+| Wednesday sprint starts (configurable) | start_day config ensures realistic sprint cadence aligned with common practices | 3 | 2026-01-28 |
+| Fallback prioritization by type | Bug > Task > Story > Feature when BacklogPrioritizer fails for graceful degradation | 3 | 2026-01-28 |
+| Conservative 80% capacity buffer | Use 80% of average velocity for sprint capacity to account for unknowns | 3 | 2026-01-28 |
+| Default 20-point capacity for new teams | Reasonable starting point when no velocity history exists | 3 | 2026-01-28 |
+| model_dump(mode='json') for datetime serialization | Ensures pendulum.DateTime objects serialize to ISO strings in Pydantic v2 | 3 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -141,8 +147,8 @@
   - Orchestrator integration: pre-execution validation, metrics logging, stale cleanup
 
 **Phase 3: Event Scheduler & Queue System** (In Progress)
-- 3 plans completed (03-02, 03-04, 03-05)
-- 25 tests pass (10 persistence, 15 scenario scheduler)
+- 5 plans completed (03-02, 03-04, 03-05, 03-07, 03-08)
+- 40 tests pass (10 persistence, 15 scenario scheduler, 15 sprint planning)
 - Key deliverables so far:
   - ScheduledAction dataclass with heap-compatible ordering
   - ActionStatus enum (PENDING, READY, COMPLETED, SKIPPED, ADAPTED)
@@ -150,6 +156,10 @@
   - VirtualClock for simulation time advancement (0.75 hour ticks)
   - ScenarioScheduler converts script days (1-7) to calendar timestamps
   - Weekend skipping and business hours enforcement
+  - Scheduler wrapper combining queue, persistence, and clock
+  - TickExecutor with reconciliation integration
+  - SprintPlanner orchestrator for full planning flow
+  - SimulationState planning fields (planning_horizon, velocity_tracker)
 
 ### Open Questions
 
@@ -178,32 +188,33 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 3 Plan 07 Execution (2026-01-28)
+**Last Session:** Phase 3 Plan 08 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 03-07: Tick Executor & Scheduler Integration
-- Created Scheduler wrapper combining ActionPriorityQueue, ScheduledActionStore, and VirtualClock
-- Created TickExecutor for scheduled action execution with Phase 2 reconciliation integration
-- Implemented overdue action detection and automatic skipping
-- Added idempotency via ExecutionTracker integration
-- Created 8 comprehensive tests (valid, require full runtime environment)
+- Completed 03-08: Sprint Planning Flow & State Integration
+- Added planning_horizon and velocity_tracker fields to SimulationState
+- Created SprintPlanner orchestrator for full planning flow
+- Added sprint and scheduler configuration to settings.yaml
+- Created 15 integration tests covering planning flow and state integration
+- All tests pass with Pydantic v2 (system Python)
 
 **Commits This Session:**
-- `4269430`: feat(03-07): create Scheduler combining queue with persistence
-- `d3ab59e`: feat(03-07): create TickExecutor with reconciliation integration
-- `8088fde`: test(03-07): add comprehensive TickExecutor tests
+- `acbbd1b`: feat(03-08): add planning_horizon and velocity_tracker to SimulationState
+- `862e6ac`: config(03-08): add sprint planning and scheduler configuration
+- `b14320a`: feat(03-08): create SprintPlanner orchestrator for sprint planning
+- `80d0470`: test(03-08): add sprint planning flow integration tests
 
 **Next Session Should:**
-1. Continue with remaining Phase 3 plans (03-01, 03-03, 03-08)
-2. Complete orchestrator integration with TickExecutor (03-08)
-3. Implement scenario script loading and business hours scheduler
+1. Continue with remaining Phase 3 plans (03-01, 03-03)
+2. Complete orchestrator integration with SprintPlanner and TickExecutor (03-01)
+3. Implement scenario script loading (03-03)
 
 **Context for Next Agent:**
-- Phase 3 progress: 5/8 plans complete (03-02, 03-04, 03-05, 03-06, 03-07)
-- Tick execution ready: Scheduler, TickExecutor with reconciliation
-- action_executor callable pattern established for CrewAI bridge
-- Test environment has Pydantic v1, code verified to import in system Python
-- Remaining: orchestrator integration, scenario script loading
+- Phase 3 progress: 5/8 plans complete (03-02, 03-04, 03-05, 03-06, 03-07, 03-08)
+- Sprint planning ready: SprintPlanner with horizon checking, capacity planning, scheduling
+- State integration ready: SimulationState has planning fields with get/set methods
+- Test environment: Anaconda has Pydantic v1 (tests fail), system Python has v2 (tests pass)
+- Remaining: orchestrator integration (03-01), scenario script loading (03-03)
 
 ---
-*State updated: 2026-01-28 after completing 03-07-PLAN*
+*State updated: 2026-01-28 after completing 03-08-PLAN*
