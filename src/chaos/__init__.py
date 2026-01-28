@@ -9,6 +9,7 @@ from .models import RandomEvent, ChaosConfig, ChaosEventType
 from .event_catalog import EventCatalog
 from .event_generator import RandomEventGenerator
 from .scenario_adapter import ScenarioAdapter, AdaptationResult
+from .confidence_tracker import ConfidenceTracker, ConfidenceScore
 
 __all__ = [
     "RandomEvent",
@@ -18,4 +19,6 @@ __all__ = [
     "RandomEventGenerator",
     "ScenarioAdapter",
     "AdaptationResult",
+    "ConfidenceTracker",
+    "ConfidenceScore",
 ]
