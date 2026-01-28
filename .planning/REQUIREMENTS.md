@@ -9,11 +9,11 @@ Requirements for transforming the virtual-time simulation into a real-time scrip
 
 ### Time Infrastructure
 
-- [ ] **TIME-01**: All datetime handling converted to timezone-aware UTC (prevent DST bugs in sprint day calculations)
-- [ ] **TIME-02**: Virtual clock interface with injectable Clock abstraction (RealClock for production, FakeClock for deterministic testing)
-- [ ] **TIME-03**: Business hours gate in /trigger endpoint respects M-F 9-5 schedule from settings.yaml
-- [ ] **TIME-04**: DST transition detection with graceful handling (no duplicate/missing executions during clock changes)
-- [ ] **TIME-05**: Sprint cadence calculations use Pendulum for timezone-safe arithmetic (Wednesday start, Tuesday end, 7-day duration)
+- [x] **TIME-01**: All datetime handling converted to timezone-aware UTC (prevent DST bugs in sprint day calculations)
+- [x] **TIME-02**: Virtual clock interface with injectable Clock abstraction (RealClock for production, FakeClock for deterministic testing)
+- [x] **TIME-03**: Business hours gate in /trigger endpoint respects M-F 9-5 schedule from settings.yaml
+- [x] **TIME-04**: DST transition detection with graceful handling (no duplicate/missing executions during clock changes)
+- [x] **TIME-05**: Sprint cadence calculations use Pendulum for timezone-safe arithmetic (Wednesday start, Tuesday end, 7-day duration)
 
 ### State Reconciliation
 
@@ -87,11 +87,11 @@ Requirements for transforming the virtual-time simulation into a real-time scrip
 
 ### Configuration & Migration
 
-- [ ] **CONFIG-01**: Remove simulation_time and tick_duration_hours from SimulationState model
+- [x] **CONFIG-01**: Remove simulation_time and tick_duration_hours from SimulationState model
 - [ ] **CONFIG-02**: Add planning_horizon and action_queue fields to SimulationState
 - [ ] **CONFIG-03**: Update settings.yaml with real_time, random_events, velocity, releases sections
 - [ ] **CONFIG-04**: Sprint configuration: duration_days=7, start_day=wednesday, planning_horizon_sprints=3
-- [ ] **CONFIG-05**: Fresh state initialization (no migration of existing virtual-time data)
+- [x] **CONFIG-05**: Fresh state initialization (no migration of existing virtual-time data)
 
 ## v2 Requirements
 
@@ -138,11 +138,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TIME-01 | Phase 1 | Pending |
-| TIME-02 | Phase 1 | Pending |
-| TIME-03 | Phase 1 | Pending |
-| TIME-04 | Phase 1 | Pending |
-| TIME-05 | Phase 1 | Pending |
+| TIME-01 | Phase 1 | Complete |
+| TIME-02 | Phase 1 | Complete |
+| TIME-03 | Phase 1 | Complete |
+| TIME-04 | Phase 1 | Complete |
+| TIME-05 | Phase 1 | Complete |
 | RECON-01 | Phase 2 | Pending |
 | RECON-02 | Phase 2 | Pending |
 | RECON-03 | Phase 2 | Pending |
@@ -187,11 +187,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-04 | Phase 5 | Pending |
 | PERF-05 | Phase 5 | Pending |
 | PERF-06 | Phase 5 | Pending |
-| CONFIG-01 | Phase 1 | Pending |
+| CONFIG-01 | Phase 1 | Complete |
 | CONFIG-02 | Phase 3 | Pending |
 | CONFIG-03 | Phase 4 | Pending |
 | CONFIG-04 | Phase 3 | Pending |
-| CONFIG-05 | Phase 1 | Pending |
+| CONFIG-05 | Phase 1 | Complete |
 | EXEC-01 | Phase 3 | Pending |
 | EXEC-02 | Phase 3 | Pending |
 | EXEC-03 | Phase 3 | Pending |
@@ -205,4 +205,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-27*
-*Last updated: 2026-01-27 after roadmap creation*
+*Last updated: 2026-01-28 after Phase 1 completion*
