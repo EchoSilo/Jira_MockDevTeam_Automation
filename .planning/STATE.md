@@ -2,8 +2,8 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 4 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Current Plan:** 04-01 complete (1 of 5)
-**Status:** Phase 4 Wave 1 started
+**Current Plan:** 04-03 complete (3 of 5)
+**Status:** Phase 4 Wave 1 complete, Wave 2 started
 
 ## Project Reference
 
@@ -14,22 +14,22 @@
 ## Current Position
 
 **Phase:** 4 of 5 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Plans:** 1 of 5 complete in current phase
+**Plans:** 3 of 5 complete in current phase
 **Status:** In progress
-**Last activity:** 2026-01-28 - Completed 04-01-PLAN.md
-**Progress:** [███████████████░░░░░] 68% (40/59 requirements)
+**Last activity:** 2026-01-28 - Completed 04-03-PLAN.md
+**Progress:** [███████████████░░░░░] 73% (43/59 requirements)
 
 **Phase Goal:** Chaos event injection with adaptive pathfinding for workflow transitions; system handles disruptions intelligently.
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 39/59 requirements completed (66%)
+**Overall Milestone Progress:** 42/59 requirements completed (71%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
 - Phase 2: 8/8 (100%) ✓
 - Phase 3: 24/24 (100%) ✓
-- Phase 4: 1/14 (7%)
+- Phase 4: 3/14 (21%)
 - Phase 5: 0/6 (0%)
 
 ## Accumulated Context
@@ -51,6 +51,8 @@
 | 2-sprint minimum + 14-day lookahead | Dual trigger for planning horizon ensures continuous coverage | 3 | 2026-01-28 |
 | Dataclass validation in __post_init__ | Immediate validation on construction for early error detection | 4 | 2026-01-28 |
 | Default chaos weights favor blockers/shifts | external_blocker (0.15) and priority_shift (0.12) reflect realistic disruption patterns | 4 | 2026-01-28 |
+| Two-stage dice rolling for chaos events | Stage 1: base_event_chance, Stage 2: weighted selection; separates "if event" from "which event" | 4 | 2026-01-28 |
+| Seeded random.Random for deterministic testing | Optional seed parameter enables reliable test assertions while preserving production randomness | 4 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -117,40 +119,41 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 4 Plan 01 Execution (2026-01-28)
+**Last Session:** Phase 4 Plan 02 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 04-01: Chaos Event Models & Configuration (TDD)
-- Created ChaosEventType enum with 6 event types
-- Created RandomEvent dataclass with validation
-- Created ChaosConfig with load_from_settings()
-- Added random_events section to settings.yaml
-- TDD cycle: RED (failing tests) → GREEN (implementation) → REFACTOR (extract constant)
-- All 10 tests pass
+- Completed 04-02: Chaos Event Generator (TDD)
+- Created RandomEventGenerator with probability-based dice rolling
+- Implemented two-stage event generation: base chance then weighted selection
+- Event-specific creation logic for all 6 chaos types
+- Deterministic seed support for testing
+- TDD cycle: RED (failing tests) → GREEN (implementation)
+- All 13 tests pass
 
 **Commits This Session:**
-- `741d0c2`: test(04-01): add failing tests for chaos event models
-- `9cde8ba`: feat(04-01): implement chaos event models and configuration
-- `c5ea45d`: refactor(04-01): extract VALID_SEVERITIES constant
+- `feb97f2`: test(04-02): add failing tests for RandomEventGenerator
+- `caa7596`: feat(04-02): implement RandomEventGenerator with probability-based rolling
 
 **Next Session Should:**
-Execute 04-02: Chaos Event Generator
+Execute 04-03: Event Catalog
 
 **Context for Next Agent:**
-- Chaos models foundation complete
-- RandomEvent provides strongly-typed events with validation
-- ChaosConfig loads probabilities from settings.yaml
-- 6 event types: production_outage, urgent_bug, team_absence, external_blocker, priority_shift, scope_change
-- Ready for event generation logic
+- RandomEventGenerator can create events on demand
+- Two-stage dice rolling: base_event_chance then weighted selection
+- Seeded random.Random enables deterministic testing
+- Event-specific targeting rules implemented (production_outage: 2-3 tickets critical, team_absence: 1 agent with duration)
+- Zero-probability events correctly filtered before selection
+- Ready for event catalog and storage
 
 **Phase 4: Adaptive Pathfinding & Chaos Injection** (IN PROGRESS)
-- 1 plan executed (04-01)
-- 10 chaos model tests pass
+- 2 plans executed (04-01, 04-02)
+- 23 chaos tests pass (10 models + 13 generator)
 - Key deliverables so far:
   - ChaosEventType enum with 6 event types
   - RandomEvent dataclass with validation
   - ChaosConfig with YAML configuration loading
-  - random_events section in settings.yaml
+  - RandomEventGenerator with probability rolling
+  - Event-specific creation logic for all types
 
 ---
 *State updated: 2026-01-28 after 04-01 execution complete*
