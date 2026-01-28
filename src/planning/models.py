@@ -43,12 +43,11 @@ class SprintPlan(BaseModel):
     planned_at: pendulum.DateTime = Field(default_factory=lambda: pendulum.now("UTC"))
     velocity_estimate: Optional[int] = None  # Team velocity when planned
 
-    model_config = {
-        "arbitrary_types_allowed": True,
-        "json_encoders": {
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
             pendulum.DateTime: lambda v: v.isoformat()
         }
-    }
 
 
 class PlanningHorizon(BaseModel):
