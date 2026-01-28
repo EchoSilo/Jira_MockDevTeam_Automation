@@ -2,8 +2,8 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 3: Event Scheduler & Queue System (IN PROGRESS)
-**Current Plan:** 03-01 complete
-**Status:** Phase 3 in progress - scheduling foundation with priority queue complete
+**Current Plan:** 03-05 complete
+**Status:** Phase 3 in progress - scenario scheduler and virtual clock complete
 
 ## Project Reference
 
@@ -14,7 +14,7 @@
 ## Current Position
 
 **Phase:** 3 of 5 - Event Scheduler & Queue System (IN PROGRESS)
-**Plans:** 3 of 8 complete (03-01, 03-02, 03-04)
+**Plans:** 3 of 8 complete (03-02, 03-04, 03-05)
 **Status:** In progress
 **Progress:** [█████████░░░░░░░░░░░] 32% (19/59 requirements)
 
@@ -102,6 +102,14 @@
 | Mark canceled actions SKIPPED not removed | heapq lacks efficient removal; filter by status instead | 3 | 2026-01-28 |
 | 30-minute default execution window | Balances flexibility with urgency detection for scheduled actions | 3 | 2026-01-28 |
 | Actions remain in heap after completion | Simplifies queue management; get_due_actions() filters by status | 3 | 2026-01-28 |
+| Lazy import of litellm in BacklogPrioritizer | Import inside method to avoid test dependency issues with sys.modules mocking | 3 | 2026-01-28 |
+| 24-hour cache for backlog prioritization | Balance LLM cost savings with freshness, invalidates on backlog change | 3 | 2026-01-28 |
+| Type-based fallback prioritization | Bug > Task > Story > Feature when LLM unavailable ensures graceful degradation | 3 | 2026-01-28 |
+| Routine model (Haiku) for backlog ranking | Cost-effective for structured ranking tasks vs Sonnet | 3 | 2026-01-28 |
+| VirtualClock tick duration 0.75 hours | Matches n8n cron cadence (45 minutes) for realistic simulation pacing | 3 | 2026-01-28 |
+| Weekend actions moved to Monday | Use BusinessHoursScheduler.next_business_day() for consistency | 3 | 2026-01-28 |
+| Random time distribution 0-7.99 hours | Ensures actions stay within 9am-5pm without spilling to next day | 3 | 2026-01-28 |
+| Conditional BacklogPrioritizer import | Wrapped in try/except to allow tests without litellm dependency | 3 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -129,14 +137,15 @@
   - Orchestrator integration: pre-execution validation, metrics logging, stale cleanup
 
 **Phase 3: Event Scheduler & Queue System** (In Progress)
-- 1 plan completed (03-02)
-- 10 persistence tests pass
+- 3 plans completed (03-02, 03-04, 03-05)
+- 25 tests pass (10 persistence, 15 scenario scheduler)
 - Key deliverables so far:
   - ScheduledAction dataclass with heap-compatible ordering
   - ActionStatus enum (PENDING, READY, COMPLETED, SKIPPED, ADAPTED)
   - ScheduledActionStore with SQLite persistence
-  - CRUD operations for scheduled actions
-  - Automatic cleanup of old completed/skipped actions
+  - VirtualClock for simulation time advancement (0.75 hour ticks)
+  - ScenarioScheduler converts script days (1-7) to calendar timestamps
+  - Weekend skipping and business hours enforcement
 
 ### Open Questions
 
@@ -165,30 +174,34 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 3 Plan 04 Execution (2026-01-28)
+**Last Session:** Phase 3 Plan 05 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 03-04: Planning Models
-- Created SprintPlan model with sprint lifecycle (PLANNED → ACTIVE → COMPLETED)
-- Created PlanningHorizon with 2-sprint minimum and 14-day lookahead
-- Created VelocityTracker with rolling 3-sprint average excluding in-progress sprints
-- Fixed Pydantic v1 compatibility for anaconda test environment
-- Created 27 comprehensive tests (all pass)
+- Completed 03-05: Scenario Scheduler & Virtual Clock (TDD)
+- Created VirtualClock for simulation time advancement (0.75 hour ticks)
+- Created ScenarioScheduler for script-to-calendar conversion
+- Weekend skipping logic (Saturday/Sunday → Monday)
+- Random time distribution within business hours (9am-5pm)
+- Fixed BacklogPrioritizer import issue (conditional try/except)
+- Fixed test date assumptions (Feb 2 2026 is Monday)
+- Created 15 comprehensive tests (all pass)
 
 **Commits This Session:**
-- `c82c342`: feat(03-04): create SprintPlan and PlanningHorizon models
-- `862b7bd`: feat(03-04): create VelocityTracker for capacity planning
-- `72055e9`: test(03-04): add comprehensive planning model tests
+- `1b6837f`: test(03-05): add failing tests for VirtualClock and ScenarioScheduler
+- `20feb5d`: feat(03-05): implement VirtualClock for simulation time
+- `aead6c6`: feat(03-05): implement ScenarioScheduler for sprint script conversion
 
 **Next Session Should:**
-1. Complete 03-05 (SprintPlanner for capacity-based item selection)
-2. Continue with remaining Phase 3 plans (scenario scripts, business hours scheduler, etc.)
+1. Continue with remaining Phase 3 plans (03-06, 03-07, 03-08)
+2. Load scenario scripts from JSON files
+3. Integrate ScenarioScheduler with sprint planning
+4. Build execution queue with VirtualClock
 
 **Context for Next Agent:**
-- Phase 3 progress: 2/8 plans complete (03-02 persistence, 03-04 planning models)
-- Planning models ready: SprintPlan, PlanningHorizon, VelocityTracker
-- Pydantic v1 compatibility established for anaconda environment
-- Ready for SprintPlanner implementation to use these models
+- Phase 3 progress: 3/8 plans complete (03-02 persistence, 03-04 models, 03-05 scheduler)
+- VirtualClock provides simulation time tracking for testing
+- ScenarioScheduler ready to convert scenario scripts to action queues
+- Weekend skipping and business hours enforcement working correctly
 
 ---
-*State updated: 2026-01-28 after completing 02-06-PLAN (Phase 2 complete)*
+*State updated: 2026-01-28 after completing 03-05-PLAN*
