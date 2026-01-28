@@ -452,6 +452,18 @@ async def trigger_simulation():
         # Validate and clean up any invalid agent_ids in state
         state = validate_state_agent_ids(state, app.state.personas)
 
+        # Check if sprint planning needed (PLAN-08)
+        # This maintains 2-3 sprint planning horizon
+        planning_result = None
+        if hasattr(app.state, 'sprint_planner') and app.state.sprint_planner:
+            try:
+                # Use alpha_pm as default PM for planning
+                planning_result = app.state.sprint_planner.check_and_plan(state, "alpha_pm")
+                if planning_result:
+                    logger.info(f"Sprint planning completed: {planning_result}")
+            except Exception as e:
+                logger.error(f"Sprint planning failed: {e}")
+
         # Create orchestrator with logged services for this tick
         clock = RealClock()
         orchestrator = ScenarioOrchestrator(
@@ -466,11 +478,53 @@ async def trigger_simulation():
         # Set up comprehensive logging (CrewAI LLM calls, Jira API calls, events)
         orchestrator.set_log_writer(app.state.log_writer)
 
-        # Run the scenario orchestrator
-        results = await orchestrator.run_tick(
+        # Create TickExecutor to run scheduled actions (EXEC-01, EXEC-02)
+        tick_executor = TickExecutor(
+            scheduler=app.state.scheduler,
+            jira_client=logged_jira,
+            max_actions_per_tick=4,
+        )
+
+        # Define action executor that bridges sync TickExecutor to async _execute_action
+        # CRITICAL: Use asyncio.run() to bridge sync->async (TickExecutor is sync, _execute_action is async)
+        def action_executor(action_dict: dict, exec_state) -> dict:
+            """Sync wrapper for async orchestrator._execute_action."""
+            return asyncio.run(orchestrator._execute_action(action_dict, exec_state))
+
+        # Execute tick via TickExecutor (handles scheduled action execution)
+        # Flow: mark overdue -> get due actions -> reconcile -> execute -> advance time
+        tick_results = tick_executor.execute_tick(state, action_executor)
+
+        # Run the scenario orchestrator (Analyze + Plan ONLY)
+        # Execution is handled by TickExecutor above (EXEC-01: single execution path)
+        orchestrator_results = await orchestrator.run_tick(
             state=state,
             intensity=intensity,
+            skip_execution=True,  # TickExecutor is the SOLE executor
         )
+
+        # Merge results (TickExecutor actions + orchestrator planning)
+        results = tick_results  # Start with tick executor results
+        results["analysis"] = orchestrator_results.get("analysis", {})
+        results["planning_reasoning"] = orchestrator_results.get("planning_reasoning")
+        results["llm_call_count"] = orchestrator_results.get("llm_call_count", 0)
+        results["jira_call_count"] = orchestrator_results.get("jira_call_count", 0)
+        results["total_input_tokens"] = orchestrator_results.get("total_input_tokens", 0)
+        results["total_output_tokens"] = orchestrator_results.get("total_output_tokens", 0)
+        results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
+
+        # Note: actions_completed comes from tick_results, not orchestrator
+        # since TickExecutor handles execution
+
+        # Add planning result if available
+        if planning_result:
+            results["sprint_planning"] = planning_result
+
+        # Advance simulation time by tick_duration_hours (SCHED-05)
+        if hasattr(app.state, 'scheduler') and app.state.scheduler:
+            next_time = app.state.scheduler.advance_tick()
+            results["simulation_time_advanced_to"] = next_time.isoformat()
+            logger.info(f"Simulation time advanced to {next_time}")
 
         # Save updated state and refresh cache
         save_state(state)
