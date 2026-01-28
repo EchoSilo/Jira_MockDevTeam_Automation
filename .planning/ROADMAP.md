@@ -82,17 +82,18 @@ Plans:
 
 **Dependencies:** Phase 2 (needs reconciliation for scheduled action validation)
 
-**Plans:** 8 plans
+**Plans:** 9 plans
 
 Plans:
-- [ ] 03-01-PLAN.md - ScheduledAction model and ActionPriorityQueue (TDD)
-- [ ] 03-02-PLAN.md - SQLite persistence for scheduled actions
-- [ ] 03-03-PLAN.md - Business hours scheduler with weekend skipping (TDD)
-- [ ] 03-04-PLAN.md - Planning models (SprintPlan, PlanningHorizon, VelocityTracker)
-- [ ] 03-05-PLAN.md - ScenarioScheduler converts script days to timestamps (TDD)
-- [ ] 03-06-PLAN.md - Capacity planner and backlog prioritizer
-- [ ] 03-07-PLAN.md - TickExecutor replaces orchestrator time advancement
-- [ ] 03-08-PLAN.md - Sprint planning flow integration
+- [x] 03-01-PLAN.md - ScheduledAction model and ActionPriorityQueue (TDD)
+- [x] 03-02-PLAN.md - SQLite persistence for scheduled actions
+- [x] 03-03-PLAN.md - Business hours scheduler with weekend skipping (TDD)
+- [x] 03-04-PLAN.md - Planning models (SprintPlan, PlanningHorizon, VelocityTracker)
+- [x] 03-05-PLAN.md - ScenarioScheduler converts script days to timestamps (TDD)
+- [x] 03-06-PLAN.md - Capacity planner and backlog prioritizer
+- [x] 03-07-PLAN.md - TickExecutor replaces orchestrator time advancement
+- [x] 03-08-PLAN.md - Sprint planning flow integration
+- [ ] 03-09-PLAN.md - Gap closure: Wire Phase 3 components into /trigger endpoint
 
 **Requirements:**
 - SCHED-01: Priority queue maintains actions sorted by scheduled_time (heap operations)
