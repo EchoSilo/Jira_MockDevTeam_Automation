@@ -82,10 +82,17 @@ Plans:
 
 **Dependencies:** Phase 2 (needs reconciliation for scheduled action validation)
 
-**Plans:** 0 plans
+**Plans:** 8 plans
 
 Plans:
-- [ ] TBD (created by /gsd:plan-phase)
+- [ ] 03-01-PLAN.md - ScheduledAction model and ActionPriorityQueue (TDD)
+- [ ] 03-02-PLAN.md - SQLite persistence for scheduled actions
+- [ ] 03-03-PLAN.md - Business hours scheduler with weekend skipping (TDD)
+- [ ] 03-04-PLAN.md - Planning models (SprintPlan, PlanningHorizon, VelocityTracker)
+- [ ] 03-05-PLAN.md - ScenarioScheduler converts script days to timestamps (TDD)
+- [ ] 03-06-PLAN.md - Capacity planner and backlog prioritizer
+- [ ] 03-07-PLAN.md - TickExecutor replaces orchestrator time advancement
+- [ ] 03-08-PLAN.md - Sprint planning flow integration
 
 **Requirements:**
 - SCHED-01: Priority queue maintains actions sorted by scheduled_time (heap operations)
@@ -184,9 +191,9 @@ Plans:
 
 | Phase | Status | Requirements | Completed | Progress |
 |-------|--------|--------------|-----------|----------|
-| Phase 1: Time Infrastructure & UTC Migration | ✓ Complete | 7 | 7 | 100% |
-| Phase 2: State Reconciliation & Validation | ✓ Complete | 8 | 8 | 100% |
-| Phase 3: Event Scheduler & Queue System | Not Started | 24 | 0 | 0% |
+| Phase 1: Time Infrastructure & UTC Migration | Complete | 7 | 7 | 100% |
+| Phase 2: State Reconciliation & Validation | Complete | 8 | 8 | 100% |
+| Phase 3: Event Scheduler & Queue System | Planned | 24 | 0 | 0% |
 | Phase 4: Adaptive Pathfinding & Chaos Injection | Not Started | 14 | 0 | 0% |
 | Phase 5: Performance Optimization & Dynamic Tuning | Not Started | 6 | 0 | 0% |
 
@@ -216,8 +223,8 @@ Phase 5: Performance Tuning <- depends on baseline chaos to tune against
 - Phase 5 last: Performance optimization after functionality validated; premature optimization risks complicating debugging
 
 **Research flags:**
-- Phase 3 may need deeper research on APScheduler persistence patterns for Docker environments (SQLAlchemy job store setup, volume mounting)
+- Phase 3 research complete: Using heapq (stdlib) for priority queue, SQLite for persistence, Pendulum for business hours
 - Phase 4 may need graph search algorithm research for Jira workflow transitions (Dijkstra vs A* vs BFS for status transition graphs with cycles)
 
 ---
-*Last updated: 2026-01-28 after Phase 2 execution complete (6 plans, 129 tests)*
+*Last updated: 2026-01-28 after Phase 3 planning complete (8 plans, 3 waves)*
