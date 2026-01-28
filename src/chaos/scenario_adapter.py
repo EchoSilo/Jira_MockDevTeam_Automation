@@ -115,8 +115,8 @@ class ScenarioAdapter:
         result.actions_inserted.append(emergency_action)
 
         # Mark non-critical actions as ADAPTED
-        due_actions = self.scheduler.get_due_actions(max_actions=20)
-        for action in due_actions:
+        pending_actions = self._get_pending_actions()
+        for action in pending_actions:
             if action.status == ActionStatus.PENDING and self._is_non_critical(action):
                 action.status = ActionStatus.ADAPTED
                 action.result = {"reason": f"Paused due to {event.event_type.value}"}
@@ -162,8 +162,8 @@ class ScenarioAdapter:
         result.actions_inserted.append(bug_fix_action)
 
         # Postpone non-urgent actions
-        due_actions = self.scheduler.get_due_actions(max_actions=20)
-        for action in due_actions:
+        pending_actions = self._get_pending_actions()
+        for action in pending_actions:
             if action.status == ActionStatus.PENDING and not self._is_urgent(action):
                 # Create postponed action
                 postponed_action = ScheduledAction(
@@ -178,6 +178,7 @@ class ScenarioAdapter:
                     params=action.params,
                 )
                 self.scheduler.schedule_action(postponed_action)
+                result.actions_inserted.append(postponed_action)  # Track postponed action
 
                 # Mark original as ADAPTED
                 action.status = ActionStatus.ADAPTED
@@ -215,8 +216,8 @@ class ScenarioAdapter:
         absent_agent = event.affected_agents[0]
 
         # Find actions assigned to absent agent
-        due_actions = self.scheduler.get_due_actions(max_actions=20)
-        for action in due_actions:
+        pending_actions = self._get_pending_actions()
+        for action in pending_actions:
             if action.status == ActionStatus.PENDING and action.agent_id == absent_agent:
                 # Reassign to replacement agent (simple: use "developer" as fallback)
                 replacement_agent = self._get_replacement_agent(absent_agent)
@@ -290,8 +291,8 @@ class ScenarioAdapter:
         result.actions_inserted.append(discussion_action)
 
         # Mark actions for affected ticket as ADAPTED
-        due_actions = self.scheduler.get_due_actions(max_actions=20)
-        for action in due_actions:
+        pending_actions = self._get_pending_actions()
+        for action in pending_actions:
             if action.status == ActionStatus.PENDING and action.ticket_key == affected_ticket:
                 action.status = ActionStatus.ADAPTED
                 action.result = {"reason": f"Blocked by external_blocker"}
@@ -337,8 +338,8 @@ class ScenarioAdapter:
         affected_ticket = event.affected_tickets[0]
 
         # Mark actions for affected ticket as ADAPTED
-        due_actions = self.scheduler.get_due_actions(max_actions=20)
-        for action in due_actions:
+        pending_actions = self._get_pending_actions()
+        for action in pending_actions:
             if action.status == ActionStatus.PENDING and action.ticket_key == affected_ticket:
                 action.status = ActionStatus.ADAPTED
                 action.result = {
@@ -382,3 +383,15 @@ class ScenarioAdapter:
             return "developer"  # Dev covers for tech lead
         else:
             return "developer"  # Default to developer
+
+    def _get_pending_actions(self) -> list[ScheduledAction]:
+        """Get all pending actions from the scheduler queue.
+
+        Returns:
+            List of pending actions
+        """
+        pending = []
+        for action in self.scheduler.queue._heap:
+            if action.status == ActionStatus.PENDING:
+                pending.append(action)
+        return pending
