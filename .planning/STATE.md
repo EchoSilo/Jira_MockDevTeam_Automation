@@ -1,22 +1,22 @@
 # Project State: Real-Time Scripted Jira Team Simulator
 
 **Last Updated:** 2026-01-28
-**Current Phase:** Phase 2: State Reconciliation & Validation (COMPLETE)
-**Current Plan:** All 6 plans complete
-**Status:** Phase 2 complete, ready for Phase 3
+**Current Phase:** Phase 3: Event Scheduler & Queue System (IN PROGRESS)
+**Current Plan:** 03-01 complete
+**Status:** Phase 3 in progress - scheduling foundation with priority queue complete
 
 ## Project Reference
 
 **Core Value:** The simulation must operate in Jira's time domain (real calendar time), producing realistic sprint timelines and activity patterns that analytics tools can consume as if observing a real development team.
 
-**Current Focus:** Transform virtual-time simulation (5.33x speedup) to real-time calendar execution with pre-scripted scenarios spanning 2-3 sprints. Shift from reactive immediate execution to scheduled event queues with state reconciliation, chaos injection, and adaptive pathfinding.
+**Current Focus:** Building event scheduler with SQLite persistence, business hours scheduling, and scenario script loading. Enables scheduled action queues that execute at specific calendar times.
 
 ## Current Position
 
-**Phase:** 2 of 5 - State Reconciliation & Validation (COMPLETE)
-**Plans:** 6 plans, 6 complete (02-01 through 02-06)
-**Status:** Phase 2 complete
-**Progress:** [████████░░░░░░░░░░░░] 27% (16/59 requirements)
+**Phase:** 3 of 5 - Event Scheduler & Queue System (IN PROGRESS)
+**Plans:** 3 of 8 complete (03-01, 03-02, 03-04)
+**Status:** In progress
+**Progress:** [█████████░░░░░░░░░░░] 32% (19/59 requirements)
 
 **Phase Goal:** System validates Jira state before every action and adapts gracefully when reality diverges from simulation plan.
 
@@ -49,16 +49,19 @@
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 16/59 requirements completed (27%)
+**Overall Milestone Progress:** 18/59 requirements completed (30%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
 - Phase 2: 8/8 (100%) ✓
-- Phase 3: 0/24 (0%)
+- Phase 3: 2/24 (8%)
 - Phase 4: 0/14 (0%)
 - Phase 5: 0/6 (0%)
 
-**Recent Velocity:** Phase 2 completed in 2 sessions (6 plans, 3 waves)
+**Recent Velocity:**
+- Phase 2 completed in 2 sessions (6 plans, 3 waves)
+- Phase 3 Plan 02 completed in 3 minutes (2 commits)
+- Phase 3 Plan 04 completed in 5 minutes (3 commits)
 
 ## Accumulated Context
 
@@ -87,6 +90,18 @@
 | throw_new_error_on_trip behavior | 5th failure raises CircuitBreakerError, not original exception | 2 | 2026-01-28 |
 | Validation before sprint check | Run reconciliation validation before sprint membership check for fast-fail | 2 | 2026-01-28 |
 | Execution ID in result dict | Pass execution_id through result for recording in caller ensures same ID used | 2 | 2026-01-28 |
+| SQLite for action persistence | Simple file-based persistence without external dependencies | 3 | 2026-01-28 |
+| Per-operation connection lifecycle | Open connection per operation for thread safety, no persistent connections | 3 | 2026-01-28 |
+| INSERT OR REPLACE for upsert | SQLite upsert syntax enables save_action to create and update | 3 | 2026-01-28 |
+| 48-hour retention for completed actions | Balance audit trail with database size via cleanup threshold | 3 | 2026-01-28 |
+| Pydantic v1 compatibility for tests | Anaconda pytest uses Python 3.11 with Pydantic v1.10.12, models use Config class | 3 | 2026-01-28 |
+| 80% capacity buffer | Conservative buffer for unknowns in sprint planning | 3 | 2026-01-28 |
+| 2-sprint minimum + 14-day lookahead | Dual trigger for planning horizon ensures continuous coverage | 3 | 2026-01-28 |
+| Velocity excludes in-progress sprints | Prevents distortion from partial work during ongoing sprints | 3 | 2026-01-28 |
+| @dataclass(order=True) for heap ordering | scheduled_time as first field enables automatic heap sorting without custom comparisons | 3 | 2026-01-28 |
+| Mark canceled actions SKIPPED not removed | heapq lacks efficient removal; filter by status instead | 3 | 2026-01-28 |
+| 30-minute default execution window | Balances flexibility with urgency detection for scheduled actions | 3 | 2026-01-28 |
+| Actions remain in heap after completion | Simplifies queue management; get_due_actions() filters by status | 3 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -113,6 +128,16 @@
   - Staleness detection via validation_tick_count (threshold: 4 ticks)
   - Orchestrator integration: pre-execution validation, metrics logging, stale cleanup
 
+**Phase 3: Event Scheduler & Queue System** (In Progress)
+- 1 plan completed (03-02)
+- 10 persistence tests pass
+- Key deliverables so far:
+  - ScheduledAction dataclass with heap-compatible ordering
+  - ActionStatus enum (PENDING, READY, COMPLETED, SKIPPED, ADAPTED)
+  - ScheduledActionStore with SQLite persistence
+  - CRUD operations for scheduled actions
+  - Automatic cleanup of old completed/skipped actions
+
 ### Open Questions
 
 - None currently
@@ -133,40 +158,37 @@
 
 ### Technical Debt
 
-- Tests require Python 3.12 (anaconda has older Pydantic)
+- Anaconda has Pydantic v1.10.12 (Python 3.11), system Python has v2.11.10 (Python 3.12)
+- Planning models use Pydantic v1-compatible Config class for test compatibility
 - Some tests use hardcoded dates that may need adjustment
 - Added pytest-asyncio dependency for orchestrator tests
 
 ## Session Continuity
 
-**Last Session:** Phase 2 Plan 06 Execution (2026-01-28)
+**Last Session:** Phase 3 Plan 04 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 02-06: Orchestrator Reconciliation Integration
-- Added reconciliation components to orchestrator init
-- Added pre-execution validation to _execute_action
-- Added metrics logging and staleness cleanup to run_tick
-- Created 13 integration tests (all pass)
-- All 129 reconciliation tests pass
+- Completed 03-04: Planning Models
+- Created SprintPlan model with sprint lifecycle (PLANNED → ACTIVE → COMPLETED)
+- Created PlanningHorizon with 2-sprint minimum and 14-day lookahead
+- Created VelocityTracker with rolling 3-sprint average excluding in-progress sprints
+- Fixed Pydantic v1 compatibility for anaconda test environment
+- Created 27 comprehensive tests (all pass)
 
 **Commits This Session:**
-- `6d421ae`: feat(02-06): add reconciliation components to orchestrator
-- `5eac83b`: feat(02-06): add pre-execution validation to _execute_action
-- `56985a1`: feat(02-06): add reconciliation metrics logging and staleness cleanup
-- `3372309`: test(02-06): add orchestrator reconciliation integration tests
+- `c82c342`: feat(03-04): create SprintPlan and PlanningHorizon models
+- `862b7bd`: feat(03-04): create VelocityTracker for capacity planning
+- `72055e9`: test(03-04): add comprehensive planning model tests
 
 **Next Session Should:**
-1. Plan Phase 3 (Event Scheduling & Pre-scripted Scenarios)
-2. Begin implementing scenario scripts and event queue
+1. Complete 03-05 (SprintPlanner for capacity-based item selection)
+2. Continue with remaining Phase 3 plans (scenario scripts, business hours scheduler, etc.)
 
 **Context for Next Agent:**
-- Phase 2 COMPLETE: All reconciliation infrastructure in place
-- Orchestrator now validates state before every action
-- Idempotency prevents duplicate actions during retries
-- Circuit breaker prevents cascade failures
-- Staleness cleanup removes abandoned scenarios
-- Reconciliation metrics visible in tick results
-- Ready to build on this foundation with event scheduling
+- Phase 3 progress: 2/8 plans complete (03-02 persistence, 03-04 planning models)
+- Planning models ready: SprintPlan, PlanningHorizon, VelocityTracker
+- Pydantic v1 compatibility established for anaconda environment
+- Ready for SprintPlanner implementation to use these models
 
 ---
 *State updated: 2026-01-28 after completing 02-06-PLAN (Phase 2 complete)*
