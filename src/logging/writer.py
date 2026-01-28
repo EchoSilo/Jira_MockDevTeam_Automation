@@ -11,6 +11,7 @@ from queue import Queue, Empty
 from threading import Thread, Event
 from typing import Optional
 import uuid
+import pendulum
 
 from .models import (
     LogEntry,
@@ -86,7 +87,7 @@ class AsyncLogWriter:
             simulation_day=simulation_day,
             sprint_day=sprint_day,
             sprint_number=sprint_number,
-            started_at=datetime.utcnow(),
+            started_at=pendulum.now("UTC"),
         )
         self._current_session = session
         self.log(session)
@@ -110,7 +111,7 @@ class AsyncLogWriter:
         if self._current_session is None:
             return
 
-        self._current_session.ended_at = datetime.utcnow()
+        self._current_session.ended_at = pendulum.now("UTC")
         self._current_session.success = success
         self._current_session.error_summary = error_summary
         self._current_session.llm_calls = llm_calls

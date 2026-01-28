@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 from contextlib import asynccontextmanager
 from enum import Enum
+import pendulum
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ from .state import load_state, save_state, SimulationState, sync_state_with_jira
 from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
+from .time import Clock, RealClock, get_clock
 
 
 # ============ Caching for Performance ============
@@ -142,7 +144,7 @@ def check_and_handle_expired_sprint(
 
         # Parse end date and check if expired
         end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
+        now = pendulum.now("UTC")
 
         if now > end_date:
             days_overdue = (now - end_date).days
@@ -173,7 +175,7 @@ def check_and_handle_expired_sprint(
             crew = SprintPlanningCrew(personas, jira_tools, llm_config)
             new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
 
-            current_date = datetime.now(timezone.utc).date()
+            current_date = pendulum.now("UTC").date()
 
             result = crew.rollover_sprint(
                 pm_id="alpha_pm",
@@ -194,7 +196,7 @@ def check_and_handle_expired_sprint(
                     # This ensures derived values (sprint_number, sprint_day) are correct
                     # for the rest of this tick
                     new_active_sprint = jira_client.get_active_sprint()
-                    state.sprint.inject_jira_sprint(new_active_sprint, current_time=datetime.now(timezone.utc))
+                    state.sprint.inject_jira_sprint(new_active_sprint, current_time=pendulum.now("UTC"))
                     logger.info(
                         f"Re-injected sprint after rollover: "
                         f"sprint_number={state.sprint.sprint_number}, "
@@ -383,7 +385,7 @@ async def trigger_simulation():
         # This must happen before any sprint-dependent logic
         previous_sprint_number = state.sprint.sprint_number  # From cached Jira data
         jira_sprint = logged_jira.get_active_sprint()
-        state.sprint.inject_jira_sprint(jira_sprint, current_time=datetime.now(timezone.utc))
+        state.sprint.inject_jira_sprint(jira_sprint, current_time=pendulum.now("UTC"))
 
         # Detect sprint transition (e.g., Sprint 7 -> Sprint 8)
         if state.handle_sprint_transition(previous_sprint_number):
@@ -427,12 +429,14 @@ async def trigger_simulation():
         state = validate_state_agent_ids(state, app.state.personas)
 
         # Create orchestrator with logged services for this tick
+        clock = RealClock()
         orchestrator = ScenarioOrchestrator(
             jira_client=logged_jira,
             llm_service=logged_llm,
             personas=app.state.personas,
             templates=app.state.templates,
             settings=app.state.settings,
+            clock=clock,
         )
 
         # Set up comprehensive logging (CrewAI LLM calls, Jira API calls, events)
@@ -560,7 +564,7 @@ async def get_sprint_data():
         # Calculate burndown data
         from datetime import datetime, timedelta
 
-        start_date = datetime.fromisoformat(active_sprint["start_date"].replace("Z", "+00:00")) if active_sprint["start_date"] else datetime.utcnow()
+        start_date = datetime.fromisoformat(active_sprint["start_date"].replace("Z", "+00:00")) if active_sprint["start_date"] else pendulum.now("UTC")
         end_date = datetime.fromisoformat(active_sprint["end_date"].replace("Z", "+00:00")) if active_sprint["end_date"] else start_date + timedelta(days=14)
         total_days = max(1, (end_date - start_date).days)
         total_items = len(sprint_issues)
@@ -572,7 +576,7 @@ async def get_sprint_data():
             day_label = f"Day {day + 1}" if day < total_days else "End"
             ideal = max(0, total_items - (total_items * day / total_days))
             # For past days, show actual; for future, show 0 (unknown)
-            current_day = (datetime.utcnow() - start_date.replace(tzinfo=None)).days
+            current_day = (pendulum.now("UTC") - start_date.replace(tzinfo=None)).days
             actual = remaining if day <= current_day else 0
             burndown_data.append({
                 "day": day_label,
@@ -690,7 +694,7 @@ def aggregate_assignments_to_buckets(
     history_reversed = list(reversed(history))
 
     data_points = []
-    now = datetime.now(timezone.utc)
+    now = pendulum.now("UTC")
 
     for bucket_start, bucket_end in reversed(buckets):
         # Adjust assignment counts based on changes that happened after this bucket
@@ -762,7 +766,7 @@ async def get_assignment_trends(
             granularity = "daily"
 
         # Calculate date range
-        end_date = datetime.now(timezone.utc)
+        end_date = pendulum.now("UTC")
         start_date = end_date - timedelta(days=days_back)
 
         # Get sprint name if sprint_id provided
@@ -1195,12 +1199,14 @@ async def force_sprint_planning():
         logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
 
         # Create orchestrator
+        clock = RealClock()
         orchestrator = ScenarioOrchestrator(
             jira_client=logged_jira,
             llm_service=logged_llm,
             personas=app.state.personas,
             templates=app.state.templates,
             settings=app.state.settings,
+            clock=clock,
         )
         orchestrator.set_log_writer(app.state.log_writer)
 
@@ -1639,7 +1645,7 @@ def save_release_notes(
     releases_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = releases_dir / f"{version}.md"
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = pendulum.now("UTC").isoformat()
 
     content = f"""# Release Notes: {version}
 Generated: {timestamp}
@@ -1972,7 +1978,7 @@ async def generate_release_notes(
                 tags=tags,
             )
 
-        generated_at = datetime.now(timezone.utc).isoformat()
+        generated_at = pendulum.now("UTC").isoformat()
 
         # Route based on output format
         if output_format == OutputFormat.MARKDOWN:

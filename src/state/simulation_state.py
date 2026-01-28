@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+import pendulum
 
 logger = logging.getLogger(__name__)
 
@@ -199,13 +200,13 @@ def _convert_ticket_to_scenario(ticket_key: str, old_ticket: dict) -> Optional[A
     started = (
         datetime.fromisoformat(old_ticket["started"])
         if old_ticket.get("started")
-        else datetime.utcnow() - timedelta(days=2)
+        else pendulum.now("UTC") - timedelta(days=2)
     )
 
     # Estimate target completion
     target_completion = started + timedelta(days=5)  # Default 5 days for story
 
-    now = datetime.utcnow()
+    now = pendulum.now("UTC")
 
     return ActiveScenario(
         ticket_key=ticket_key,

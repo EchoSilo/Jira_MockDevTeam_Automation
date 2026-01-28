@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from jira import JIRA
 from jira.resources import Issue
+import pendulum
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class JiraClient:
         """
         # Check cache first
         if use_cache and self._status_cache and self._status_cache_time:
-            if datetime.utcnow() - self._status_cache_time < self._cache_ttl:
+            if pendulum.now("UTC") - self._status_cache_time < self._cache_ttl:
                 return self._status_cache
 
         try:
@@ -71,7 +72,7 @@ class JiraClient:
                 }
                 for s in statuses
             ]
-            self._status_cache_time = datetime.utcnow()
+            self._status_cache_time = pendulum.now("UTC")
             return self._status_cache
         except Exception as e:
             logger.error(f"Failed to fetch statuses: {e}")

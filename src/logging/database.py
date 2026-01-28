@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
+import pendulum
 
 from .models import (
     LogEntry,
@@ -400,7 +401,7 @@ class LogDatabase:
 
     def cleanup_old_logs(self, retention_days: int = 30) -> int:
         """Delete logs older than retention period. Returns count deleted."""
-        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff = pendulum.now("UTC") - timedelta(days=retention_days)
         cutoff_str = cutoff.isoformat()
 
         total_deleted = 0
