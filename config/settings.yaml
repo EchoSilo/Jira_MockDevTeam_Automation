@@ -250,3 +250,7 @@ random_events:
     external_blocker: 0.15    # External dependency blocking progress
     priority_shift: 0.12      # Sudden priority changes from stakeholders
     scope_change: 0.05        # Mid-sprint scope adjustments
+
+  # Accept reality thresholds (dual-threshold model)
+  confidence_threshold: 0.7        # Below this triggers accept reality consideration
+  external_override_limit: 3       # This many external overrides required to abandon script
