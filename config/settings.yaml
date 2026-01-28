@@ -125,10 +125,19 @@ llm:
 
 # Sprint configuration
 sprint:
-  duration_days: 7   # 1-week sprints
-  planning_day: 1    # Monday (day 1 of sprint)
-  board_id: 4        # Jira board ID for sprint operations
+  duration_days: 7            # 7-day sprints (Wednesday to Tuesday)
+  start_day: wednesday        # Sprint start day
+  planning_day: 1             # Monday (day 1 of sprint)
+  board_id: 4                 # Jira board ID for sprint operations
   future_sprints_to_maintain: 2  # Always keep 1-2 future sprints planned
+  planning_horizon_sprints: 3  # Maintain 2-3 future sprints
+  capacity_buffer: 0.8        # Use 80% of velocity for capacity
+
+# Scheduler configuration
+scheduler:
+  tick_duration_hours: 0.75   # 45 minutes per tick
+  execution_window_minutes: 30  # Action execution window
+  max_actions_per_tick: 4     # Maximum actions per tick
 
 # Issue type permissions by role
 # Controls which issue types each role can act on and create
