@@ -9,7 +9,6 @@ import json
 import logging
 from typing import List, Optional, TYPE_CHECKING
 import pendulum
-import litellm
 
 if TYPE_CHECKING:
     from src.services.llm_service import LLMService
@@ -65,6 +64,9 @@ class BacklogPrioritizer:
         prompt = self._build_prioritization_prompt(backlog, sprint_goals)
 
         try:
+            # Import litellm lazily to avoid import errors in tests
+            import litellm
+
             # Use routine model (Haiku) for cost efficiency
             response = litellm.completion(
                 model=self.llm.routine_model,
