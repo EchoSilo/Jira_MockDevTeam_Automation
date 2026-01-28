@@ -10,6 +10,7 @@ from .event_catalog import EventCatalog
 from .event_generator import RandomEventGenerator
 from .scenario_adapter import ScenarioAdapter, AdaptationResult
 from .confidence_tracker import ConfidenceTracker, ConfidenceScore
+from .pathfinding_adapter import PathfindingAdapter, PathfindingResult
 
 __all__ = [
     "RandomEvent",
@@ -21,4 +22,6 @@ __all__ = [
     "AdaptationResult",
     "ConfidenceTracker",
     "ConfidenceScore",
+    "PathfindingAdapter",
+    "PathfindingResult",
 ]
