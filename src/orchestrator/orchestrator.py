@@ -336,15 +336,6 @@ class ScenarioOrchestrator:
             },
         )
 
-        # Advance simulation time
-        if state.simulation_time:
-            state.simulation_time += timedelta(hours=state.tick_duration_hours)
-            logger.info(f"Advanced simulation time to {state.simulation_time}")
-        else:
-            # Initialize if missing (fallback)
-            state.simulation_time = datetime.now(timezone.utc)
-            logger.info(f"Initialized simulation time to {state.simulation_time}")
-
         return results
 
     def _validate_sprint_requirement(self, ticket_key: str) -> bool:

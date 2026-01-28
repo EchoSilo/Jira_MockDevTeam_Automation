@@ -142,7 +142,7 @@ def check_and_handle_expired_sprint(
 
         # Parse end date and check if expired
         end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-        now = state.simulation_time if state and state.simulation_time else datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
 
         if now > end_date:
             days_overdue = (now - end_date).days
@@ -173,8 +173,7 @@ def check_and_handle_expired_sprint(
             crew = SprintPlanningCrew(personas, jira_tools, llm_config)
             new_sprint_name = f"ESCRUM Sprint {int(sprint_name.split()[-1]) + 1}"
 
-            # Use virtual time if available
-            current_date = state.simulation_time.date() if state and state.simulation_time else datetime.now(timezone.utc).date()
+            current_date = datetime.now(timezone.utc).date()
 
             result = crew.rollover_sprint(
                 pm_id="alpha_pm",
@@ -195,7 +194,7 @@ def check_and_handle_expired_sprint(
                     # This ensures derived values (sprint_number, sprint_day) are correct
                     # for the rest of this tick
                     new_active_sprint = jira_client.get_active_sprint()
-                    state.sprint.inject_jira_sprint(new_active_sprint, current_time=state.simulation_time)
+                    state.sprint.inject_jira_sprint(new_active_sprint, current_time=datetime.now(timezone.utc))
                     logger.info(
                         f"Re-injected sprint after rollover: "
                         f"sprint_number={state.sprint.sprint_number}, "
@@ -375,11 +374,6 @@ async def trigger_simulation():
     try:
         # Load current state
         state = load_state()
-        
-        # Initialize virtual clock if missing
-        if not state.simulation_time:
-             state.simulation_time = datetime.now(timezone.utc)
-             logger.info(f"Initialized simulation time to {state.simulation_time}")
 
         # Create logged services for this tick (needed early for Jira calls)
         logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
@@ -389,7 +383,7 @@ async def trigger_simulation():
         # This must happen before any sprint-dependent logic
         previous_sprint_number = state.sprint.sprint_number  # From cached Jira data
         jira_sprint = logged_jira.get_active_sprint()
-        state.sprint.inject_jira_sprint(jira_sprint, current_time=state.simulation_time)
+        state.sprint.inject_jira_sprint(jira_sprint, current_time=datetime.now(timezone.utc))
 
         # Detect sprint transition (e.g., Sprint 7 -> Sprint 8)
         if state.handle_sprint_transition(previous_sprint_number):
