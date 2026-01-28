@@ -1,9 +1,9 @@
 # Project State: Real-Time Scripted Jira Team Simulator
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-28 15:55 UTC
 **Current Phase:** Phase 4 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Current Plan:** 04-04 complete (4 of 5)
-**Status:** Phase 4 Wave 1 complete, Wave 2 complete, Wave 3 in progress
+**Current Plan:** 04-06 complete (6 of 7)
+**Status:** Phase 4 Wave 1-3 complete, Wave 4 ready to start
 
 ## Project Reference
 
@@ -14,10 +14,10 @@
 ## Current Position
 
 **Phase:** 4 of 5 - Adaptive Pathfinding & Chaos Injection (IN PROGRESS)
-**Plans:** 4 of 5 complete in current phase
+**Plans:** 6 of 7 complete in current phase
 **Status:** In progress
-**Last activity:** 2026-01-28 - Completed 04-04-PLAN.md
-**Progress:** [███████████████░░░░░] 75% (44/59 requirements)
+**Last activity:** 2026-01-28 - Completed 04-06-PLAN.md
+**Progress:** [████████████████████░] 86% (6/7 plans in phase 4)
 
 **Phase Goal:** Chaos event injection with adaptive pathfinding for workflow transitions; system handles disruptions intelligently.
 
@@ -60,6 +60,9 @@
 | Direct queue heap access for adaptation | Use _get_pending_actions() to scan queue._heap; get_due_actions() filters by time window | 4 | 2026-01-28 |
 | Track postponed actions in actions_inserted | Postponed actions ARE inserted into queue, should appear in insertion list for transparency | 4 | 2026-01-28 |
 | Simple replacement agent mapping | Phase 4 focuses on pathfinding logic, not state management; hardcoded role mapping sufficient | 4 | 2026-01-28 |
+| Use WorkflowPathfinder for recalculation | Leverages existing pathfinding logic for consistency with workflow topology | 4 | 2026-01-28 |
+| Mark all pending actions for ticket as ADAPTED | Prevents conflicting actions after recalculation; maintains action queue consistency | 4 | 2026-01-28 |
+| Stagger recalculated action timing | 15-minute intervals for recalculated actions creates realistic action spacing | 4 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -126,36 +129,37 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 4 Plan 04 Execution (2026-01-28)
+**Last Session:** Phase 4 Plan 06 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 04-04: ScenarioAdapter
-- Created ScenarioAdapter with event-specific adaptation logic
-- Implemented 6 event handlers (production_outage, urgent_bug, team_absence, external_blocker, priority_shift, scope_change)
-- Insert emergency actions, postpone work, reassign to replacement agents
-- Fixed Rule 1 bug: ScheduledActionStore in-memory database support
-- All 12 adapter tests pass
+- Completed 04-06: PathfindingAdapter for RECALCULATE strategy
+- Created PathfindingAdapter with WorkflowPathfinder integration
+- Handles RECALCULATE from ReconciliationEngine
+- Marks all pending actions for ticket as ADAPTED
+- Schedules new recalculated actions with staggered timing
+- Integrated into TickExecutor with recalculations metric
+- All 14 pathfinding adapter tests pass
 
 **Commits This Session:**
-- `0a4e5a1`: feat(04-04): implement ScenarioAdapter with chaos event handling
-- `086f39a`: test(04-04): add comprehensive ScenarioAdapter tests
-- `7ef6c36`: fix(03): support in-memory databases in ScheduledActionStore
-- `7dd6297`: fix(04-04): track postponed actions in actions_inserted list
+- `4a46439`: feat(04-06): create PathfindingAdapter class
+- `5022ff2`: feat(04-06): integrate PathfindingAdapter into TickExecutor
+- `bb7fe68`: test(04-06): add comprehensive PathfindingAdapter tests
 
 **Next Session Should:**
-Complete Phase 4 with final Wave 4 plan (orchestrator integration) or proceed to Phase 5
+Complete Phase 4 with 04-07 (orchestrator integration) - wire all Phase 4 components together
 
 **Context for Next Agent:**
-- ScenarioAdapter ready for orchestrator integration
-- Event handlers insert ScheduledActions via scheduler.schedule_action()
+- PathfindingAdapter ready for orchestrator integration (04-07)
+- ScenarioAdapter ready for orchestrator integration (04-04)
+- ConfidenceTracker ready for orchestrator integration (04-05)
+- TickExecutor accepts optional pathfinding_adapter parameter
 - Actions marked ADAPTED via scheduler.store.update_status()
-- AdaptationResult tracks insertions, adaptations, and postponements
-- Direct queue heap access via _get_pending_actions() for all pending actions
-- Simple replacement agent mapping (role-based fallback)
+- Recalculations metric tracks adaptive pathfinding events
+- WorkflowPathfinder must be built from board snapshot before tick
 
 **Phase 4: Adaptive Pathfinding & Chaos Injection** (IN PROGRESS)
-- 4 plans executed (04-01, 04-02, 04-03, 04-04)
-- 64 chaos tests pass (10 models + 13 generator + 15 catalog + 14 confidence + 12 adapter)
+- 6 plans executed (04-01, 04-02, 04-03, 04-04, 04-05, 04-06)
+- 78 chaos tests pass (10 models + 13 generator + 15 catalog + 14 confidence + 12 adapter + 14 pathfinding)
 - Key deliverables so far:
   - ChaosEventType enum with 6 event types
   - RandomEvent dataclass with validation
@@ -167,6 +171,9 @@ Complete Phase 4 with final Wave 4 plan (orchestrator integration) or proceed to
   - ConfidenceScore metrics dataclass
   - ScenarioAdapter with event-specific handlers
   - AdaptationResult for tracking modifications
+  - PathfindingAdapter with RECALCULATE handling
+  - PathfindingResult for recalculation tracking
+  - TickExecutor integration with recalculations metric
 
 ---
-*State updated: 2026-01-28 after 04-04 execution complete*
+*State updated: 2026-01-28 15:55 UTC after 04-06 execution complete*
