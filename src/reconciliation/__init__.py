@@ -7,6 +7,7 @@ This module provides infrastructure for:
 - Deciding adaptation strategies (cancel, recalculate, reschedule, skip, proceed) (RECON-03)
 - Tracking tombstone reasons for cancelled scenarios (RECON-06)
 - Optimistic locking via Jira's updated timestamp (RECON-07)
+- Circuit breaker protection for Jira API calls (RECON-08)
 
 Core Components:
     ValidationResult: Data model for validation results.
@@ -17,6 +18,8 @@ Core Components:
     ReconciliationEngine: Decides adaptation strategies for divergence.
     ReconciliationResult: Result of reconciliation decision.
     AdaptationStrategy: Enum of adaptation strategies.
+    ResilientJiraClient: JiraClient wrapper with circuit breaker protection.
+    CircuitBreakerError: Exception raised when circuit breaker is open.
 
 Example:
     >>> from src.reconciliation import PreExecutionValidator, ValidationResult
@@ -40,6 +43,12 @@ from .adapters import AdaptationStrategy
 from .execution_tracker import ExecutionTracker, ExecutionRecord
 from .reconciler import ReconciliationEngine, ReconciliationResult
 from .staleness import cleanup_stale_scenarios
+from .circuit_breaker import (
+    ResilientJiraClient,
+    jira_read_breaker,
+    jira_write_breaker,
+    CircuitBreakerError,
+)
 
 __all__ = [
     # Validation models
@@ -57,4 +66,9 @@ __all__ = [
     "ReconciliationResult",
     # Staleness detection
     "cleanup_stale_scenarios",
+    # Circuit breaker
+    "ResilientJiraClient",
+    "jira_read_breaker",
+    "jira_write_breaker",
+    "CircuitBreakerError",
 ]
