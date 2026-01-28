@@ -188,6 +188,7 @@ class ScenarioOrchestrator:
         self,
         state: SimulationState,
         intensity: str = "normal",
+        skip_execution: bool = False,
     ) -> dict:
         """
         Run one simulation tick.
@@ -195,6 +196,8 @@ class ScenarioOrchestrator:
         Args:
             state: Current simulation state
             intensity: Tick intensity ("light", "normal", "busy")
+            skip_execution: If True, skip Phase 3 (Execute) and return after planning.
+                           Used when TickExecutor handles execution (EXEC-01).
 
         Returns:
             Dict with tick results including actions taken and updated state
@@ -283,6 +286,23 @@ class ScenarioOrchestrator:
                 planned_actions=planned_actions,
                 planning_reasoning=self.planner.last_reasoning,
             )
+
+            # If skip_execution=True, return here (execution delegated to TickExecutor)
+            # This makes TickExecutor the SOLE executor per EXEC-01 requirement
+            if skip_execution:
+                results["actions_completed"] = 0
+                results["execution_skipped"] = True
+                results["execution_delegated_to"] = "TickExecutor"
+                self._log_event(
+                    "execution_skipped",
+                    reason="delegated_to_tick_executor",
+                )
+                # Still cleanup stale scenarios
+                from .scenario_lifecycle import cleanup_stale_scenarios
+                tombstones = cleanup_stale_scenarios(state, staleness_threshold=4)
+                if tombstones:
+                    results["stale_scenarios_removed"] = len(tombstones)
+                return results
 
             # Phase 3: Execute
             for action in planned_actions:
