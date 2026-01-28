@@ -2,8 +2,8 @@
 
 **Last Updated:** 2026-01-28
 **Current Phase:** Phase 2: State Reconciliation & Validation
-**Current Plan:** Wave 1 complete, ready for Wave 2
-**Status:** Wave 1 complete (02-01, 02-02, 02-03)
+**Current Plan:** Wave 2 in progress (02-04 prep done, 02-05 complete)
+**Status:** Wave 2 partial (02-05 complete)
 
 ## Project Reference
 
@@ -14,9 +14,9 @@
 ## Current Position
 
 **Phase:** 2 of 5 - State Reconciliation & Validation
-**Plans:** 6 plans created
-**Status:** Planned, ready for execution
-**Progress:** [████░░░░░░░░░░░░░░░░] 17% (10/59 requirements)
+**Plans:** 6 plans, 4 complete (02-01, 02-02, 02-03, 02-05)
+**Status:** Wave 2 in progress
+**Progress:** [█████░░░░░░░░░░░░░░░] 22% (13/59 requirements)
 
 **Phase Goal:** System validates Jira state before every action and adapts gracefully when reality diverges from simulation plan.
 
@@ -26,19 +26,19 @@
 | 02-01 | Pre-execution validators with optimistic locking | 1 | - | Complete |
 | 02-02 | Execution ID tracker for idempotency | 1 | - | Complete |
 | 02-03 | Reconciliation engine with adaptation strategies | 1 | - | Complete |
-| 02-04 | Circuit breaker wrapper for JiraClient | 2 | 01, 02, 03 | Pending |
-| 02-05 | Staleness detection for scenario auto-removal | 2 | 01, 03 | Pending |
+| 02-04 | Circuit breaker wrapper for JiraClient | 2 | 01, 02, 03 | In Progress (pybreaker added) |
+| 02-05 | Staleness detection for scenario auto-removal | 2 | 01, 03 | Complete |
 | 02-06 | Orchestrator integration with reconciliation | 3 | All above | Pending |
 
 **Requirements Coverage:**
-- RECON-01: 02-01-PLAN (Pre-execution validation checks Jira ticket state)
-- RECON-02: 02-03-PLAN (Reconciliation engine detects divergence)
-- RECON-03: 02-03-PLAN (Reconciler provides adaptation strategies)
-- RECON-04: 02-02-PLAN (Idempotency checks using execution IDs)
-- RECON-05: 02-05-PLAN (Scenario staleness detection)
-- RECON-06: 02-03-PLAN, 02-05-PLAN (Tombstone tracking)
-- RECON-07: 02-01-PLAN (Optimistic locking via updated timestamp)
-- RECON-08: 02-04-PLAN, 02-06-PLAN (Graceful degradation)
+- RECON-01: 02-01-PLAN (Pre-execution validation checks Jira ticket state) - Complete
+- RECON-02: 02-03-PLAN (Reconciliation engine detects divergence) - Complete
+- RECON-03: 02-03-PLAN (Reconciler provides adaptation strategies) - Complete
+- RECON-04: 02-02-PLAN (Idempotency checks using execution IDs) - Complete
+- RECON-05: 02-05-PLAN (Scenario staleness detection) - Complete
+- RECON-06: 02-03-PLAN, 02-05-PLAN (Tombstone tracking) - Complete
+- RECON-07: 02-01-PLAN (Optimistic locking via updated timestamp) - Complete
+- RECON-08: 02-04-PLAN, 02-06-PLAN (Graceful degradation) - In Progress
 
 **Phase Success Criteria:**
 1. Simulator detects when user manually transitions ticket status in Jira and skips planned transition (logs reconciliation note)
@@ -49,11 +49,11 @@
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 11/59 requirements completed (19%)
+**Overall Milestone Progress:** 13/59 requirements completed (22%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
-- Phase 2: 4/8 (50%) - RECON-01, RECON-02, RECON-03, RECON-04, RECON-07 complete (partial RECON-06)
+- Phase 2: 6/8 (75%) - RECON-01 through RECON-07 complete, RECON-08 in progress
 - Phase 3: 0/24 (0%)
 - Phase 4: 0/14 (0%)
 - Phase 5: 0/6 (0%)
@@ -81,6 +81,8 @@
 | Case-sensitive status comparison | Jira status names are exact (e.g., "In Progress" != "in progress") | 2 | 2026-01-28 |
 | Flexible timestamp input for optimistic locking | validate_with_timestamp() accepts both ISO 8601 strings and pendulum.DateTime | 2 | 2026-01-28 |
 | Graceful API error handling | API errors return ValidationResult(valid=False) instead of raising exceptions | 2 | 2026-01-28 |
+| Default staleness threshold of 4 ticks | ~3 hours at 45-min cadence, handles overnight gaps | 2 | 2026-01-28 |
+| Tombstone records for staleness cleanup | Include scenario_id, ticket_key, reason, last_phase for audit | 2 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -104,7 +106,9 @@
 - [x] Plan Phase 2 (State Reconciliation & Validation)
 - [x] Research Jira API for precondition checks (completed in 02-RESEARCH.md)
 - [x] Design idempotency key format and storage (completed in 02-02-PLAN)
-- [ ] Execute Phase 2 plans via /gsd:execute-phase
+- [ ] Complete 02-04 (Circuit Breaker - pybreaker dependency added)
+- [x] Complete 02-05 (Staleness Detection)
+- [ ] Complete 02-06 (Orchestrator Integration)
 
 ### Known Blockers
 
@@ -112,27 +116,32 @@
 
 ### Technical Debt
 
-- Tests require pendulum in pytest environment (currently using different Python env)
+- Tests require Python 3.12 (anaconda has older Pydantic)
 - Some tests use hardcoded dates that may need adjustment
 
 ## Session Continuity
 
-**Last Session:** Phase 2 Wave 1 Execution (2026-01-28)
+**Last Session:** Phase 2 Plan 05 Execution (2026-01-28)
 
 **What Happened:**
-- Completed 02-01: Pre-execution validators (PreExecutionValidator, OptimisticLockingValidator)
-- 24 tests pass for validators covering status/sprint/assignee validation and optimistic locking
-- Wave 1 now complete: 02-01, 02-02, 02-03 all done
+- Completed 02-05: Staleness Detection
+- Added cleanup_stale_scenarios() function with tombstone records
+- 19 tests pass for staleness detection (253 lines)
+- Note: Task 1 was pre-committed in 02-04 prep
+
+**Commits This Session:**
+- `92b049e`: feat(02-05): create staleness cleanup function
+- `33266b0`: test(02-05): add staleness detection tests
 
 **Next Session Should:**
-1. Execute Wave 2: 02-04 (Circuit Breaker), 02-05 (Staleness Detection)
-2. Then Wave 3: 02-06 (Orchestrator Integration)
+1. Complete 02-04 (Circuit Breaker) - pybreaker dependency already added
+2. Then 02-06 (Orchestrator Integration)
 
 **Context for Next Agent:**
-- Wave 1 complete: validators, execution tracker, reconciler all implemented
-- src/reconciliation/ module fully exports: ValidationResult, PreExecutionValidator, OptimisticLockingValidator, ExecutionTracker, ExecutionRecord, ReconciliationEngine, ReconciliationResult, AdaptationStrategy
-- New dependency needed in 02-04: pybreaker>=1.1.0 (add to requirements.txt)
-- Integration point: ScenarioOrchestrator._execute_action() gets pre-validation
+- Wave 2 partial: 02-05 complete, 02-04 needs circuit breaker implementation
+- src/reconciliation/ module exports: ValidationResult, PreExecutionValidator, OptimisticLockingValidator, ExecutionTracker, ExecutionRecord, ReconciliationEngine, ReconciliationResult, AdaptationStrategy, cleanup_stale_scenarios
+- pybreaker>=1.1.0 already in requirements.txt (added in d0ed2c4)
+- ActiveScenario has staleness methods: is_stale(), mark_validated(), increment_validation_miss()
 
 ---
-*State updated: 2026-01-28 after completing 02-01-PLAN (Wave 1 complete)*
+*State updated: 2026-01-28 after completing 02-05-PLAN*
