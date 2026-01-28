@@ -89,7 +89,7 @@ class TestScenarioScheduler:
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")  # Wednesday
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")  # Monday
 
         script = [
             {"day": 1, "type": "pick_up_task", "agent_id": "dev_1", "expected_status": "To Do"}
@@ -102,14 +102,14 @@ class TestScenarioScheduler:
         assert len(actions) == 1
         action = actions[0]
         assert action.scheduled_time.date() == sprint_start.date()
-        assert action.scheduled_time.day_of_week == sprint_start.day_of_week  # Wednesday
+        assert action.scheduled_time.day_of_week == sprint_start.day_of_week  # Monday
 
     def test_day_3_gets_sprint_plus_2_days(self):
         """Day 3 in script maps to sprint_start_date + 2 days."""
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")  # Wednesday
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")  # Monday
 
         script = [
             {"day": 3, "type": "progress_task", "agent_id": "dev_1"}
@@ -121,15 +121,15 @@ class TestScenarioScheduler:
 
         assert len(actions) == 1
         action = actions[0]
-        expected_date = sprint_start.add(days=2).date()  # Friday
+        expected_date = sprint_start.add(days=2).date()  # Wednesday
         assert action.scheduled_time.date() == expected_date
 
     def test_weekend_action_moved_to_monday(self):
-        """Day 6 (Saturday if sprint starts Wednesday) moves to Monday."""
+        """Day 6 (Saturday if sprint starts Monday) moves to Monday."""
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")  # Wednesday
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")  # Monday
 
         script = [
             {"day": 6, "type": "qa_approve", "agent_id": "qa_1"}  # Would be Saturday
@@ -141,16 +141,17 @@ class TestScenarioScheduler:
 
         assert len(actions) == 1
         action = actions[0]
-        # Should be moved to Monday
+        # Should be moved to next Monday (weekend skipped)
         assert action.scheduled_time.day_of_week == 0  # Monday
-        assert action.scheduled_time > sprint_start
+        expected_monday = pendulum.datetime(2026, 2, 9, tz="America/New_York")
+        assert action.scheduled_time.date() == expected_monday.date()
 
     def test_actions_have_randomized_times(self):
         """Actions don't all have :00:00 timestamps."""
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")
 
         script = [
             {"day": 1, "type": "action_1", "agent_id": "dev_1"},
@@ -172,7 +173,7 @@ class TestScenarioScheduler:
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")
 
         script = [
             {"day": 1, "type": "action_1", "agent_id": "dev_1"},
@@ -220,7 +221,7 @@ class TestScenarioScheduler:
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")
 
         script = [
             {
@@ -250,7 +251,7 @@ class TestScenarioScheduler:
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")
 
         script = [
             {"day": 1, "type": f"action_{i}", "agent_id": f"dev_{i}"}
@@ -275,7 +276,7 @@ class TestScenarioScheduler:
         from src.planning.scenario_scheduler import ScenarioScheduler
 
         scheduler = ScenarioScheduler()
-        sprint_start = pendulum.datetime(2026, 2, 5, 9, 0, tz="America/New_York")
+        sprint_start = pendulum.datetime(2026, 2, 2, 9, 0, tz="America/New_York")
 
         script = [{"day": 1, "type": "test_action", "agent_id": "dev_1"}]
 
