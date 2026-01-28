@@ -16,14 +16,14 @@
 **Phase:** 2 of 5 - State Reconciliation & Validation
 **Plans:** 6 plans created
 **Status:** Planned, ready for execution
-**Progress:** [███░░░░░░░░░░░░░░░░░] 14% (8/59 requirements)
+**Progress:** [████░░░░░░░░░░░░░░░░] 17% (10/59 requirements)
 
 **Phase Goal:** System validates Jira state before every action and adapts gracefully when reality diverges from simulation plan.
 
 **Phase Plans:**
 | Plan | Description | Wave | Depends On | Status |
 |------|-------------|------|------------|--------|
-| 02-01 | Pre-execution validators with optimistic locking | 1 | - | Pending |
+| 02-01 | Pre-execution validators with optimistic locking | 1 | - | Complete |
 | 02-02 | Execution ID tracker for idempotency | 1 | - | Complete |
 | 02-03 | Reconciliation engine with adaptation strategies | 1 | - | Complete |
 | 02-04 | Circuit breaker wrapper for JiraClient | 2 | 01, 02, 03 | Pending |
@@ -49,11 +49,11 @@
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 10/59 requirements completed (17%)
+**Overall Milestone Progress:** 11/59 requirements completed (19%)
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
-- Phase 2: 3/8 (38%) - RECON-02, RECON-03, RECON-04 complete (partial RECON-06)
+- Phase 2: 4/8 (50%) - RECON-01, RECON-02, RECON-03, RECON-04, RECON-07 complete (partial RECON-06)
 - Phase 3: 0/24 (0%)
 - Phase 4: 0/14 (0%)
 - Phase 5: 0/6 (0%)
@@ -78,6 +78,9 @@
 | Separate read/write circuit breakers | Writes more sensitive (fail_max=3) than reads (fail_max=5) | 2 | 2026-01-28 |
 | Status progression ordinal map | STATUS_ORDER (To Do=0 to Done=4) determines forward/backward divergence | 2 | 2026-01-28 |
 | 3-retry threshold for transient errors | Transient errors RESCHEDULE only if retry_count < 3 to prevent infinite loops | 2 | 2026-01-28 |
+| Case-sensitive status comparison | Jira status names are exact (e.g., "In Progress" != "in progress") | 2 | 2026-01-28 |
+| Flexible timestamp input for optimistic locking | validate_with_timestamp() accepts both ISO 8601 strings and pendulum.DateTime | 2 | 2026-01-28 |
+| Graceful API error handling | API errors return ValidationResult(valid=False) instead of raising exceptions | 2 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -114,28 +117,22 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 2 Planning (2026-01-28)
+**Last Session:** Phase 2 Wave 1 Execution (2026-01-28)
 
 **What Happened:**
-- Created 6 executable plans for Phase 2
-- Wave 1 (parallel): 02-01 Validators, 02-02 Execution Tracker, 02-03 Reconciler
-- Wave 2 (parallel): 02-04 Circuit Breaker, 02-05 Staleness Detection
-- Wave 3 (sequential): 02-06 Orchestrator Integration
-- All plans have must_haves with truths, artifacts, and key_links
-- ROADMAP.md updated with plan list
+- Completed 02-01: Pre-execution validators (PreExecutionValidator, OptimisticLockingValidator)
+- 24 tests pass for validators covering status/sprint/assignee validation and optimistic locking
+- Wave 1 now complete: 02-01, 02-02, 02-03 all done
 
 **Next Session Should:**
-1. Run `/gsd:execute-phase 2` to execute all 6 plans
-2. Wave 1 plans can run in parallel (no dependencies)
-3. Wave 2 plans depend on Wave 1 completion
-4. Wave 3 (02-06) depends on all previous plans
+1. Execute Wave 2: 02-04 (Circuit Breaker), 02-05 (Staleness Detection)
+2. Then Wave 3: 02-06 (Orchestrator Integration)
 
 **Context for Next Agent:**
-- Research is complete in 02-RESEARCH.md (patterns, libraries, architecture)
-- Plans are TDD-style with clear must_haves and verification criteria
-- New dependency: pybreaker>=1.1.0 (add to requirements.txt in 02-04)
-- New module: src/reconciliation/ (validators, models, reconciler, execution_tracker, staleness, circuit_breaker)
+- Wave 1 complete: validators, execution tracker, reconciler all implemented
+- src/reconciliation/ module fully exports: ValidationResult, PreExecutionValidator, OptimisticLockingValidator, ExecutionTracker, ExecutionRecord, ReconciliationEngine, ReconciliationResult, AdaptationStrategy
+- New dependency needed in 02-04: pybreaker>=1.1.0 (add to requirements.txt)
 - Integration point: ScenarioOrchestrator._execute_action() gets pre-validation
 
 ---
-*State updated: 2026-01-28 after Phase 2 planning (6 plans created)*
+*State updated: 2026-01-28 after completing 02-01-PLAN (Wave 1 complete)*
