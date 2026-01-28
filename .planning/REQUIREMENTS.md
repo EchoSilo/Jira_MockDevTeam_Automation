@@ -51,22 +51,22 @@ Requirements for transforming the virtual-time simulation into a real-time scrip
 
 ### Chaos Injection
 
-- [ ] **CHAOS-01**: RandomEventGenerator with configurable probabilities per event type (production_outage, urgent_bug, team_absence, external_blocker, priority_shift, scope_change)
-- [ ] **CHAOS-02**: Granular chaos level configuration in settings.yaml (per-event probabilities, not just presets)
-- [ ] **CHAOS-03**: RandomEvent model includes event_type, triggered_at, affected_tickets, description, severity
-- [ ] **CHAOS-04**: Dice rolling each tick against configured probabilities to generate events
-- [ ] **CHAOS-05**: Event catalog with weighted selection based on scenario archetype (smooth vs blocker-heavy)
+- [x] **CHAOS-01**: RandomEventGenerator with configurable probabilities per event type (production_outage, urgent_bug, team_absence, external_blocker, priority_shift, scope_change)
+- [x] **CHAOS-02**: Granular chaos level configuration in settings.yaml (per-event probabilities, not just presets)
+- [x] **CHAOS-03**: RandomEvent model includes event_type, triggered_at, affected_tickets, description, severity
+- [x] **CHAOS-04**: Dice rolling each tick against configured probabilities to generate events
+- [x] **CHAOS-05**: Event catalog with weighted selection based on scenario archetype (smooth vs blocker-heavy)
 
 ### Scenario Adaptation
 
-- [ ] **ADAPT-01**: ScenarioAdapter modifies active scenario when random events occur
-- [ ] **ADAPT-02**: Insert emergency response actions for production outages (pause non-critical work)
-- [ ] **ADAPT-03**: Reassign actions to other agents when team member absence occurs
-- [ ] **ADAPT-04**: Insert bug fix actions and postpone other work for urgent bugs
-- [ ] **ADAPT-05**: Add blocker discussion actions and extend timelines for external blockers
-- [ ] **ADAPT-06**: Scenario confidence score (script_fidelity metric) tracks % events executed vs adapted
-- [ ] **ADAPT-07**: Accept reality threshold - abandon script if 3+ events overridden by external changes
-- [ ] **ADAPT-08**: Adaptive pathfinding recalculates workflow path when Jira state diverges from expected status
+- [x] **ADAPT-01**: ScenarioAdapter modifies active scenario when random events occur
+- [x] **ADAPT-02**: Insert emergency response actions for production outages (pause non-critical work)
+- [x] **ADAPT-03**: Reassign actions to other agents when team member absence occurs
+- [x] **ADAPT-04**: Insert bug fix actions and postpone other work for urgent bugs
+- [x] **ADAPT-05**: Add blocker discussion actions and extend timelines for external blockers
+- [x] **ADAPT-06**: Scenario confidence score (script_fidelity metric) tracks % events executed vs adapted
+- [x] **ADAPT-07**: Accept reality threshold - abandon script if 3+ events overridden by external changes
+- [x] **ADAPT-08**: Adaptive pathfinding recalculates workflow path when Jira state diverges from expected status
 
 ### Execution Engine
 
@@ -89,7 +89,7 @@ Requirements for transforming the virtual-time simulation into a real-time scrip
 
 - [x] **CONFIG-01**: Remove simulation_time and tick_duration_hours from SimulationState model
 - [x] **CONFIG-02**: Add planning_horizon and action_queue fields to SimulationState
-- [ ] **CONFIG-03**: Update settings.yaml with real_time, random_events, velocity, releases sections
+- [x] **CONFIG-03**: Update settings.yaml with real_time, random_events, velocity, releases sections
 - [x] **CONFIG-04**: Sprint configuration: duration_days=7, start_day=wednesday, planning_horizon_sprints=3
 - [x] **CONFIG-05**: Fresh state initialization (no migration of existing virtual-time data)
 
@@ -168,19 +168,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAN-06 | Phase 3 | Complete |
 | PLAN-07 | Phase 3 | Complete |
 | PLAN-08 | Phase 3 | Complete |
-| CHAOS-01 | Phase 4 | Pending |
-| CHAOS-02 | Phase 4 | Pending |
-| CHAOS-03 | Phase 4 | Pending |
-| CHAOS-04 | Phase 4 | Pending |
-| CHAOS-05 | Phase 4 | Pending |
-| ADAPT-01 | Phase 4 | Pending |
-| ADAPT-02 | Phase 4 | Pending |
-| ADAPT-03 | Phase 4 | Pending |
-| ADAPT-04 | Phase 4 | Pending |
-| ADAPT-05 | Phase 4 | Pending |
-| ADAPT-06 | Phase 4 | Pending |
-| ADAPT-07 | Phase 4 | Pending |
-| ADAPT-08 | Phase 4 | Pending |
+| CHAOS-01 | Phase 4 | Complete |
+| CHAOS-02 | Phase 4 | Complete |
+| CHAOS-03 | Phase 4 | Complete |
+| CHAOS-04 | Phase 4 | Complete |
+| CHAOS-05 | Phase 4 | Complete |
+| ADAPT-01 | Phase 4 | Complete |
+| ADAPT-02 | Phase 4 | Complete |
+| ADAPT-03 | Phase 4 | Complete |
+| ADAPT-04 | Phase 4 | Complete |
+| ADAPT-05 | Phase 4 | Complete |
+| ADAPT-06 | Phase 4 | Complete |
+| ADAPT-07 | Phase 4 | Complete |
+| ADAPT-08 | Phase 4 | Complete |
 | PERF-01 | Phase 5 | Pending |
 | PERF-02 | Phase 5 | Pending |
 | PERF-03 | Phase 5 | Pending |
@@ -189,7 +189,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-06 | Phase 5 | Pending |
 | CONFIG-01 | Phase 1 | Complete |
 | CONFIG-02 | Phase 3 | Complete |
-| CONFIG-03 | Phase 4 | Pending |
+| CONFIG-03 | Phase 4 | Complete |
 | CONFIG-04 | Phase 3 | Complete |
 | CONFIG-05 | Phase 1 | Complete |
 | EXEC-01 | Phase 3 | Complete |
@@ -205,4 +205,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-27*
-*Last updated: 2026-01-28 after Phase 3 completion*
+*Last updated: 2026-01-28 after Phase 4 completion (53/59 requirements complete, 90%)*
