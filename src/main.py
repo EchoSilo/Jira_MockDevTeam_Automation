@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Load .env file before other imports
 
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -35,7 +35,7 @@ from .state import load_state, save_state, SimulationState, sync_state_with_jira
 from .services import JiraClient, LLMService
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
-from .time import Clock, RealClock, get_clock
+from .time import Clock, RealClock, get_clock, validate_business_hours
 
 
 # ============ Caching for Performance ============
@@ -354,7 +354,7 @@ async def health_check():
     )
 
 
-@app.post("/trigger", response_model=TriggerResponse)
+@app.post("/trigger", response_model=TriggerResponse, dependencies=[Depends(validate_business_hours)])
 async def trigger_simulation():
     """
     Main endpoint called by n8n to run one simulation tick.
