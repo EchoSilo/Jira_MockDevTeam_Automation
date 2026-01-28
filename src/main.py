@@ -161,7 +161,7 @@ def _initialize_chaos_components(settings: dict, scheduler: Scheduler):
 
     # Initialize components
     _event_generator = RandomEventGenerator(chaos_config)
-    _scenario_adapter = ScenarioAdapter(scheduler, EventCatalog(), agent_registry)
+    _scenario_adapter = ScenarioAdapter(scheduler)
     _confidence_tracker = ConfidenceTracker(
         threshold=chaos_config.confidence_threshold,
         override_limit=chaos_config.external_override_limit,
