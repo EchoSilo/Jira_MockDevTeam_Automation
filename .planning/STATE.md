@@ -53,6 +53,8 @@
 | Default chaos weights favor blockers/shifts | external_blocker (0.15) and priority_shift (0.12) reflect realistic disruption patterns | 4 | 2026-01-28 |
 | Two-stage dice rolling for chaos events | Stage 1: base_event_chance, Stage 2: weighted selection; separates "if event" from "which event" | 4 | 2026-01-28 |
 | Seeded random.Random for deterministic testing | Optional seed parameter enables reliable test assertions while preserving production randomness | 4 | 2026-01-28 |
+| Weight multipliers for archetype chaos | Archetype-specific multipliers adjust event probabilities (smooth: 0.2-0.5x, blocker_heavy: 2.0x external_blocker) | 4 | 2026-01-28 |
+| Event catalog pattern | Central registry provides templates with response actions; enables scenario-aware chaos intensity | 4 | 2026-01-28 |
 
 ### Completed Phases
 
@@ -135,25 +137,25 @@
 - `caa7596`: feat(04-02): implement RandomEventGenerator with probability-based rolling
 
 **Next Session Should:**
-Execute 04-03: Event Catalog
+Execute 04-04: Random Event Generator Integration
 
 **Context for Next Agent:**
-- RandomEventGenerator can create events on demand
-- Two-stage dice rolling: base_event_chance then weighted selection
-- Seeded random.Random enables deterministic testing
-- Event-specific targeting rules implemented (production_outage: 2-3 tickets critical, team_absence: 1 agent with duration)
-- Zero-probability events correctly filtered before selection
-- Ready for event catalog and storage
+- EventCatalog provides scenario-aware chaos templates
+- Archetype weight multipliers adjust probabilities (smooth: 0.2-0.5x, blocker_heavy: 2.0x external_blocker)
+- chaos_events.yaml loaded with 6 event templates and 6 archetype profiles
+- Response action patterns defined (production_outage → tech_lead emergency_response)
+- Ready for generator integration with archetype awareness
 
 **Phase 4: Adaptive Pathfinding & Chaos Injection** (IN PROGRESS)
-- 2 plans executed (04-01, 04-02)
-- 23 chaos tests pass (10 models + 13 generator)
+- 3 plans executed (04-01, 04-02, 04-03)
+- 38 chaos tests pass (10 models + 13 generator + 15 catalog)
 - Key deliverables so far:
   - ChaosEventType enum with 6 event types
   - RandomEvent dataclass with validation
   - ChaosConfig with YAML configuration loading
   - RandomEventGenerator with probability rolling
-  - Event-specific creation logic for all types
+  - EventCatalog with archetype-aware weight adjustment
+  - chaos_events.yaml configuration
 
 ---
-*State updated: 2026-01-28 after 04-01 execution complete*
+*State updated: 2026-01-28 after 04-03 execution complete*
