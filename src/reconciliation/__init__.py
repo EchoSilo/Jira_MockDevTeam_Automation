@@ -20,6 +20,8 @@ Core Components:
     AdaptationStrategy: Enum of adaptation strategies.
     ResilientJiraClient: JiraClient wrapper with circuit breaker protection.
     CircuitBreakerError: Exception raised when circuit breaker is open.
+    PerTicketCircuitBreaker: Per-ticket circuit breaker to prevent retry loops.
+    TicketHealth: Health state for individual tickets.
 
 Example:
     >>> from src.reconciliation import PreExecutionValidator, ValidationResult
@@ -48,6 +50,8 @@ from .circuit_breaker import (
     jira_read_breaker,
     jira_write_breaker,
     CircuitBreakerError,
+    PerTicketCircuitBreaker,
+    TicketHealth,
 )
 
 __all__ = [
@@ -71,4 +75,6 @@ __all__ = [
     "jira_read_breaker",
     "jira_write_breaker",
     "CircuitBreakerError",
+    "PerTicketCircuitBreaker",
+    "TicketHealth",
 ]
