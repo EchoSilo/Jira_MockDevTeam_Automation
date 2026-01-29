@@ -1,8 +1,8 @@
 # Project State: Real-Time Scripted Jira Team Simulator
 
-**Last Updated:** 2026-01-28 21:18 UTC
+**Last Updated:** 2026-01-29 00:54 UTC
 **Current Phase:** Phase 5 - Performance Optimization (IN PROGRESS)
-**Current Plan:** 05-03 complete (3 of 6)
+**Current Plan:** 05-01 complete (3 of 6)
 **Status:** Phase 5 in progress
 
 ## Project Reference
@@ -16,7 +16,7 @@
 **Phase:** 5 of 5 - Performance Optimization & Dynamic Tuning (IN PROGRESS)
 **Plans:** 3 of 6 complete in current phase
 **Status:** In progress
-**Last activity:** 2026-01-28 - Completed 05-03-PLAN.md (Heartbeat Monitor)
+**Last activity:** 2026-01-29 - Completed 05-01-PLAN.md (Async Action Executor)
 **Progress:** [██████████░░░░░░░░░░] 50% (3/6 plans in phase 5)
 
 **Phase Goal:** Performance optimization, dynamic tuning, and observability enhancements.
@@ -66,10 +66,14 @@
 | Chaos injection after tick execution | Chaos phase runs after TickExecutor but before orchestrator planning; ensures chaos can modify queue before new actions planned | 4 | 2026-01-28 |
 | ChaosConfig accepts dict or path | load_from_settings accepts either dict or file path for flexible loading from lifespan | 4 | 2026-01-28 |
 | Confidence tracking requires sprint scenario | Only calculate confidence when sprint scenario exists; avoids errors on legacy per-ticket scenarios | 4 | 2026-01-28 |
-| 67.5 minute heartbeat threshold | 1.5x 45 min interval balances sensitivity with false positive tolerance | 5 | 2026-01-28 |
-| Business hours configurable via constructor | M-F 9-5 default enables flexibility for different operational schedules | 5 | 2026-01-28 |
-| INFO vs WARNING log levels for gaps | Expected gaps (weekend, overnight) informational; unexpected gaps during business hours concerning | 5 | 2026-01-28 |
-| HeartbeatAlert dataclass return | Structured data enables future alerting integration (Slack, PagerDuty) | 5 | 2026-01-28 |
+| Per-action timeout (10s default) | Prevents individual slow Jira API calls from blocking tick execution | 5 | 2026-01-29 |
+| Global timeout (45s default) | Ensures entire tick completes within budget, preventing overruns | 5 | 2026-01-29 |
+| return_exceptions=True for cascade prevention | One failing action doesn't cancel other concurrent actions | 5 | 2026-01-29 |
+| ActionResult dataclass structure | Tracks success/failure, execution time, timeout vs exception separately | 5 | 2026-01-29 |
+| EMA alpha=0.2 for chaos tuning | 20% new value, 80% previous creates gradual adjustments over 3-5 sprints | 5 | 2026-01-29 |
+| Asymmetric thresholds for chaos | 60% low, 85% high favor stability; wide zone prevents constant adjustments | 5 | 2026-01-29 |
+| Multiplier bounds 0.2x-2.0x | Prevents extreme probability swings while allowing meaningful adjustment | 5 | 2026-01-29 |
+| Adjustment history tracking | Observability for debugging feedback loop; enables future metrics/dashboard | 5 | 2026-01-29 |
 
 ### Completed Phases
 
@@ -128,12 +132,12 @@
   - Comprehensive integration test suite
 
 **Phase 5: Performance Optimization & Dynamic Tuning** (In Progress)
-- 3 of 6 plans executed (50%)
+- 2 of 6 plans executed (33%)
 - Key deliverables so far:
   - AsyncActionExecutor with 15-second timeout enforcement
   - DynamicChaosTuner with EMA-based feedback loop
-  - HeartbeatMonitor with 67.5 minute gap detection
-  - Business hours awareness for expected vs unexpected gaps
+  - Threshold-based chaos adjustment (<60% reduces, >85% increases)
+  - Multiplier clamping (0.2x-2.0x) for system stability
 
 ### Minor Gaps
 
