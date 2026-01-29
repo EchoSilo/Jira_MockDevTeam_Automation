@@ -12,7 +12,7 @@ from src.reconciliation import (
     ExecutionTracker,
     AdaptationStrategy,
 )
-from src.reconciliation.circuit_breaker import ResilientJiraClient, CircuitBreakerError
+from src.reconciliation.circuit_breaker import ResilientJiraClient, CircuitBreakerError, PerTicketCircuitBreaker
 
 if TYPE_CHECKING:
     from src.services.jira_client import JiraClient
@@ -40,6 +40,7 @@ class TickExecutor:
         jira_client: "JiraClient",
         max_actions_per_tick: int = 4,
         pathfinding_adapter: Optional["PathfindingAdapter"] = None,
+        per_ticket_breaker: Optional[PerTicketCircuitBreaker] = None,
     ):
         self.scheduler = scheduler
         self.max_actions_per_tick = max_actions_per_tick
@@ -51,6 +52,9 @@ class TickExecutor:
         self.reconciler = ReconciliationEngine()
         self.execution_tracker = ExecutionTracker(cleanup_age_hours=48)
 
+        # Per-ticket circuit breaker (Phase 5)
+        self.per_ticket_breaker = per_ticket_breaker or PerTicketCircuitBreaker()
+
         # Tick metrics
         self._tick_metrics = {
             "executed": 0,
@@ -58,6 +62,7 @@ class TickExecutor:
             "overdue_skipped": 0,
             "reconciliation_skips": 0,
             "recalculations": 0,
+            "circuit_breaker_skips": 0,
         }
 
     def execute_tick(
@@ -152,6 +157,20 @@ class TickExecutor:
         ticket_key = scheduled_action.ticket_key
         action_type = scheduled_action.action_type
 
+        # Check per-ticket circuit breaker FIRST (PERF-06)
+        if not self.per_ticket_breaker.is_healthy(ticket_key):
+            logger.warning(f"Skipping action for unhealthy ticket {ticket_key}")
+            # Don't mark as skipped - keep pending for retry after reset
+            self._tick_metrics["circuit_breaker_skips"] = (
+                self._tick_metrics.get("circuit_breaker_skips", 0) + 1
+            )
+            return {
+                "action_id": action_id,
+                "action_type": action_type,
+                "skipped": True,
+                "reason": "per_ticket_circuit_breaker_open",
+            }
+
         # Generate execution ID for idempotency
         execution_id = self.execution_tracker.generate_execution_id(
             action_type,
@@ -224,6 +243,8 @@ class TickExecutor:
                             f"reconciliation_{reconciliation.strategy.value}"
                         )
                         self._tick_metrics["reconciliation_skips"] += 1
+                        # Record failure to per-ticket circuit breaker
+                        self.per_ticket_breaker.record_failure(ticket_key, reconciliation.reason)
                         return {
                             "action_id": action_id,
                             "action_type": action_type,
@@ -270,6 +291,8 @@ class TickExecutor:
                 ticket_key,
                 "success",
             )
+            # Record success to per-ticket circuit breaker
+            self.per_ticket_breaker.record_success(ticket_key)
             self._tick_metrics["executed"] += 1
 
         result["action_id"] = action_id
@@ -283,4 +306,5 @@ class TickExecutor:
             "overdue_skipped": 0,
             "reconciliation_skips": 0,
             "recalculations": 0,
+            "circuit_breaker_skips": 0,
         }
