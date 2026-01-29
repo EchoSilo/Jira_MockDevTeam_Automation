@@ -254,3 +254,30 @@ random_events:
   # Accept reality thresholds (dual-threshold model)
   confidence_threshold: 0.7        # Below this triggers accept reality consideration
   external_override_limit: 3       # This many external overrides required to abandon script
+
+# Performance Optimization Configuration (Phase 5)
+performance:
+  # Async execution timeouts
+  max_action_timeout_seconds: 10    # Per-action timeout
+  max_tick_timeout_seconds: 45      # Total tick budget
+
+  # Heartbeat monitoring
+  heartbeat:
+    expected_interval_minutes: 45   # Expected tick interval
+    threshold_multiplier: 1.5       # Alert at 1.5x = 67.5 min
+    business_hours_start: 9         # 9 AM
+    business_hours_end: 17          # 5 PM
+
+  # Dynamic chaos tuning
+  chaos_tuning:
+    enabled: true
+    alpha: 0.2                      # EMA smoothing factor
+    low_threshold: 0.6              # Below this, reduce chaos
+    high_threshold: 0.85            # Above this, increase chaos
+    min_multiplier: 0.2             # Never reduce below 20%
+    max_multiplier: 2.0             # Never increase above 200%
+
+  # Per-ticket circuit breaker
+  ticket_circuit_breaker:
+    failure_threshold: 3            # Failures before marking unhealthy
+    reset_timeout_hours: 24         # Auto-reset after 24 hours
