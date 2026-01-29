@@ -34,8 +34,10 @@ Example:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
+import pendulum
 from pybreaker import CircuitBreaker, CircuitBreakerError, CircuitBreakerListener
 
 from src.services.jira_client import JiraClient
@@ -47,6 +49,8 @@ __all__ = [
     "jira_read_breaker",
     "jira_write_breaker",
     "CircuitBreakerError",
+    "PerTicketCircuitBreaker",
+    "TicketHealth",
 ]
 
 
@@ -193,3 +197,159 @@ class ResilientJiraClient:
         JiraClient without explicitly wrapping every method.
         """
         return getattr(self._client, name)
+
+
+@dataclass
+class TicketHealth:
+    """Health state for a single ticket."""
+    ticket_key: str
+    consecutive_failures: int = 0
+    last_failure_reason: str | None = None
+    last_failure_time: pendulum.DateTime | None = None
+    is_healthy: bool = True
+
+
+class PerTicketCircuitBreaker:
+    """Per-ticket circuit breaker to prevent unbounded retry loops.
+
+    Unlike the global circuit breaker (ResilientJiraClient) which protects
+    the Jira API connection, this tracks failures per individual ticket.
+
+    When a ticket fails precondition checks 3 times consecutively:
+    1. Mark ticket as unhealthy
+    2. Skip future actions for that ticket
+    3. Log warning with failure reason
+
+    This prevents retry storms where a broken ticket (moved externally,
+    deleted, permission changed) causes repeated failures.
+
+    The circuit breaker does NOT mark actions as permanently skipped -
+    they stay pending in case the issue resolves. Manual intervention
+    can reset a ticket's health.
+
+    Attributes:
+        failure_threshold: Failures before marking unhealthy (default: 3)
+        reset_timeout_hours: Hours before auto-resetting unhealthy ticket
+        _ticket_health: Dict tracking health per ticket_key
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        reset_timeout_hours: float = 24.0,
+    ):
+        self.failure_threshold = failure_threshold
+        self.reset_timeout_hours = reset_timeout_hours
+        self._ticket_health: dict[str, TicketHealth] = {}
+
+    def is_healthy(self, ticket_key: str) -> bool:
+        """Check if ticket is healthy for action execution.
+
+        Returns True if:
+        - Ticket has no recorded failures
+        - Ticket has fewer than threshold failures
+        - Ticket's circuit breaker has timed out and reset
+
+        Args:
+            ticket_key: Jira issue key (e.g., "ESCRUM-123")
+
+        Returns:
+            True if ticket is healthy, False if circuit is open
+        """
+        if ticket_key not in self._ticket_health:
+            return True
+
+        health = self._ticket_health[ticket_key]
+
+        # Check for timeout-based reset
+        if not health.is_healthy and health.last_failure_time:
+            age_hours = (pendulum.now("UTC") - health.last_failure_time).total_hours()
+            if age_hours >= self.reset_timeout_hours:
+                logger.info(
+                    f"Per-ticket circuit breaker reset for {ticket_key} "
+                    f"after {age_hours:.1f} hours"
+                )
+                health.is_healthy = True
+                health.consecutive_failures = 0
+                return True
+
+        return health.is_healthy
+
+    def record_failure(self, ticket_key: str, reason: str) -> bool:
+        """Record a failure for a ticket.
+
+        Args:
+            ticket_key: Jira issue key
+            reason: Why the action failed
+
+        Returns:
+            True if circuit breaker is now open (ticket unhealthy)
+        """
+        if ticket_key not in self._ticket_health:
+            self._ticket_health[ticket_key] = TicketHealth(ticket_key=ticket_key)
+
+        health = self._ticket_health[ticket_key]
+        health.consecutive_failures += 1
+        health.last_failure_reason = reason
+        health.last_failure_time = pendulum.now("UTC")
+
+        if health.consecutive_failures >= self.failure_threshold:
+            if health.is_healthy:  # Only log on transition
+                logger.warning(
+                    f"Per-ticket circuit breaker OPEN for {ticket_key}: "
+                    f"{health.consecutive_failures} consecutive failures. "
+                    f"Reason: {reason}"
+                )
+            health.is_healthy = False
+            return True
+
+        logger.debug(
+            f"Ticket {ticket_key} failure #{health.consecutive_failures}: {reason}"
+        )
+        return False
+
+    def record_success(self, ticket_key: str) -> None:
+        """Record a successful action for a ticket.
+
+        Resets consecutive failure count and marks healthy.
+        """
+        if ticket_key not in self._ticket_health:
+            return  # No failures recorded, nothing to reset
+
+        health = self._ticket_health[ticket_key]
+        if health.consecutive_failures > 0 or not health.is_healthy:
+            logger.debug(f"Ticket {ticket_key} recovered, resetting circuit breaker")
+        health.consecutive_failures = 0
+        health.is_healthy = True
+
+    def get_unhealthy_tickets(self) -> list[str]:
+        """Get list of currently unhealthy ticket keys."""
+        return [
+            key for key, health in self._ticket_health.items()
+            if not health.is_healthy
+        ]
+
+    def get_ticket_health(self, ticket_key: str) -> TicketHealth | None:
+        """Get health status for a specific ticket."""
+        return self._ticket_health.get(ticket_key)
+
+    def reset_ticket(self, ticket_key: str) -> None:
+        """Manually reset a ticket's circuit breaker."""
+        if ticket_key in self._ticket_health:
+            logger.info(f"Manually resetting circuit breaker for {ticket_key}")
+            del self._ticket_health[ticket_key]
+
+    def reset_all(self) -> None:
+        """Reset all ticket circuit breakers."""
+        count = len(self._ticket_health)
+        self._ticket_health.clear()
+        logger.info(f"Reset all per-ticket circuit breakers ({count} tickets)")
+
+    def get_stats(self) -> dict:
+        """Get statistics about circuit breaker state."""
+        unhealthy = [h for h in self._ticket_health.values() if not h.is_healthy]
+        return {
+            "total_tracked": len(self._ticket_health),
+            "unhealthy_count": len(unhealthy),
+            "unhealthy_tickets": [h.ticket_key for h in unhealthy],
+        }
