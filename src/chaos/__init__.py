@@ -11,6 +11,7 @@ from .event_generator import RandomEventGenerator
 from .scenario_adapter import ScenarioAdapter, AdaptationResult
 from .confidence_tracker import ConfidenceTracker, ConfidenceScore
 from .pathfinding_adapter import PathfindingAdapter, PathfindingResult
+from .dynamic_tuner import DynamicChaosTuner, TuningResult
 
 __all__ = [
     "RandomEvent",
@@ -24,4 +25,6 @@ __all__ = [
     "ConfidenceScore",
     "PathfindingAdapter",
     "PathfindingResult",
+    "DynamicChaosTuner",
+    "TuningResult",
 ]
