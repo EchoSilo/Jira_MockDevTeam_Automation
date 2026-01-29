@@ -198,6 +198,30 @@ Plans:
 4. When same ticket fails precondition checks 3 times in a row, circuit breaker marks it unhealthy and skips future actions (prevents retry loop)
 5. Heartbeat monitoring logs warning if tick gap exceeds 67 minutes (1.5x the 45-minute expected interval)
 
+### Phase 6: Tech Debt Cleanup
+
+**Goal:** Address tech debt identified in milestone audit - fix metric mapping for accurate dashboard/logging and wire PathfindingAdapter for full adaptive pathfinding capability.
+
+**Dependencies:** Phase 5 (cleanup of completed phases)
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md - Fix actions_completed metric mapping in main.py
+- [ ] 06-02-PLAN.md - Wire PathfindingAdapter to TickExecutor
+
+**Tech Debt Addressed:**
+- Phase 3 Minor: TickExecutor returns `metrics["executed"]` but main.py expects `actions_completed` - dashboard/logs show 0 actions
+- Phase 4 Medium: PathfindingAdapter initialized but not wired to TickExecutor - adaptive pathfinding on reconciliation failures not active
+
+**Deferred:**
+- Phase 5 Low: AsyncActionExecutor integration - requires async refactor of TickExecutor (future work)
+
+**Success Criteria:**
+1. Dashboard and logs correctly show action counts from TickExecutor execution
+2. PathfindingAdapter receives RECALCULATE strategies from TickExecutor and recalculates workflow paths
+3. Integration tests verify both fixes work end-to-end
+
 ## Progress
 
 | Phase | Status | Requirements | Completed | Progress |
@@ -207,8 +231,9 @@ Plans:
 | Phase 3: Event Scheduler & Queue System | Complete | 24 | 24 | 100% |
 | Phase 4: Adaptive Pathfinding & Chaos Injection | Complete | 14 | 14 | 100% |
 | Phase 5: Performance Optimization & Dynamic Tuning | Complete | 6 | 6 | 100% |
+| Phase 6: Tech Debt Cleanup | Pending | 2 | 0 | 0% |
 
-**Total:** 59 requirements, 59 completed (100%)
+**Total:** 61 items tracked (59 original requirements + 2 tech debt fixes)
 
 ## Phase Dependencies
 
@@ -222,6 +247,8 @@ Phase 3: Event Scheduler <- depends on reconciliation for validation
 Phase 4: Chaos & Adaptation <- depends on scheduler to insert/reschedule events
     |
 Phase 5: Performance Tuning <- depends on baseline chaos to tune against
+    |
+Phase 6: Tech Debt Cleanup <- cleanup of accumulated tech debt from phases 3-5
 ```
 
 ## Notes
@@ -239,4 +266,4 @@ Phase 5: Performance Tuning <- depends on baseline chaos to tune against
 - Phase 5 research complete: Using asyncio.timeout (Python 3.11+), EMA smoothing for feedback loop
 
 ---
-*Last updated: 2026-01-28 after Phase 5 execution complete (5 plans, all verified)*
+*Last updated: 2026-01-29 after adding Phase 6 tech debt cleanup (gap closure from audit)*
