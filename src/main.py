@@ -49,7 +49,10 @@ from .chaos import (
     ChaosConfig,
     EventCatalog,
     PathfindingAdapter,
+    DynamicChaosTuner,
 )
+from .monitoring import HeartbeatMonitor
+from .reconciliation import PerTicketCircuitBreaker
 
 
 # ============ Caching for Performance ============
@@ -129,6 +132,11 @@ _scenario_adapter: Optional[ScenarioAdapter] = None
 _confidence_tracker: Optional[ConfidenceTracker] = None
 _pathfinding_adapter: Optional[PathfindingAdapter] = None
 
+# Performance optimization components (Phase 5)
+_heartbeat_monitor: Optional[HeartbeatMonitor] = None
+_dynamic_tuner: Optional[DynamicChaosTuner] = None
+_per_ticket_breaker: Optional[PerTicketCircuitBreaker] = None
+
 
 def _build_agent_registry() -> dict:
     """Build agent registry from personas config for chaos adapters."""
@@ -169,6 +177,44 @@ def _initialize_chaos_components(settings: dict, scheduler: Scheduler):
     _pathfinding_adapter = PathfindingAdapter(scheduler, None, agent_registry)
 
     logger.info(f"Chaos injection enabled: base_chance={chaos_config.base_event_chance}")
+
+
+def _initialize_performance_components(settings: dict):
+    """Initialize performance optimization components."""
+    global _heartbeat_monitor, _dynamic_tuner, _per_ticket_breaker
+
+    perf_config = settings.get("performance", {})
+
+    # Heartbeat monitor
+    hb_config = perf_config.get("heartbeat", {})
+    _heartbeat_monitor = HeartbeatMonitor(
+        expected_interval_minutes=hb_config.get("expected_interval_minutes", 45),
+        threshold_multiplier=hb_config.get("threshold_multiplier", 1.5),
+        business_hours=(
+            hb_config.get("business_hours_start", 9),
+            hb_config.get("business_hours_end", 17),
+        ),
+    )
+
+    # Dynamic chaos tuner
+    ct_config = perf_config.get("chaos_tuning", {})
+    if ct_config.get("enabled", True):
+        _dynamic_tuner = DynamicChaosTuner(
+            alpha=ct_config.get("alpha", 0.2),
+            low_threshold=ct_config.get("low_threshold", 0.6),
+            high_threshold=ct_config.get("high_threshold", 0.85),
+            min_multiplier=ct_config.get("min_multiplier", 0.2),
+            max_multiplier=ct_config.get("max_multiplier", 2.0),
+        )
+
+    # Per-ticket circuit breaker
+    cb_config = perf_config.get("ticket_circuit_breaker", {})
+    _per_ticket_breaker = PerTicketCircuitBreaker(
+        failure_threshold=cb_config.get("failure_threshold", 3),
+        reset_timeout_hours=cb_config.get("reset_timeout_hours", 24),
+    )
+
+    logger.info("Performance optimization components initialized")
 
 
 def check_and_handle_expired_sprint(
@@ -340,6 +386,9 @@ async def lifespan(app: FastAPI):
     # Initialize chaos components (Phase 4)
     _initialize_chaos_components(settings, app.state.scheduler)
 
+    # Initialize performance components (Phase 5)
+    _initialize_performance_components(settings)
+
     print(f"Scheduler initialized (tick={tick_duration}h, db={scheduler_db_path})")
     print("Jira Team Simulator started (scenario-driven mode with logging)")
     yield
@@ -459,6 +508,16 @@ async def trigger_simulation():
         # Load current state
         state = load_state()
 
+        # Record tick for heartbeat monitoring (PERF-05)
+        results = {}
+        if _heartbeat_monitor:
+            heartbeat_alert = _heartbeat_monitor.record_tick(pendulum.now("UTC"))
+            if heartbeat_alert:
+                results["heartbeat_alert"] = {
+                    "gap_minutes": heartbeat_alert.gap_minutes,
+                    "threshold_minutes": heartbeat_alert.threshold_minutes,
+                }
+
         # Create logged services for this tick (needed early for Jira calls)
         logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
         logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
@@ -541,6 +600,7 @@ async def trigger_simulation():
             scheduler=app.state.scheduler,
             jira_client=logged_jira,
             max_actions_per_tick=4,
+            per_ticket_breaker=_per_ticket_breaker,
         )
 
         # Define action executor that bridges sync TickExecutor to async _execute_action
@@ -598,6 +658,28 @@ async def trigger_simulation():
                     f"overrides={confidence.external_overrides} - accepting reality"
                 )
 
+        # --- Dynamic chaos tuning at sprint end (PERF-04) ---
+        if _dynamic_tuner and previous_sprint_number != state.sprint.sprint_number:
+            # Sprint just ended - adjust chaos based on completion rate
+            completion_rate = state.velocity_tracker.get_completion_rate() if hasattr(state, 'velocity_tracker') else 0.7
+            tuning_result = _dynamic_tuner.adjust(completion_rate)
+            chaos_metrics["tuning"] = {
+                "previous_multiplier": tuning_result.previous_multiplier,
+                "new_multiplier": tuning_result.new_multiplier,
+                "completion_rate": completion_rate,
+                "direction": tuning_result.adjustment_direction,
+            }
+            logger.info(
+                f"Chaos tuning: {tuning_result.adjustment_direction} "
+                f"({tuning_result.previous_multiplier:.3f} -> {tuning_result.new_multiplier:.3f})"
+            )
+
+        # Apply tuned probabilities to event generator
+        if _dynamic_tuner and _event_generator:
+            # The event generator would need to support adjusted probabilities
+            # For now, log the current multiplier
+            chaos_metrics["chaos_multiplier"] = _dynamic_tuner.current_multiplier
+
         # Run the scenario orchestrator (Analyze + Plan ONLY)
         # Execution is handled by TickExecutor above (EXEC-01: single execution path)
         orchestrator_results = await orchestrator.run_tick(
@@ -607,7 +689,10 @@ async def trigger_simulation():
         )
 
         # Merge results (TickExecutor actions + orchestrator planning + chaos metrics)
-        results = tick_results  # Start with tick executor results
+        # Note: results already initialized with heartbeat_alert if applicable
+        if not results:
+            results = {}
+        results.update(tick_results)  # Merge tick executor results
         results["analysis"] = orchestrator_results.get("analysis", {})
         results["planning_reasoning"] = orchestrator_results.get("planning_reasoning")
         results["llm_call_count"] = orchestrator_results.get("llm_call_count", 0)
@@ -616,6 +701,13 @@ async def trigger_simulation():
         results["total_output_tokens"] = orchestrator_results.get("total_output_tokens", 0)
         results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
         results["chaos"] = chaos_metrics  # Phase 4: Include chaos injection metrics
+
+        # Performance metrics (Phase 5)
+        results["performance"] = {
+            "heartbeat": _heartbeat_monitor.get_status() if _heartbeat_monitor else None,
+            "chaos_multiplier": _dynamic_tuner.current_multiplier if _dynamic_tuner else 1.0,
+            "unhealthy_tickets": _per_ticket_breaker.get_unhealthy_tickets() if _per_ticket_breaker else [],
+        }
 
         # Note: actions_completed comes from tick_results, not orchestrator
         # since TickExecutor handles execution
