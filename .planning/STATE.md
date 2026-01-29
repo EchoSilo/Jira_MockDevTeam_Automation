@@ -1,29 +1,29 @@
 # Project State: Real-Time Scripted Jira Team Simulator
 
-**Last Updated:** 2026-01-29 01:30 UTC
-**Current Phase:** Phase 5 - Performance Optimization & Dynamic Tuning (COMPLETE)
-**Current Plan:** 05-05 complete (5 of 5)
-**Status:** MILESTONE COMPLETE - All 5 phases done
+**Last Updated:** 2026-01-29 02:00 UTC
+**Current Phase:** Phase 6 - Tech Debt Cleanup (PENDING)
+**Current Plan:** None started (0 of 2)
+**Status:** GAP CLOSURE - Addressing tech debt from milestone audit
 
 ## Project Reference
 
 **Core Value:** The simulation must operate in Jira's time domain (real calendar time), producing realistic sprint timelines and activity patterns that analytics tools can consume as if observing a real development team.
 
-**Current Focus:** All phases complete. Real-time scheduling, state reconciliation, chaos injection, and performance optimization fully operational.
+**Current Focus:** Addressing tech debt identified in milestone audit. Two fixes: metric mapping and PathfindingAdapter wiring.
 
 ## Current Position
 
-**Phase:** 5 of 5 - Performance Optimization & Dynamic Tuning (COMPLETE)
-**Plans:** 5 of 5 complete in current phase
-**Status:** Milestone complete
-**Last activity:** 2026-01-29 - Completed 05-05-PLAN.md (Phase 5 Integration)
-**Progress:** [█████████████████████] 100% (5/5 plans in phase 5)
+**Phase:** 6 of 6 - Tech Debt Cleanup (PENDING)
+**Plans:** 0 of 2 complete in current phase
+**Status:** Gap closure in progress
+**Last activity:** 2026-01-29 - Created Phase 6 from gap closure plan
+**Progress:** [░░░░░░░░░░░░░░░░░░░░░] 0% (0/2 plans in phase 6)
 
-**Phase Goal:** System executes actions asynchronously within tick budget and dynamically adjusts chaos probabilities based on sprint completion feedback.
+**Phase Goal:** Address tech debt identified in milestone audit - fix metric mapping for accurate dashboard/logging and wire PathfindingAdapter for full adaptive pathfinding capability.
 
 ## Performance Metrics
 
-**Overall Milestone Progress:** 59/59 requirements completed (100%)
+**Overall Milestone Progress:** 59/59 requirements + 0/2 tech debt fixes
 
 **Phase Breakdown:**
 - Phase 1: 7/7 (100%) ✓
@@ -31,6 +31,7 @@
 - Phase 3: 24/24 (100%) ✓
 - Phase 4: 14/14 (100%) ✓
 - Phase 5: 6/6 (100%) ✓
+- Phase 6: 0/2 (0%) ← current
 
 ## Accumulated Context
 
@@ -178,48 +179,30 @@
 
 ## Session Continuity
 
-**Last Session:** Phase 5 Execution Complete (2026-01-29)
+**Last Session:** Gap Closure Phase Created (2026-01-29)
 
 **What Happened:**
-- Executed all 5 Phase 5 plans across 3 waves
-- Wave 1 (parallel): AsyncActionExecutor, DynamicChaosTuner, HeartbeatMonitor
-- Wave 2: PerTicketCircuitBreaker
-- Wave 3: Full Phase 5 Integration
-- All 20 verification checks passed
-- Milestone complete: 59/59 requirements fulfilled
+- Ran `/gsd:plan-milestone-gaps` to review audit results
+- Audit found 59/59 requirements satisfied, but 3 tech debt items
+- Created Phase 6: Tech Debt Cleanup to address 2 of 3 items
+- Deferred AsyncActionExecutor integration (requires async refactor)
 
 **Commits This Session:**
-- `a38bdb2`: feat(05-01): create AsyncActionExecutor with timeout enforcement
-- `90c5954`: test(05-01): add comprehensive tests for async executor
-- `18be8a4`: feat(05-01): export async executor from orchestrator package
-- `e62752c`: docs(05-01): complete Async Action Executor plan
-- `0c05f78`: feat(05-02): create DynamicChaosTuner with EMA feedback loop
-- `69ec0a2`: test(05-02): add comprehensive dynamic tuner tests
-- `c2b8b93`: feat(05-02): export DynamicChaosTuner from chaos package
-- `4e37094`: docs(05-02): complete Dynamic Chaos Tuner plan
-- `825eac0`: feat(05-03): create HeartbeatMonitor for tick gap detection
-- `f5d7bcc`: test(05-03): add comprehensive heartbeat monitor tests
-- `d6bddf4`: docs(05-03): complete Heartbeat Monitor plan
-- `be01b02`: feat(05-04): add PerTicketCircuitBreaker class
-- `ab68e4d`: test(05-04): add comprehensive per-ticket circuit breaker tests
-- `b3e5712`: feat(05-04): export PerTicketCircuitBreaker from reconciliation package
-- `7443daf`: docs(05-04): complete Per-Ticket Circuit Breaker plan
-- `4ade8c1`: chore(05-05): add performance configuration to settings.yaml
-- `4c0e65f`: feat(05-05): integrate PerTicketCircuitBreaker into TickExecutor
-- `f9e7846`: feat(05-05): integrate HeartbeatMonitor and DynamicChaosTuner into main.py
-- `c383532`: test(05-05): create Phase 5 integration tests
-- `66d917e`: docs(05-05): complete Phase 5 Integration plan
+- `7f9157c`: docs(roadmap): add Phase 6 tech debt cleanup for gap closure
 
 **Next Session Should:**
-- Run `/gsd:audit-milestone` to verify requirements, cross-phase integration, and E2E flows
-- Then run `/gsd:complete-milestone` to archive and prepare for next version
+- Run `/gsd:plan-phase 6` to create execution plans for Phase 6
+- Execute the 2 plans (metric mapping + PathfindingAdapter wiring)
+- Re-audit with `/gsd:audit-milestone` to verify gaps closed
+- Then `/gsd:complete-milestone` to archive
 
 **Context for Next Agent:**
-- Milestone complete - all 5 phases verified
-- Total: 59/59 requirements completed (100%)
-- System ready for production use
-- Consider running full integration tests before deployment
-- Performance metrics now visible in /trigger response
+- Phase 6 created with 2 plans to write
+- Tech debt to fix:
+  1. Metric mapping: `metrics["executed"]` → `actions_completed` in main.py
+  2. PathfindingAdapter: Wire to TickExecutor for RECALCULATE handling
+- AsyncActionExecutor integration deferred (future work)
+- Original 59/59 requirements remain complete
 
 ---
 *State updated: 2026-01-29 01:30 UTC after MILESTONE COMPLETE*
