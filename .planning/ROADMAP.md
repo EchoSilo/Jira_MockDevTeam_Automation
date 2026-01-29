@@ -174,10 +174,14 @@ Plans:
 
 **Dependencies:** Phase 4 (needs baseline chaos implementation to tune against)
 
-**Plans:** 0 plans
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD (created by /gsd:plan-phase)
+- [ ] 05-01-PLAN.md - Async action executor with timeout enforcement
+- [ ] 05-02-PLAN.md - Dynamic chaos probability tuner with EMA feedback loop
+- [ ] 05-03-PLAN.md - Heartbeat monitor for tick gap detection
+- [ ] 05-04-PLAN.md - Per-ticket circuit breaker for retry prevention
+- [ ] 05-05-PLAN.md - Integration: Wire Phase 5 components into /trigger endpoint
 
 **Requirements:**
 - PERF-01: Async action execution with asyncio.gather for independent actions
@@ -202,7 +206,7 @@ Plans:
 | Phase 2: State Reconciliation & Validation | Complete | 8 | 8 | 100% |
 | Phase 3: Event Scheduler & Queue System | Complete | 24 | 24 | 100% |
 | Phase 4: Adaptive Pathfinding & Chaos Injection | Complete | 14 | 14 | 100% |
-| Phase 5: Performance Optimization & Dynamic Tuning | Not Started | 6 | 0 | 0% |
+| Phase 5: Performance Optimization & Dynamic Tuning | Planned | 6 | 0 | 0% |
 
 **Total:** 59 requirements, 53 completed (90%)
 
@@ -232,6 +236,7 @@ Phase 5: Performance Tuning <- depends on baseline chaos to tune against
 **Research flags:**
 - Phase 3 research complete: Using heapq (stdlib) for priority queue, SQLite for persistence, Pendulum for business hours
 - Phase 4 may need graph search algorithm research for Jira workflow transitions (Dijkstra vs A* vs BFS for status transition graphs with cycles)
+- Phase 5 research complete: Using asyncio.timeout (Python 3.11+), EMA smoothing for feedback loop
 
 ---
-*Last updated: 2026-01-28 after Phase 4 execution complete (7 plans, 88 tests, 14/14 requirements verified)*
+*Last updated: 2026-01-28 after Phase 5 planning complete (5 plans in 3 waves)*
