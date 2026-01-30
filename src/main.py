@@ -651,7 +651,7 @@ async def trigger_simulation():
             chaos_metrics["accept_reality"] = confidence.accept_reality
             chaos_metrics["external_overrides"] = confidence.external_overrides
             chaos_metrics["executed_as_planned"] = confidence.executed_as_planned
-            chaos_metrics["total_executed"] = confidence.total_executed
+            chaos_metrics["total_executed"] = confidence.total_events
 
             if confidence.accept_reality:
                 logger.warning(

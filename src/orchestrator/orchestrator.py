@@ -297,8 +297,7 @@ class ScenarioOrchestrator:
                     "execution_skipped",
                     reason="delegated_to_tick_executor",
                 )
-                # Still cleanup stale scenarios
-                from .scenario_lifecycle import cleanup_stale_scenarios
+                # Still cleanup stale scenarios (already imported at module level)
                 tombstones = cleanup_stale_scenarios(state, staleness_threshold=4)
                 if tombstones:
                     results["stale_scenarios_removed"] = len(tombstones)
