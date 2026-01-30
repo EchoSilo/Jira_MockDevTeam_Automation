@@ -601,6 +601,7 @@ async def trigger_simulation():
             jira_client=logged_jira,
             max_actions_per_tick=4,
             per_ticket_breaker=_per_ticket_breaker,
+            pathfinding_adapter=_pathfinding_adapter,
         )
 
         # Define action executor that bridges sync TickExecutor to async _execute_action
@@ -701,6 +702,7 @@ async def trigger_simulation():
         results["total_output_tokens"] = orchestrator_results.get("total_output_tokens", 0)
         results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
         results["chaos"] = chaos_metrics  # Phase 4: Include chaos injection metrics
+        results["actions_completed"] = results.get("metrics", {}).get("executed", 0)
 
         # Performance metrics (Phase 5)
         results["performance"] = {
