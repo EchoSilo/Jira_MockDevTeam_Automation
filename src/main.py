@@ -1547,7 +1547,7 @@ async def sync_reset_state():
         new_state = SimulationState()
 
         # 1. Fetch and inject current sprint from Jira
-        jira_client = JiraClient(app.state.settings)
+        jira_client = app.state.jira  # Use existing authenticated client
 
         # Validate Jira connectivity before proceeding
         try:
