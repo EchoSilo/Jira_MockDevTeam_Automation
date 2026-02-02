@@ -178,19 +178,23 @@ class ScenarioPlanner:
             model = self.llm.complex_model  # Use Sonnet for planning
 
             # Prepare completion arguments
+            thinking_enabled = self.settings.get("llm", {}).get("orchestrator_thinking")
             completion_kwargs = {
                 "model": model,
-                "max_tokens": 2000,
+                # When thinking is enabled, max_tokens includes BOTH thinking AND output
+                # We need 16000 for thinking budget + ~2000 for the actual JSON response
+                "max_tokens": 20000 if thinking_enabled else 2000,
                 "messages": [{"role": "user", "content": prompt}],
             }
 
             # Add thinking parameter if enabled
-            if self.settings.get("llm", {}).get("orchestrator_thinking"):
+            if thinking_enabled:
                 completion_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 16000}
 
             response = litellm.completion(**completion_kwargs)
 
             duration_ms = int((time.time() - start_time) * 1000)
+
             raw_response = response.choices[0].message.content.strip()
             self.last_raw_response = raw_response
 
@@ -748,6 +752,7 @@ Remember:
 
         # If parsing failed, return empty result
         if parsed is None:
+            logger.error(f"Failed to parse LLM response. Raw text (first 500 chars): {text[:500]}")
             return {"reasoning": "Failed to parse LLM response", "actions": []}
 
         # Ensure parsed is a dict

@@ -687,10 +687,34 @@ async def trigger_simulation():
         )
 
         # Define action executor that bridges sync TickExecutor to async _execute_action
-        # CRITICAL: Use asyncio.run() to bridge sync->async (TickExecutor is sync, _execute_action is async)
+        # Use asyncio.get_event_loop() to run async code from sync context within async endpoint
         def action_executor(action_dict: dict, exec_state) -> dict:
             """Sync wrapper for async orchestrator._execute_action."""
-            return asyncio.run(orchestrator._execute_action(action_dict, exec_state))
+            import concurrent.futures
+            import threading
+
+            # Create a new event loop in a separate thread for the async execution
+            result = None
+            exception = None
+
+            def run_async():
+                nonlocal result, exception
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(orchestrator._execute_action(action_dict, exec_state))
+                except Exception as e:
+                    exception = e
+                finally:
+                    loop.close()
+
+            thread = threading.Thread(target=run_async)
+            thread.start()
+            thread.join(timeout=60)  # 60 second timeout
+
+            if exception:
+                raise exception
+            return result or {}
 
         # Execute tick via TickExecutor (handles scheduled action execution)
         # Flow: mark overdue -> get due actions -> reconcile -> execute -> advance time
@@ -716,11 +740,11 @@ async def trigger_simulation():
                 # Adapt scenario to event
                 if _scenario_adapter:
                     adaptation_result = _scenario_adapter.adapt_to_event(chaos_event)
-                    chaos_metrics["adapted_actions"] = len(adaptation_result.adapted_actions)
-                    chaos_metrics["inserted_actions"] = len(adaptation_result.inserted_actions)
+                    chaos_metrics["adapted_actions"] = len(adaptation_result.actions_adapted)
+                    chaos_metrics["inserted_actions"] = len(adaptation_result.actions_inserted)
                     logger.info(
-                        f"Scenario adapted: {len(adaptation_result.adapted_actions)} adapted, "
-                        f"{len(adaptation_result.inserted_actions)} inserted"
+                        f"Scenario adapted: {len(adaptation_result.actions_adapted)} adapted, "
+                        f"{len(adaptation_result.actions_inserted)} inserted"
                     )
             else:
                 chaos_metrics["event_triggered"] = False
@@ -785,6 +809,35 @@ async def trigger_simulation():
         results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
         results["chaos"] = chaos_metrics  # Phase 4: Include chaos injection metrics
         results["actions_completed"] = results.get("metrics", {}).get("executed", 0)
+
+        # Schedule planned actions for next tick execution (if any)
+        planned_action_dicts = orchestrator_results.get("planned_action_dicts", [])
+        if planned_action_dicts and hasattr(app.state, 'scheduler') and app.state.scheduler:
+            from .scheduling import ScheduledAction
+            current_time = app.state.scheduler.clock.now()
+            scheduled_count = 0
+            for action_dict in planned_action_dicts:
+                ticket_key = action_dict.get("ticket_key") or ""
+                # Skip actions without required fields
+                if not action_dict.get("type"):
+                    logger.warning(f"Skipping action with missing type: {action_dict}")
+                    continue
+                # Schedule for immediate execution (current tick window)
+                try:
+                    scheduled_action = ScheduledAction(
+                        scheduled_time=current_time,
+                        action_type=action_dict.get("type"),
+                        agent_id=action_dict.get("agent_id") or "",
+                        ticket_key=ticket_key,
+                        scenario_id=action_dict.get("scenario_id"),
+                        params={"details": action_dict.get("details", "")},
+                    )
+                    app.state.scheduler.schedule_action(scheduled_action)
+                    logger.info(f"Scheduled planned action: {scheduled_action.action_type} for {ticket_key or 'no ticket'}")
+                    scheduled_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to schedule action: {e}")
+            results["actions_scheduled"] = scheduled_count
 
         # Performance metrics (Phase 5)
         results["performance"] = {

@@ -293,6 +293,8 @@ class ScenarioOrchestrator:
                 results["actions_completed"] = 0
                 results["execution_skipped"] = True
                 results["execution_delegated_to"] = "TickExecutor"
+                # Return the planned actions so main.py can schedule them for TickExecutor
+                results["planned_action_dicts"] = planned_actions
                 self._log_event(
                     "execution_skipped",
                     reason="delegated_to_tick_executor",
