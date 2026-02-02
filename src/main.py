@@ -217,6 +217,82 @@ def _initialize_performance_components(settings: dict):
     logger.info("Performance optimization components initialized")
 
 
+def _rebuild_agent_workloads_from_jira(
+    state: SimulationState,
+    jira_client: JiraClient,
+    personas: dict
+) -> None:
+    """
+    Rebuild agent assigned_tickets from actual Jira assignments.
+
+    Reads all active issues from Jira and updates agent workloads to match
+    the actual assignments, ensuring state reflects Jira reality.
+
+    Args:
+        state: SimulationState to update
+        jira_client: Jira client for API calls
+        personas: Persona configuration for agent lookups
+    """
+    from src.state.simulation_state import _find_agent_by_jira_account
+
+    active_issues = jira_client.get_all_active_issues()
+
+    for issue in active_issues:
+        assignee = issue.fields.assignee
+        if not assignee:
+            continue
+
+        agent_id = _find_agent_by_jira_account(personas, assignee.accountId)
+        if agent_id:
+            state.get_agent_state(agent_id).assign_ticket(issue.key)
+
+
+def _sync_planning_horizon_from_jira(
+    state: SimulationState,
+    jira_client: JiraClient
+) -> None:
+    """
+    Rebuild planning horizon from actual Jira sprints.
+
+    Fetches future sprints from Jira and populates the planning horizon
+    to ensure sprint planning reflects Jira reality.
+
+    Args:
+        state: SimulationState to update
+        jira_client: Jira client for API calls
+    """
+    from src.planning.models import PlanningHorizon, SprintPlan, SprintPlanStatus
+
+    future_sprints = jira_client.get_future_sprints(max_results=4)
+
+    if not future_sprints:
+        return
+
+    horizon = PlanningHorizon()
+
+    for jira_sprint in future_sprints:
+        start_date = pendulum.parse(jira_sprint["startDate"]) if jira_sprint.get("startDate") else None
+        end_date = pendulum.parse(jira_sprint["endDate"]) if jira_sprint.get("endDate") else None
+
+        sprint_number = 1
+        if jira_sprint.get("name"):
+            try:
+                sprint_number = int(jira_sprint["name"].split()[-1])
+            except (ValueError, IndexError):
+                pass
+
+        if start_date and end_date:
+            plan = SprintPlan(
+                sprint_number=sprint_number,
+                start_date=start_date,
+                end_date=end_date,
+                status=SprintPlanStatus.PLANNED,
+            )
+            horizon.future_sprints.append(plan)
+
+    state.set_planning_horizon(horizon)
+
+
 def check_and_handle_expired_sprint(
     jira_client: JiraClient,
     state: Optional[SimulationState] = None,
@@ -1448,6 +1524,98 @@ async def reset_state():
     save_state(state)
     _state_cache.update(state)  # Update cache with new state
     return {"message": "State reset successfully"}
+
+
+@app.post("/sync-reset")
+async def sync_reset_state():
+    """
+    Soft reset: Rebuild simulation state from current Jira conditions.
+
+    Unlike /reset (hard reset), this reads Jira and rebuilds state to match:
+    - Sets sprint from Jira's active sprint
+    - Creates scenarios from active Jira tickets
+    - Resets agent workloads from actual Jira assignments
+    - Clears scheduler infrastructure (SQLite, queue, clock)
+    - Resets performance components (circuit breakers, tuner, heartbeat)
+
+    Does NOT modify Jira (read-only operation).
+    """
+    global _per_ticket_breaker, _dynamic_tuner, _heartbeat_monitor
+
+    try:
+        # Create fresh state with preserved structure
+        new_state = SimulationState()
+
+        # 1. Fetch and inject current sprint from Jira
+        jira_client = JiraClient(app.state.settings)
+        jira_sprint = jira_client.get_active_sprint()
+        if jira_sprint:
+            new_state.sprint.inject_jira_sprint(jira_sprint, current_time=pendulum.now("UTC"))
+
+        # 2. Sync all active tickets from Jira (creates scenarios)
+        sync_state_with_jira(new_state, jira_client, app.state.personas)
+
+        # 3. Rebuild agent workloads from actual Jira assignments
+        _rebuild_agent_workloads_from_jira(new_state, jira_client, app.state.personas)
+
+        # 4. Sync planning horizon from Jira future sprints
+        _sync_planning_horizon_from_jira(new_state, jira_client)
+
+        # === Phase 3: Scheduler Infrastructure Reset ===
+        scheduler = app.state.scheduler
+
+        # Clear SQLite action store
+        conn = scheduler.store._get_connection()
+        conn.execute("DELETE FROM scheduled_actions")
+        conn.commit()
+        # Close connection if file-based (not in-memory)
+        if not scheduler.store._conn:
+            conn.close()
+
+        # Clear in-memory queue
+        scheduler.queue._heap.clear()
+
+        # Reset VirtualClock to real time
+        scheduler.clock.set_time(pendulum.now("UTC"))
+
+        # === Phase 5: Performance Components Reset ===
+        if _per_ticket_breaker:
+            _per_ticket_breaker.reset_all()
+
+        if _dynamic_tuner:
+            _dynamic_tuner.reset()
+
+        if _heartbeat_monitor:
+            _heartbeat_monitor.reset()
+
+        # 5. Set timestamp
+        new_state.last_run = pendulum.now("UTC")
+
+        # Save and update cache
+        save_state(new_state)
+        _state_cache.update(new_state)
+
+        logger.info(
+            f"Sync reset complete: sprint={new_state.sprint.jira_sprint_name}, "
+            f"scenarios={len(new_state.active_scenarios)}"
+        )
+
+        return {
+            "success": True,
+            "message": "State synced with Jira",
+            "sprint": {
+                "name": new_state.sprint.jira_sprint_name,
+                "number": new_state.sprint.sprint_number,
+                "day": new_state.sprint.sprint_day,
+            },
+            "active_scenarios": len(new_state.active_scenarios),
+            "agents_synced": len(new_state.agents),
+            "scheduler_cleared": True,
+            "performance_reset": True,
+        }
+    except Exception as e:
+        logger.error(f"Sync reset failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync reset failed: {str(e)}")
 
 
 @app.post("/plan-sprint")
