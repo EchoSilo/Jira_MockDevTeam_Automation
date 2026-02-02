@@ -220,24 +220,30 @@ def _initialize_performance_components(settings: dict):
 def _rebuild_agent_workloads_from_jira(
     state: SimulationState,
     jira_client: JiraClient,
-    personas: dict
+    personas: dict,
+    sprint_id: Optional[int] = None
 ) -> None:
     """
     Rebuild agent assigned_tickets from actual Jira assignments.
 
-    Reads all active issues from Jira and updates agent workloads to match
+    Reads issues from Jira and updates agent workloads to match
     the actual assignments, ensuring state reflects Jira reality.
 
     Args:
         state: SimulationState to update
         jira_client: Jira client for API calls
         personas: Persona configuration for agent lookups
+        sprint_id: Optional sprint ID to filter by. If provided, only includes
+                   issues in that sprint. If None, includes all active issues.
     """
     from src.state.simulation_state import _find_agent_by_jira_account
 
-    active_issues = jira_client.get_all_active_issues()
+    if sprint_id:
+        sprint_issues = jira_client.get_sprint_issues(sprint_id)
+    else:
+        sprint_issues = jira_client.get_all_active_issues()
 
-    for issue in active_issues:
+    for issue in sprint_issues:
         assignee = issue.fields.assignee
         if not assignee:
             continue
@@ -1567,7 +1573,13 @@ async def sync_reset_state():
         sync_state_with_jira(new_state, jira_client, app.state.personas)
 
         # 3. Rebuild agent workloads from actual Jira assignments
-        _rebuild_agent_workloads_from_jira(new_state, jira_client, app.state.personas)
+        # First, clear all agent workloads (sync_state_with_jira assigns all active tickets)
+        for agent_state in new_state.agents.values():
+            agent_state.assigned_tickets.clear()
+
+        # Then rebuild from active sprint only
+        sprint_id = jira_sprint.get("id") if jira_sprint else None
+        _rebuild_agent_workloads_from_jira(new_state, jira_client, app.state.personas, sprint_id=sprint_id)
 
         # 4. Sync planning horizon from Jira future sprints
         _sync_planning_horizon_from_jira(new_state, jira_client)
