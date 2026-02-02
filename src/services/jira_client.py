@@ -307,7 +307,8 @@ class JiraClient:
                     "end_date": getattr(sprint, "endDate", None),
                 }
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get active sprint: {e}")
             return None
 
     def get_future_sprints(

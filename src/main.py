@@ -1548,6 +1548,17 @@ async def sync_reset_state():
 
         # 1. Fetch and inject current sprint from Jira
         jira_client = JiraClient(app.state.settings)
+
+        # Validate Jira connectivity before proceeding
+        try:
+            jira_client.get_current_user()
+        except Exception as auth_error:
+            logger.error(f"Jira authentication failed: {auth_error}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Jira authentication failed - check API token: {str(auth_error)}"
+            )
+
         jira_sprint = jira_client.get_active_sprint()
         if jira_sprint:
             new_state.sprint.inject_jira_sprint(jira_sprint, current_time=pendulum.now("UTC"))
@@ -1613,6 +1624,9 @@ async def sync_reset_state():
             "scheduler_cleared": True,
             "performance_reset": True,
         }
+    except HTTPException:
+        # Re-raise HTTPExceptions (like auth errors) without wrapping
+        raise
     except Exception as e:
         logger.error(f"Sync reset failed: {e}")
         raise HTTPException(status_code=500, detail=f"Sync reset failed: {str(e)}")
