@@ -34,8 +34,16 @@ class LogQueryService:
         for field in self._TIMESTAMP_FIELDS:
             if field in data and data[field]:
                 ts = data[field]
-                if isinstance(ts, str) and not ts.endswith("Z"):
-                    data[field] = ts + "Z"
+                if isinstance(ts, str):
+                    # Already has Z suffix - leave it
+                    if ts.endswith("Z"):
+                        continue
+                    # Has UTC offset +00:00 - replace with Z
+                    elif "+00:00" in ts:
+                        data[field] = ts.replace("+00:00", "Z")
+                    # No timezone indicator - add Z
+                    else:
+                        data[field] = ts + "Z"
         return data
 
     def _ensure_schema(self):

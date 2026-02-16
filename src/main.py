@@ -553,16 +553,27 @@ class HealthResponse(BaseModel):
 
 
 def _format_last_run(dt) -> str | None:
-    """Safely format last_run as ISO string with Z suffix."""
+    """Safely format last_run as ISO string with Z suffix (UTC only)."""
     if dt is None:
         return None
     if isinstance(dt, str):
-        # Already a string (shouldn't happen with validators, but be defensive)
-        return dt if dt.endswith("Z") else f"{dt}Z"
+        # Already a string - clean it up if needed
+        if dt.endswith("Z"):
+            return dt
+        # Replace +00:00 with Z for UTC, otherwise return as-is
+        return dt.replace("+00:00", "Z") if "+00:00" in dt else f"{dt}Z"
     # Assume it's a datetime/pendulum object
     try:
+        # For Pendulum UTC datetimes, isoformat() returns with +00:00
+        # Replace that with Z for proper ISO 8601 UTC format
         iso_str = dt.isoformat()
-        return iso_str if iso_str.endswith("Z") else f"{iso_str}Z"
+        if iso_str.endswith("+00:00"):
+            return iso_str.replace("+00:00", "Z")
+        elif iso_str.endswith("Z"):
+            return iso_str
+        else:
+            # Non-UTC timezone - keep the offset, don't add Z
+            return iso_str
     except Exception as e:
         logger.warning(f"Failed to format last_run: {e}")
         return None
@@ -1002,7 +1013,8 @@ async def get_sprint_data():
             day_label = f"Day {day + 1}" if day < total_days else "End"
             ideal = max(0, total_items - (total_items * day / total_days))
             # For past days, show actual; for future, show 0 (unknown)
-            current_day = (pendulum.now("UTC") - start_date.replace(tzinfo=None)).days
+            # Keep timezone-aware comparison by using pendulum.instance to convert start_date
+            current_day = (pendulum.now("UTC") - pendulum.instance(start_date)).days
             actual = remaining if day <= current_day else 0
             burndown_data.append({
                 "day": day_label,
