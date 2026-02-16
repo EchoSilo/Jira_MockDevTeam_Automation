@@ -297,7 +297,7 @@ class ScenarioOrchestrator:
                 results["planned_action_dicts"] = planned_actions
                 self._log_event(
                     "execution_skipped",
-                    reason="delegated_to_tick_executor",
+                    action_result={"reason": "delegated_to_tick_executor"},
                 )
                 # Still cleanup stale scenarios (already imported at module level)
                 tombstones = cleanup_stale_scenarios(state, staleness_threshold=4)
