@@ -841,6 +841,9 @@ async def trigger_simulation():
         if planned_action_dicts and hasattr(app.state, 'scheduler') and app.state.scheduler:
             from .scheduling import ScheduledAction
             current_time = app.state.scheduler.clock.now()
+            # Schedule for NEXT tick (current time + tick_duration)
+            # This prevents actions from being immediately overdue when time advances
+            next_tick_time = current_time.add(hours=app.state.scheduler.clock.tick_duration_hours)
             scheduled_count = 0
             for action_dict in planned_action_dicts:
                 ticket_key = action_dict.get("ticket_key") or ""
@@ -848,10 +851,10 @@ async def trigger_simulation():
                 if not action_dict.get("type"):
                     logger.warning(f"Skipping action with missing type: {action_dict}")
                     continue
-                # Schedule for immediate execution (current tick window)
+                # Schedule for next tick execution window
                 try:
                     scheduled_action = ScheduledAction(
-                        scheduled_time=current_time,
+                        scheduled_time=next_tick_time,
                         action_type=action_dict.get("type"),
                         agent_id=action_dict.get("agent_id") or "",
                         ticket_key=ticket_key,
@@ -859,7 +862,7 @@ async def trigger_simulation():
                         params={"details": action_dict.get("details", "")},
                     )
                     app.state.scheduler.schedule_action(scheduled_action)
-                    logger.info(f"Scheduled planned action: {scheduled_action.action_type} for {ticket_key or 'no ticket'}")
+                    logger.info(f"Scheduled planned action: {scheduled_action.action_type} for {ticket_key or 'no ticket'} at {next_tick_time.format('YYYY-MM-DD HH:mm')}")
                     scheduled_count += 1
                 except Exception as e:
                     logger.error(f"Failed to schedule action: {e}")
