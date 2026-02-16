@@ -204,9 +204,9 @@ logging:
 
 # Schedule configuration (for dashboard display)
 schedule:
-  days: [1, 2, 3, 4, 5]      # Monday-Friday (1=Monday, 7=Sunday)
-  start_hour: 9               # 9 AM
-  end_hour: 17                # 5 PM
+  days: [1, 2, 3, 4, 5, 6, 7]  # Every day (1=Monday, 7=Sunday)
+  start_hour: 0               # Midnight (24/7 operation)
+  end_hour: 24                # Next midnight (covers full day)
   interval_minutes: 45        # Approximate interval between runs
 
 # Release Management Configuration

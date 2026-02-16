@@ -46,8 +46,10 @@ def load_state(path: str = "data/state.json") -> SimulationState:
         # Migrate testing scenarios to assign QA agents if missing
         _assign_qa_to_testing_scenarios(state)
 
-        # Sync agent workloads from active scenarios to fix any inconsistencies
-        state.sync_agent_workloads()
+        # Note: We intentionally do NOT call sync_agent_workloads() here.
+        # Agent workloads are set explicitly by sync-reset from sprint tickets,
+        # while active_scenarios contains ALL active Jira tickets (for scenario tracking).
+        # Calling sync_agent_workloads would overwrite sprint-filtered workloads.
         return state
 
     return SimulationState()
