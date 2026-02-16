@@ -552,6 +552,21 @@ class HealthResponse(BaseModel):
     jira_url: Optional[str] = None
 
 
+def _format_last_run(dt) -> str | None:
+    """Safely format last_run as ISO string with Z suffix."""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        # Already a string (shouldn't happen with validators, but be defensive)
+        return dt if dt.endswith("Z") else f"{dt}Z"
+    # Assume it's a datetime/pendulum object
+    try:
+        iso_str = dt.isoformat()
+        return iso_str if iso_str.endswith("Z") else f"{iso_str}Z"
+    except Exception as e:
+        logger.warning(f"Failed to format last_run: {e}")
+        return None
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check application health and Jira connectivity (cached for performance)."""
@@ -561,7 +576,7 @@ async def health_check():
     return HealthResponse(
         status="healthy" if jira_ok else "degraded",
         jira_connected=jira_ok,
-        last_run=f"{state.last_run.isoformat()}Z" if state.last_run else None,
+        last_run=_format_last_run(state.last_run),
         simulation_day=state.simulation_day,
         jira_url=app.state.jira.url if app.state.jira else None,
     )
@@ -1834,7 +1849,7 @@ async def list_agents():
 
     return {
         "agents": agents,
-        "last_run": f"{state.last_run.isoformat()}Z" if state.last_run else None,
+        "last_run": _format_last_run(state.last_run),
         "schedule": {
             "days": schedule_config.get("days", [1, 2, 3, 4, 5]),
             "start_hour": schedule_config.get("start_hour", 9),

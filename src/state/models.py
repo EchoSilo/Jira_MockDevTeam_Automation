@@ -9,7 +9,7 @@ Sprint-level scenarios are now managed via SprintScenario in src/scenarios/.
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 import uuid
 import pendulum
 
@@ -266,6 +266,29 @@ class ActiveScenario(BaseModel):
     # Pre-planned action script (sequence only, no timing)
     action_script: list[PlannedAction] = Field(default_factory=list)
     script_index: int = 0  # Current position in script
+
+    @field_validator(
+        'started', 'target_completion', 'phase_started', 'phase_target_end', 'last_validated',
+        mode='before'
+    )
+    @classmethod
+    def ensure_timezone_aware(cls, v):
+        """Ensure datetime fields are timezone-aware (UTC)."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Parse string to datetime
+            dt = pendulum.parse(v)
+            # Ensure it's in UTC
+            if dt.timezone is None:
+                dt = dt.in_timezone("UTC")
+            return dt
+        if isinstance(v, datetime):
+            # If naive datetime, assume UTC
+            if v.tzinfo is None:
+                return pendulum.instance(v, tz="UTC")
+            return v
+        return v
 
     @classmethod
     def create_normal_flow(
@@ -852,6 +875,26 @@ class SimulationState(BaseModel):
 
     # Action queue for scheduled actions (Phase 3)
     action_queue: Optional[list] = None  # Serialized ScheduledAction list
+
+    @field_validator('last_run', mode='before')
+    @classmethod
+    def ensure_last_run_datetime(cls, v):
+        """Ensure last_run is parsed as a datetime from ISO string."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Parse ISO string to datetime
+            dt = pendulum.parse(v)
+            # Ensure it's in UTC
+            if dt.timezone is None:
+                dt = dt.in_timezone("UTC")
+            return dt
+        if isinstance(v, datetime):
+            # If naive datetime, assume UTC
+            if v.tzinfo is None:
+                return pendulum.instance(v, tz="UTC")
+            return v
+        return v
 
     # ========== Sprint Scenario Management (NEW) ==========
 
