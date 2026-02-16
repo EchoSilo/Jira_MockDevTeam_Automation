@@ -746,6 +746,21 @@ async def trigger_simulation():
         # Flow: mark overdue -> get due actions -> reconcile -> execute -> advance time
         tick_results = tick_executor.execute_tick(state, action_executor)
 
+        # Record executed actions in state (updates agent daily_actions + recent_actions)
+        for action_result in tick_results.get("actions", []):
+            if not action_result.get("skipped") and not action_result.get("error"):
+                agent_id = action_result.get("agent_id", "")
+                agent_persona = app.state.personas.get("agents", {}).get(agent_id, {})
+                agent_name = agent_persona.get("display_name", agent_id)
+                state.record_action(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    action_type=action_result.get("action_type", "unknown"),
+                    ticket_key=action_result.get("ticket_key"),
+                    scenario_id=action_result.get("scenario_id"),
+                    details=action_result.get("details"),
+                )
+
         # --- Chaos injection phase (Phase 4) ---
         chaos_metrics = {}
         if _event_generator:

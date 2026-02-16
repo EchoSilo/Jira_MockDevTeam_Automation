@@ -296,6 +296,10 @@ class TickExecutor:
             self._tick_metrics["executed"] += 1
 
         result["action_id"] = action_id
+        result.setdefault("action_type", action_type)
+        result.setdefault("agent_id", scheduled_action.agent_id)
+        result.setdefault("ticket_key", ticket_key)
+        result.setdefault("scenario_id", scheduled_action.scenario_id)
         return result
 
     def _reset_metrics(self) -> None:
