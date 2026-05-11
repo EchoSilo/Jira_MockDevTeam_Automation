@@ -260,10 +260,23 @@ class JiraClient:
         if labels:
             fields["labels"] = labels
 
-        if parent_key and issue_type in ["Sub-task", "Subtask"]:
+        if parent_key:
             fields["parent"] = {"key": parent_key}
 
         return self._client.create_issue(fields=fields)
+
+    def create_issues_bulk(self, field_list: list[dict]) -> list[dict]:
+        """Create multiple issues in one Jira bulk call (POST /rest/api/3/issue/bulk).
+
+        Each item in field_list is a Jira fields dict ready for the create endpoint
+        (must include project, summary, issuetype; may include description, parent,
+        priority, labels, etc.).
+
+        Returns the raw list from the underlying client: each entry is a dict with
+        either 'issue' (a created Issue resource) or 'error' (a dict of errors)
+        plus 'input_fields' echoing the request.
+        """
+        return self._client.create_issues(field_list=field_list)
 
     def link_issues(
         self, from_key: str, to_key: str, link_type: str = "Blocks"

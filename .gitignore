@@ -38,6 +38,7 @@ env/
 
 # State data (keep structure, ignore contents)
 data/*.json
+data/*.jsonl
 !data/.gitkeep
 
 # Logs

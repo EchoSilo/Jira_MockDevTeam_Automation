@@ -153,6 +153,191 @@ Just the JSON, nothing else."""
         import json
         return json.loads(response.choices[0].message.content.strip())
 
+    def generate_pm_qa_tasks_for_epic(
+        self,
+        epic_key: str,
+        epic_summary: str,
+        epic_description: str,
+        initiative_summary: str,
+    ) -> dict:
+        """Generate PM planning + QA test-prep Tasks for a specific epic.
+
+        Pinned to Anthropic Haiku. One call returns both lists. JSON-repair retry
+        mirrors `generate_stories_for_epic`.
+
+        Returns: {"pm_tasks": [...], "qa_tasks": [...]} - each list 1-2 items, each
+        item: {summary, description, priority, story_points}.
+        """
+        prompt = f"""You are creating backlog Tasks (not user stories) for the team
+working on an epic. The user-story slices are already written; you are filling in
+the planning & test-prep work that PMs and QAs do under the epic.
+
+Parent initiative: {initiative_summary}
+
+Epic ({epic_key}): {epic_summary}
+Epic description: {epic_description[:800] if epic_description else 'No description provided.'}
+
+Produce TWO short lists:
+
+pm_tasks (1-2 items): planning work owned by the Product Manager. Think:
+  - "Define scope and breakdown for <epic>"
+  - "Roadmap and milestone planning for <epic>"
+  - "Stakeholder alignment / requirements review for <epic>"
+  - "Success metrics and KPI definition for <epic>"
+
+qa_tasks (1-2 items): test-prep work owned by QA. Think:
+  - "Define test scenarios and edge cases for <epic>"
+  - "Plan test automation strategy for <epic>"
+  - "Design end-to-end test plan for <epic>"
+  - "Identify regression risks and coverage gaps for <epic>"
+
+Pick 1 vs 2 per list based on the epic's apparent scope.
+
+Each task must:
+- Have a concise title (no "As a..." prefix)
+- Have a description with: a one-sentence goal, then a bullet list of 3-5
+  acceptance criteria starting with "- "
+- Be sized as a single sprint's work, not multi-sprint
+
+Respond with ONLY a JSON object, no preamble, no code fences:
+{{
+    "pm_tasks": [
+        {{
+            "summary": "Short task title",
+            "description": "Goal sentence.\\n\\nAcceptance criteria:\\n- Criterion one\\n- Criterion two\\n- Criterion three",
+            "priority": "Medium",
+            "story_points": 3
+        }}
+    ],
+    "qa_tasks": [
+        {{
+            "summary": "Short task title",
+            "description": "Goal sentence.\\n\\nAcceptance criteria:\\n- Criterion one\\n- Criterion two\\n- Criterion three",
+            "priority": "Medium",
+            "story_points": 3
+        }}
+    ]
+}}
+
+Valid priorities: Highest, High, Medium, Low, Lowest. Default to Medium.
+Valid story_points (Fibonacci): 1, 2, 3, 5, 8, 13. Pick based on apparent complexity. Vary across tasks."""
+
+        import json
+
+        def _call(messages: list[dict]) -> str:
+            resp = litellm.completion(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2000,
+                messages=messages,
+            )
+            text = resp.choices[0].message.content.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1])
+            return text
+
+        def _parse(text: str):
+            return json.loads(text, strict=False)
+
+        messages = [{"role": "user", "content": prompt}]
+        text = _call(messages)
+        try:
+            data = _parse(text)
+        except json.JSONDecodeError as e:
+            logger.warning("JSON parse failed for %s pm/qa (%s) - asking model to repair", epic_key, e)
+            repair = (
+                "Your previous response was not valid JSON. Reply ONLY with a corrected JSON object "
+                "matching the schema I gave you. No prose, no code fences."
+            )
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": repair})
+            text = _call(messages)
+            data = _parse(text)
+
+        if not isinstance(data, dict) or "pm_tasks" not in data or "qa_tasks" not in data:
+            raise ValueError(f"Bad shape for {epic_key}: keys={list(data) if isinstance(data, dict) else type(data).__name__}")
+        return data
+
+    def generate_stories_for_epic(
+        self,
+        epic_key: str,
+        epic_summary: str,
+        epic_description: str,
+        initiative_summary: str,
+        count_min: int = 3,
+        count_max: int = 5,
+    ) -> list[dict]:
+        """Generate 3-5 user stories for a specific epic.
+
+        Pins the model to Anthropic Haiku - structured generation from clear epic
+        context does not need the complex_model.
+
+        Returns a list of dicts: {summary, description, priority}.
+        """
+        prompt = f"""You are a Product Manager breaking an epic into user stories.
+
+Parent initiative: {initiative_summary}
+
+Epic ({epic_key}): {epic_summary}
+Epic description: {epic_description[:800] if epic_description else 'No description provided.'}
+
+Create between {count_min} and {count_max} user stories that together deliver this epic. Pick the count based on the epic's apparent scope - small epics get {count_min}, larger ones get {count_max}.
+
+Each story must:
+- Have a concise title (no "As a..." prefix - just the action/feature)
+- Have a description with: a one-sentence goal, then a bullet list of 3-5 acceptance criteria starting with "- "
+- Be a vertical slice of real user value, not a technical task
+- Not overlap with sibling stories in this same response
+- Be sized to fit in a single sprint
+
+Respond with ONLY a JSON array, no preamble, no code fences. Each element:
+{{
+    "summary": "Short story title",
+    "description": "Goal sentence.\\n\\nAcceptance criteria:\\n- Criterion one\\n- Criterion two\\n- Criterion three",
+    "priority": "Medium",
+    "story_points": 3
+}}
+
+Valid priorities: Highest, High, Medium, Low, Lowest. Default to Medium unless the epic clearly implies otherwise.
+Valid story_points (Fibonacci): 1, 2, 3, 5, 8, 13. Pick based on apparent complexity - simple UI tweaks ~1-2, typical features ~3-5, large flows ~8, multi-system work ~13. Vary the values across the stories in your response."""
+
+        import json
+
+        def _call(messages: list[dict]) -> str:
+            resp = litellm.completion(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2000,
+                messages=messages,
+            )
+            text = resp.choices[0].message.content.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1])
+            return text
+
+        def _parse(text: str):
+            # strict=False permits raw control characters (e.g. literal newlines) inside strings.
+            return json.loads(text, strict=False)
+
+        messages = [{"role": "user", "content": prompt}]
+        text = _call(messages)
+        try:
+            stories = _parse(text)
+        except json.JSONDecodeError as e:
+            logger.warning("JSON parse failed for %s (%s) - asking model to repair", epic_key, e)
+            repair = (
+                "Your previous response was not valid JSON. Reply ONLY with a corrected JSON array "
+                "matching the schema I gave you. No prose, no code fences, no commentary."
+            )
+            messages.append({"role": "assistant", "content": text})
+            messages.append({"role": "user", "content": repair})
+            text = _call(messages)
+            stories = _parse(text)
+
+        if not isinstance(stories, list):
+            raise ValueError(f"Expected JSON array for {epic_key}, got {type(stories).__name__}")
+        return stories
+
     def generate_bug_report(
         self,
         agent_name: str,
