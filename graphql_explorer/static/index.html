@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jira GraphQL Explorer</title>
+    <link rel="stylesheet" href="https://unpkg.com/graphiql@3.7.2/graphiql.min.css" />
+    <style>
+      html, body, #root { height: 100%; margin: 0; }
+      #topbar {
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        padding: 8px 12px;
+        background: #1f2937;
+        color: #f9fafb;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        border-bottom: 1px solid #111827;
+      }
+      #topbar select, #topbar button {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #374151;
+        background: #111827;
+        color: #f9fafb;
+        cursor: pointer;
+      }
+      #topbar button:hover { background: #2563eb; border-color: #2563eb; }
+      #topbar .label { color: #9ca3af; }
+      #topbar .badge {
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: #374151;
+      }
+      #topbar .badge.ok { background: #065f46; }
+      #topbar .badge.warn { background: #92400e; }
+      #topbar .badge.err { background: #991b1b; }
+      #probe-results {
+        font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        padding: 8px 12px;
+        background: #0f172a;
+        color: #e5e7eb;
+        max-height: 200px;
+        overflow: auto;
+        border-bottom: 1px solid #111827;
+      }
+      #probe-results table { border-collapse: collapse; width: 100%; }
+      #probe-results th, #probe-results td {
+        text-align: left; padding: 4px 8px; border-bottom: 1px solid #1f2937;
+      }
+      #probe-results th { color: #9ca3af; font-weight: 600; }
+      #probe-results .verdict { font-weight: 600; }
+      #probe-results .verdict.graphql-working { color: #34d399; }
+      #probe-results .verdict.graphql-responds-with-errors { color: #fbbf24; }
+      #probe-results .verdict.auth-required { color: #fbbf24; }
+      #probe-results .verdict.not-found,
+      #probe-results .verdict.unreachable,
+      #probe-results .verdict.responded-but-not-graphql { color: #f87171; }
+      #layout { display: flex; flex-direction: column; height: 100vh; }
+      #graphiql-host { flex: 1; min-height: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="layout">
+      <div id="topbar">
+        <strong>Jira GraphQL Explorer</strong>
+        <span class="label">Endpoint:</span>
+        <select id="endpoint-select"></select>
+        <button id="probe-btn">Probe all endpoints</button>
+        <span class="label">Tenant:</span>
+        <span id="tenant" class="badge">–</span>
+        <span id="auth-state" class="badge">–</span>
+      </div>
+      <div id="probe-results" style="display:none"></div>
+      <div id="graphiql-host"></div>
+    </div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/graphiql@3.7.2/graphiql.min.js"></script>
+
+    <script>
+      const select = document.getElementById('endpoint-select');
+      const probeBtn = document.getElementById('probe-btn');
+      const probeBox = document.getElementById('probe-results');
+      const tenantBadge = document.getElementById('tenant');
+      const authBadge = document.getElementById('auth-state');
+
+      let currentEndpointId = 'gateway';
+      let graphiqlRoot = null;
+
+      function fetcher(params) {
+        return fetch('/graphql?endpoint=' + encodeURIComponent(currentEndpointId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        }).then((r) => r.json());
+      }
+
+      const defaultQuery = `# Try a minimal introspection query first.
+# Different Jira endpoints expose very different schemas — start here.
+
+query Introspect {
+  __schema {
+    queryType { name }
+    types {
+      name
+      kind
+    }
+  }
+}
+`;
+
+      function mountGraphiQL() {
+        const host = document.getElementById('graphiql-host');
+        if (graphiqlRoot) graphiqlRoot.unmount();
+        graphiqlRoot = ReactDOM.createRoot(host);
+        graphiqlRoot.render(
+          React.createElement(GraphiQL, {
+            fetcher,
+            defaultQuery,
+            defaultEditorToolsVisibility: true,
+          })
+        );
+      }
+
+      async function loadConfig() {
+        const r = await fetch('/api/config');
+        const cfg = await r.json();
+        tenantBadge.textContent = cfg.jira_url || 'JIRA_URL not set';
+        tenantBadge.className = 'badge ' + (cfg.jira_url ? 'ok' : 'err');
+        const authed = cfg.jira_email_set && cfg.jira_token_set;
+        authBadge.textContent = authed ? 'auth: ready' : 'auth: missing';
+        authBadge.className = 'badge ' + (authed ? 'ok' : 'err');
+
+        select.innerHTML = '';
+        for (const ep of cfg.endpoints) {
+          const opt = document.createElement('option');
+          opt.value = ep.id;
+          opt.textContent = ep.label;
+          opt.title = ep.url + '\\n' + ep.notes;
+          select.appendChild(opt);
+        }
+        select.value = currentEndpointId;
+      }
+
+      select.addEventListener('change', (e) => {
+        currentEndpointId = e.target.value;
+      });
+
+      probeBtn.addEventListener('click', async () => {
+        probeBtn.disabled = true;
+        probeBtn.textContent = 'Probing…';
+        probeBox.style.display = 'block';
+        probeBox.innerHTML = 'Probing…';
+        try {
+          const r = await fetch('/api/probe');
+          const data = await r.json();
+          renderProbe(data.results);
+        } catch (e) {
+          probeBox.innerHTML = '<div style="color:#f87171">Probe failed: ' + e.message + '</div>';
+        } finally {
+          probeBtn.disabled = false;
+          probeBtn.textContent = 'Probe all endpoints';
+        }
+      });
+
+      function renderProbe(results) {
+        const rows = results.map((r) => {
+          const status = r.status === undefined || r.status === null ? '—' : r.status;
+          const verdict = r.verdict || '?';
+          const snippet = (r.body_snippet || r.error || '').replace(/</g, '&lt;');
+          return `
+            <tr>
+              <td><strong>${r.label}</strong><br><span style="color:#9ca3af">${r.url}</span></td>
+              <td>${status}</td>
+              <td><span class="verdict ${verdict}">${verdict}</span></td>
+              <td><code style="font-size:11px">${snippet.slice(0, 220)}</code></td>
+            </tr>`;
+        }).join('');
+        probeBox.innerHTML = `
+          <table>
+            <thead><tr><th>Endpoint</th><th>HTTP</th><th>Verdict</th><th>Body snippet</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="margin-top:6px;color:#9ca3af">
+            Tip: pick an endpoint above with verdict <span class="verdict graphql-working">graphql-working</span>
+            and run an introspection query to see what's available.
+          </div>
+        `;
+      }
+
+      loadConfig().then(mountGraphiQL);
+    </script>
+  </body>
+</html>
