@@ -313,9 +313,13 @@ class ScenarioOrchestrator:
                     ticket_key = action.get("ticket_key")
                     scenario_id = action.get("scenario_id")
                     agent_name = None
+                    agent_role = None
+                    agent_team = None
                     if agent_id:
                         persona = self.personas.get("agents", {}).get(agent_id, {})
                         agent_name = persona.get("display_name")
+                        agent_role = persona.get("role")
+                        agent_team = persona.get("team")
 
                     # Set context on CrewAI callback and JiraTools
                     action_type = action.get("type")
@@ -363,6 +367,23 @@ class ScenarioOrchestrator:
                         scenario_id=scenario_id,
                         agent_id=agent_id,
                     )
+
+                    # Record the agent's decision for per-agent analytics.
+                    # (Previously the agent_decisions log was never populated.)
+                    if agent_id and self.log_writer:
+                        self.log_writer.log_agent_decision(
+                            agent_id=agent_id,
+                            agent_name=agent_name or agent_id,
+                            agent_role=agent_role or "unknown",
+                            team=agent_team or "unknown",
+                            decision_type="scenario_action",
+                            action_selected=action_type,
+                            reasoning=action.get("details")
+                            or getattr(self.planner, "last_reasoning", None),
+                            ticket_key=ticket_key,
+                            scenario_id=scenario_id,
+                            scenario_phase=action.get("scenario_phase"),
+                        )
 
                     # Phase 4: Update state
                     self._update_state_after_action(action, action_result, state)
