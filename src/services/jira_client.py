@@ -11,6 +11,13 @@ from jira import JIRA
 from jira.resources import Issue
 import pendulum
 
+from .financial_fields import (
+    CREATE_TIME_ISSUE_TYPES,
+    FINANCIAL_FIELD_ISSUE_TYPES,
+    WORK_CATEGORY_FIELD,
+    financial_fields,
+)
+
 logger = logging.getLogger(__name__)
 
 # Configured board ID for sprint operations
@@ -245,8 +252,15 @@ class JiraClient:
         priority: Optional[str] = None,
         labels: Optional[list[str]] = None,
         parent_key: Optional[str] = None,
+        assign_financial_fields: bool = True,
     ) -> Issue:
-        """Create a new issue in the project."""
+        """Create a new issue in the project.
+
+        When ``assign_financial_fields`` is set, deliverable work items
+        (Story/Task/Epic/Bug) are auto-populated with a realistic, correlated
+        Cost Type and Work Category (see ``financial_fields``). Stories under an
+        Epic inherit the Epic's Work Category for coherent roll-ups.
+        """
         fields = {
             "project": {"key": self.project_key},
             "summary": summary,
@@ -263,7 +277,39 @@ class JiraClient:
         if parent_key:
             fields["parent"] = {"key": parent_key}
 
-        return self._client.create_issue(fields=fields)
+        # Decide Cost Type / Work Category for deliverable work. Most types
+        # accept the fields on the create screen; Bug does not, so it is set
+        # right after creation instead (see CREATE_TIME_ISSUE_TYPES).
+        deferred_financial: Optional[dict] = None
+        if assign_financial_fields and issue_type in FINANCIAL_FIELD_ISSUE_TYPES:
+            parent_wc = self._parent_work_category(parent_key) if parent_key else None
+            fin = financial_fields(parent_work_category=parent_wc)
+            if issue_type in CREATE_TIME_ISSUE_TYPES:
+                fields.update(fin)
+            else:
+                deferred_financial = fin
+
+        issue = self._client.create_issue(fields=fields)
+
+        if deferred_financial:
+            try:
+                issue.update(fields=deferred_financial)
+            except Exception as exc:  # never let field-seeding break creation
+                logger.warning(
+                    "Could not set financial fields on %s (%s): %s",
+                    getattr(issue, "key", "?"), issue_type, exc,
+                )
+
+        return issue
+
+    def _parent_work_category(self, parent_key: str) -> Optional[str]:
+        """Best-effort fetch of a parent issue's Work Category value (name)."""
+        try:
+            parent = self._client.issue(parent_key, fields=WORK_CATEGORY_FIELD)
+            value = getattr(parent.fields, WORK_CATEGORY_FIELD, None)
+            return getattr(value, "value", None) if value else None
+        except Exception:
+            return None
 
     def create_issues_bulk(self, field_list: list[dict]) -> list[dict]:
         """Create multiple issues in one Jira bulk call (POST /rest/api/3/issue/bulk).
