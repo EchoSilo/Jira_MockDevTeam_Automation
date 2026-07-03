@@ -3,7 +3,7 @@ services:
     build: .
     container_name: jira-simulator
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}

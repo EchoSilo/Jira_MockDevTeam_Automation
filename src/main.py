@@ -811,8 +811,12 @@ async def trigger_simulation():
 
         # --- Dynamic chaos tuning at sprint end (PERF-04) ---
         if _dynamic_tuner and previous_sprint_number != state.sprint.sprint_number:
-            # Sprint just ended - adjust chaos based on completion rate
-            completion_rate = state.velocity_tracker.get_completion_rate() if hasattr(state, 'velocity_tracker') else 0.7
+            # Sprint just ended - adjust chaos based on completion rate.
+            # NOTE: use truthiness, not hasattr — velocity_tracker exists on the model but
+            # is None right after a /reset, and hasattr(state, 'velocity_tracker') is True
+            # for a None value, which previously crashed the tick with AttributeError.
+            velocity_tracker = getattr(state, 'velocity_tracker', None)
+            completion_rate = velocity_tracker.get_completion_rate() if velocity_tracker else 0.7
             tuning_result = _dynamic_tuner.adjust(completion_rate)
             chaos_metrics["tuning"] = {
                 "previous_multiplier": tuning_result.previous_multiplier,

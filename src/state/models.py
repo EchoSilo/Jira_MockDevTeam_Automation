@@ -123,6 +123,24 @@ class ReleaseVersion(BaseModel):
     release_notes: Optional[str] = None
     sprint_number: Optional[int] = None  # Associated sprint
 
+    @field_validator("target_date", mode="before")
+    @classmethod
+    def _ensure_target_date_aware(cls, v):
+        """Guarantee target_date is timezone-aware (UTC).
+
+        Some sources (e.g. legacy releases parsed from a name) produced naive
+        datetimes, which then crash comparisons against pendulum.now("UTC")
+        with "can't compare offset-naive and offset-aware datetimes". Normalize
+        strings and naive datetimes to aware UTC on the way in.
+        """
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return pendulum.parse(v)
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return pendulum.instance(v, tz="UTC")
+        return v
+
 
 class ReleaseDirective(BaseModel):
     """An instruction from Release Manager to a PM agent."""

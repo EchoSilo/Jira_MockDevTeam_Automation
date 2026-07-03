@@ -6,7 +6,7 @@ Provides:
 - PlanningHorizon: Maintains 2-3 future sprint plans for continuous planning
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from enum import Enum
 import pendulum
@@ -42,6 +42,20 @@ class SprintPlan(BaseModel):
     status: SprintPlanStatus = SprintPlanStatus.PLANNED
     planned_at: pendulum.DateTime = Field(default_factory=lambda: pendulum.now("UTC"))
     velocity_estimate: Optional[int] = None  # Team velocity when planned
+
+    @field_validator("start_date", "end_date", "planned_at", mode="before")
+    @classmethod
+    def _coerce_pendulum_datetime(cls, v):
+        """Parse ISO strings back into pendulum.DateTime when reloading from state.
+
+        Serialization writes these as ISO strings (see json_encoders), but with
+        arbitrary_types_allowed pydantic will not coerce them back automatically,
+        so reload of a PlanningHorizon fails with is_instance_of errors. This
+        pre-validator restores the round-trip.
+        """
+        if isinstance(v, str):
+            return pendulum.parse(v)
+        return v
 
     class Config:
         arbitrary_types_allowed = True

@@ -13,7 +13,7 @@ directives that get converted into PM actions during the planning phase.
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import pendulum
 
@@ -518,10 +518,11 @@ class ReleaseManagerAgent(CoordinatorAgent):
             month = datetime.strptime(month_name, "%B").month
             year = int(year)
 
-            # Calculate last day of the month
+            # Calculate last day of the month (timezone-aware UTC so it can be
+            # compared against pendulum.now("UTC") without naive/aware errors)
             if month == 12:
-                return datetime(year + 1, 1, 1) - timedelta(days=1)
-            return datetime(year, month + 1, 1) - timedelta(days=1)
+                return datetime(year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+            return datetime(year, month + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
         except ValueError:
             return None
 

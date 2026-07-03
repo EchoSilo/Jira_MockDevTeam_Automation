@@ -7,11 +7,14 @@ for all log entry types.
 
 import sqlite3
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
 import pendulum
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     LogEntry,
@@ -400,7 +403,16 @@ class LogDatabase:
             self.insert_orchestrator_log(entry)
 
     def cleanup_old_logs(self, retention_days: int = 30) -> int:
-        """Delete logs older than retention period. Returns count deleted."""
+        """Delete logs older than retention period. Returns count deleted.
+
+        The DELETEs run in a single committed transaction (via the connection
+        context manager), which releases the write lock before any VACUUM.
+        VACUUM cannot run inside a transaction and requires exclusive access,
+        so it is run on a separate autocommit connection with a short busy
+        timeout and is treated as best-effort: if another connection (e.g. a
+        live AsyncLogWriter) holds the database, it is skipped rather than
+        blocking startup. It is also skipped entirely when nothing was deleted.
+        """
         cutoff = pendulum.now("UTC") - timedelta(days=retention_days)
         cutoff_str = cutoff.isoformat()
 
@@ -420,8 +432,21 @@ class LogDatabase:
                     f"DELETE FROM {table} WHERE {timestamp_col} < ?", (cutoff_str,)
                 )
                 total_deleted += cursor.rowcount
+            # DELETEs are committed on context-manager exit, releasing the lock.
 
-            # Reclaim space
-            conn.execute("VACUUM")
+        # Reclaim space (best-effort). Only worthwhile if rows were removed.
+        if total_deleted > 0:
+            try:
+                # isolation_level=None -> autocommit, so VACUUM is not wrapped
+                # in a transaction. timeout caps the wait for a busy database.
+                vacuum_conn = sqlite3.connect(
+                    str(self.db_path), isolation_level=None, timeout=2.0
+                )
+                try:
+                    vacuum_conn.execute("VACUUM")
+                finally:
+                    vacuum_conn.close()
+            except sqlite3.OperationalError as e:
+                logger.warning("Skipped VACUUM during log cleanup: %s", e)
 
         return total_deleted
