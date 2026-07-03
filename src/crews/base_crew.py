@@ -2,7 +2,9 @@
 Base Crew class with shared functionality for all scenario crews.
 """
 
+import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, TYPE_CHECKING
 from crewai import Crew, Task, Process
 
@@ -118,6 +120,26 @@ class BaseCrew:
                 return agent_id
         return None
 
+    @staticmethod
+    def _kickoff(crew: Crew):
+        """Run crew.kickoff() safely regardless of async context.
+
+        CrewAI refuses a synchronous ``crew.kickoff()`` when it detects a
+        running event loop (the simulator executes actions from within
+        FastAPI's async request handler). When a loop is running we offload the
+        blocking kickoff to a worker thread — which has no running loop — so the
+        call succeeds; otherwise we call it directly. This keeps the existing
+        synchronous execution semantics without rewriting every crew method.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. tests, scripts) — call directly.
+            return crew.kickoff()
+        # Inside a running event loop — run kickoff off the loop thread.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(crew.kickoff).result()
+
     def execute_crew(
         self,
         agents: list,
@@ -149,7 +171,7 @@ class BaseCrew:
 
         # Track execution time
         start_time = time.time()
-        result = crew.kickoff()
+        result = self._kickoff(crew)
         duration_ms = int((time.time() - start_time) * 1000)
 
         result_str = str(result)
