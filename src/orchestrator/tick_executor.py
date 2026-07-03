@@ -34,6 +34,13 @@ class TickExecutor:
     - This class adds timing/scheduling without replacing crew logic
     """
 
+    # Loop guard: a single ticket may only trigger this many RECALCULATE cycles
+    # before we stop pathfinding and skip instead. Prevents the runaway
+    # validate→recalculate→reschedule→validate thrash. Counter persists across ticks
+    # (the executor instance is long-lived) and resets when the ticket makes real
+    # progress (a successful execution).
+    MAX_RECALCULATIONS_PER_TICKET = 2
+
     def __init__(
         self,
         scheduler: Scheduler,
@@ -54,6 +61,9 @@ class TickExecutor:
 
         # Per-ticket circuit breaker (Phase 5)
         self.per_ticket_breaker = per_ticket_breaker or PerTicketCircuitBreaker()
+
+        # Per-ticket recalculation counter (loop guard). Keyed by ticket_key.
+        self._recalc_counts: dict[str, int] = {}
 
         # Tick metrics
         self._tick_metrics = {
@@ -209,6 +219,34 @@ class TickExecutor:
 
                     # Handle RECALCULATE strategy with pathfinding adapter
                     if reconciliation.strategy == AdaptationStrategy.RECALCULATE:
+                        # Loop guard: if this ticket has already been recalculated too
+                        # many times, stop pathfinding and skip. This is the backstop
+                        # that breaks the thrash even if some other divergence recurs.
+                        recalc_count = self._recalc_counts.get(ticket_key, 0)
+                        if recalc_count >= self.MAX_RECALCULATIONS_PER_TICKET:
+                            logger.warning(
+                                f"Recalculation loop guard tripped for {ticket_key} "
+                                f"after {recalc_count} recalcs; skipping instead of "
+                                f"recalculating again. Last reason: {reconciliation.reason}"
+                            )
+                            self.scheduler.mark_action_skipped(
+                                action_id,
+                                f"recalc_loop_guard: exceeded "
+                                f"{self.MAX_RECALCULATIONS_PER_TICKET} recalculations"
+                            )
+                            self._tick_metrics["reconciliation_skips"] += 1
+                            self.per_ticket_breaker.record_failure(
+                                ticket_key, "recalc_loop_guard"
+                            )
+                            return {
+                                "action_id": action_id,
+                                "action_type": action_type,
+                                "skipped": True,
+                                "reason": "recalc_loop_guard",
+                            }
+
+                        self._recalc_counts[ticket_key] = recalc_count + 1
+
                         if self.pathfinding_adapter:
                             pathfinding_result = self.pathfinding_adapter.handle_reconciliation_result(
                                 reconciliation,
@@ -293,6 +331,8 @@ class TickExecutor:
             )
             # Record success to per-ticket circuit breaker
             self.per_ticket_breaker.record_success(ticket_key)
+            # Real progress resets the recalculation loop guard for this ticket.
+            self._recalc_counts.pop(ticket_key, None)
             self._tick_metrics["executed"] += 1
 
         result["action_id"] = action_id

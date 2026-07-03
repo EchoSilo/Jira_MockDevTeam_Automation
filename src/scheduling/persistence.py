@@ -59,6 +59,7 @@ class ScheduledActionStore:
                     scenario_id TEXT,
                     window_minutes INTEGER DEFAULT 30,
                     expected_status TEXT,
+                    target_status TEXT,
                     expected_assignee TEXT,
                     status TEXT DEFAULT 'pending',
                     params TEXT,
@@ -68,6 +69,15 @@ class ScheduledActionStore:
                 )
                 """
         )
+
+        # Migrate pre-existing databases that lack the target_status column.
+        # (SQLite has no "ADD COLUMN IF NOT EXISTS", so guard with table_info.)
+        cursor.execute("PRAGMA table_info(scheduled_actions)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if "target_status" not in existing_columns:
+            cursor.execute(
+                "ALTER TABLE scheduled_actions ADD COLUMN target_status TEXT"
+            )
 
         # Create indexes
         cursor.execute(
@@ -104,9 +114,9 @@ class ScheduledActionStore:
             """
             INSERT OR REPLACE INTO scheduled_actions (
                 action_id, scheduled_time, action_type, agent_id, ticket_key,
-                scenario_id, window_minutes, expected_status, expected_assignee,
-                status, params, created_at, executed_at, result
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                scenario_id, window_minutes, expected_status, target_status,
+                expected_assignee, status, params, created_at, executed_at, result
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 action.action_id,
@@ -117,6 +127,7 @@ class ScheduledActionStore:
                 action.scenario_id,
                 action.window_minutes,
                 action.expected_status,
+                action.target_status,
                 action.expected_assignee,
                 action.status.value,
                 json.dumps(action.params) if action.params else None,
@@ -286,6 +297,7 @@ class ScheduledActionStore:
             scenario_id=row["scenario_id"],
             window_minutes=row["window_minutes"],
             expected_status=row["expected_status"],
+            target_status=row["target_status"],
             expected_assignee=row["expected_assignee"],
             status=ActionStatus(row["status"]),
             params=json.loads(row["params"]) if row["params"] else {},

@@ -35,7 +35,13 @@ class ScheduledAction:
     ticket_key: str = field(default="", compare=False)
     scenario_id: Optional[str] = field(default=None, compare=False)
     window_minutes: int = field(default=30, compare=False)
+    # Precondition: the status the ticket MUST already be in for this action to fire.
+    # Checked by PreExecutionValidator. Do NOT store the destination status here.
     expected_status: Optional[str] = field(default=None, compare=False)
+    # Destination: the status this action moves the ticket TO. Informational only —
+    # never validated as a precondition. Kept separate to avoid the semantic collision
+    # that previously caused pathfinder-scheduled actions to fail validation forever.
+    target_status: Optional[str] = field(default=None, compare=False)
     expected_assignee: Optional[str] = field(default=None, compare=False)
     status: ActionStatus = field(default=ActionStatus.PENDING, compare=False)
     executed_at: Optional[pendulum.DateTime] = field(default=None, compare=False)

@@ -154,6 +154,12 @@ class PathfindingAdapter:
 
         # Step 3: Schedule new actions
         current_time = self.scheduler.get_simulation_time()
+        # Precondition for each action = the ticket's status BEFORE it runs. The first
+        # action's precondition is the live current_status; each subsequent action's
+        # precondition is the previous action's destination. Storing the destination in
+        # expected_status (the old bug) guaranteed perpetual validation failure and the
+        # RECALCULATE thrash loop.
+        precondition_status = current_status
         for i, action_spec in enumerate(new_actions):
             # Find agent for role
             agent_id = self._get_agent_for_role(action_spec.get("role"))
@@ -164,6 +170,8 @@ class PathfindingAdapter:
                 )
                 continue
 
+            destination_status = action_spec.get("target_status")
+
             # Schedule action with staggered timing
             scheduled_action = ScheduledAction(
                 scheduled_time=current_time.add(minutes=15 * (i + 1)),
@@ -172,13 +180,17 @@ class PathfindingAdapter:
                 ticket_key=ticket_key,
                 scenario_id=scenario_id,
                 window_minutes=30,
-                expected_status=action_spec.get("target_status"),
+                expected_status=precondition_status,
+                target_status=destination_status,
                 params={
                     "recalculated": True,
-                    "from_status": current_status,
-                    "to_status": action_spec.get("target_status"),
+                    "from_status": precondition_status,
+                    "to_status": destination_status,
                 },
             )
+            # Next action fires only after this one lands the ticket at its destination.
+            if destination_status:
+                precondition_status = destination_status
             self.scheduler.schedule_action(scheduled_action)
             result.actions_scheduled.append(scheduled_action)
 
