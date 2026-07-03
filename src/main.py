@@ -39,7 +39,7 @@ from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_ro
 from .time import Clock, RealClock, get_clock, validate_business_hours
 from .scheduling import Scheduler
 from .scheduling.persistence import ScheduledActionStore
-from .scheduling.virtual_clock import VirtualClock
+from .scheduling.virtual_clock import VirtualClock, RealtimeClock
 from .orchestrator.tick_executor import TickExecutor
 from .planning import SprintPlanner
 from .chaos import (
@@ -448,14 +448,17 @@ async def lifespan(app: FastAPI):
     app.state.jira = JiraClient()
     app.state.llm = LLMService()
 
-    # Initialize Scheduler with VirtualClock and SQLite persistence (Phase 3)
+    # Initialize Scheduler with a REAL-TIME clock and SQLite persistence.
+    # The simulator is real-time paced (tickets advance on real elapsed time, e.g. the
+    # 24h in-progress minimum), so the scheduler must track real wall-clock time rather
+    # than a compressed virtual clock that races ahead of the pacing gates.
     scheduler_config = settings.get("scheduler", {})
     tick_duration = scheduler_config.get("tick_duration_hours", 0.75)
     scheduler_db_path = scheduler_config.get("db_path", "data/scheduler.db")
 
     store = ScheduledActionStore(db_path=scheduler_db_path)
-    virtual_clock = VirtualClock(pendulum.now("UTC"), tick_duration_hours=tick_duration)
-    app.state.scheduler = Scheduler(store=store, virtual_clock=virtual_clock)
+    realtime_clock = RealtimeClock(tick_duration_hours=tick_duration)
+    app.state.scheduler = Scheduler(store=store, virtual_clock=realtime_clock)
 
     # Initialize SprintPlanner (Phase 3)
     app.state.sprint_planner = SprintPlanner(
