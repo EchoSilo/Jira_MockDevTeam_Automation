@@ -831,19 +831,23 @@ async def trigger_simulation():
             # For now, log the current multiplier
             chaos_metrics["chaos_multiplier"] = _dynamic_tuner.current_multiplier
 
-        # Run the scenario orchestrator (Analyze + Plan ONLY)
-        # Execution is handled by TickExecutor above (EXEC-01: single execution path)
+        # Run the scenario orchestrator: Analyze -> Plan -> EXECUTE in this same tick.
+        # Self-contained tick (the intended model): the orchestrator executes the actions
+        # it just planned against the CURRENT board (Phase 3), instead of deferring them
+        # to a future tick via the scheduler queue. TickExecutor above already ran any
+        # genuinely due scheduled/calendar work (sprint scripts); that action set is
+        # disjoint from the freshly-planned actions, so nothing double-executes.
         orchestrator_results = await orchestrator.run_tick(
             state=state,
             intensity=intensity,
-            skip_execution=True,  # TickExecutor is the SOLE executor
+            skip_execution=False,  # self-contained: plan AND act this tick
         )
 
-        # Merge results (TickExecutor actions + orchestrator planning + chaos metrics)
+        # Merge results (scheduled actions + freshly-planned actions + chaos metrics)
         # Note: results already initialized with heartbeat_alert if applicable
         if not results:
             results = {}
-        results.update(tick_results)  # Merge tick executor results
+        results.update(tick_results)  # Merge tick executor (scheduled action) results
         results["analysis"] = orchestrator_results.get("analysis", {})
         results["planning_reasoning"] = orchestrator_results.get("planning_reasoning")
         results["llm_call_count"] = orchestrator_results.get("llm_call_count", 0)
@@ -852,39 +856,21 @@ async def trigger_simulation():
         results["total_output_tokens"] = orchestrator_results.get("total_output_tokens", 0)
         results["planned_actions"] = orchestrator_results.get("planned_actions", 0)
         results["chaos"] = chaos_metrics  # Phase 4: Include chaos injection metrics
-        results["actions_completed"] = results.get("metrics", {}).get("executed", 0)
 
-        # Schedule planned actions for next tick execution (if any)
-        planned_action_dicts = orchestrator_results.get("planned_action_dicts", [])
-        if planned_action_dicts and hasattr(app.state, 'scheduler') and app.state.scheduler:
-            from .scheduling import ScheduledAction
-            current_time = app.state.scheduler.clock.now()
-            # Schedule for NEXT tick (current time + tick_duration)
-            # This prevents actions from being immediately overdue when time advances
-            next_tick_time = current_time.add(hours=app.state.scheduler.clock.tick_duration_hours)
-            scheduled_count = 0
-            for action_dict in planned_action_dicts:
-                ticket_key = action_dict.get("ticket_key") or ""
-                # Skip actions without required fields
-                if not action_dict.get("type"):
-                    logger.warning(f"Skipping action with missing type: {action_dict}")
-                    continue
-                # Schedule for next tick execution window
-                try:
-                    scheduled_action = ScheduledAction(
-                        scheduled_time=next_tick_time,
-                        action_type=action_dict.get("type"),
-                        agent_id=action_dict.get("agent_id") or "",
-                        ticket_key=ticket_key,
-                        scenario_id=action_dict.get("scenario_id"),
-                        params={"details": action_dict.get("details", "")},
-                    )
-                    app.state.scheduler.schedule_action(scheduled_action)
-                    logger.info(f"Scheduled planned action: {scheduled_action.action_type} for {ticket_key or 'no ticket'} at {next_tick_time.format('YYYY-MM-DD HH:mm')}")
-                    scheduled_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to schedule action: {e}")
-            results["actions_scheduled"] = scheduled_count
+        # Combine executed actions from BOTH paths for the response/dashboard:
+        #   (a) scheduled/calendar work run by TickExecutor, and
+        #   (b) freshly-planned work the orchestrator executed inline this tick.
+        # The orchestrator already recorded its own actions into state via
+        # _update_state_after_action, and main.py recorded the tick_results actions above,
+        # so each action is recorded exactly once. Planned actions run NOW — they are no
+        # longer deferred to a future tick's queue.
+        planned_actions_executed = orchestrator_results.get("actions", [])
+        combined_actions = list(tick_results.get("actions", [])) + planned_actions_executed
+        results["actions"] = combined_actions
+        results["actions_completed"] = sum(
+            1 for a in combined_actions
+            if not a.get("skipped") and not a.get("error")
+        )
 
         # Performance metrics (Phase 5)
         results["performance"] = {
