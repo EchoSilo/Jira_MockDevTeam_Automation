@@ -59,3 +59,14 @@ nul
 .codemachine/template.json
 .roo/
 memory-bank/
+
+# Ad-hoc API/GraphQL exploration dumps (root-level scratch output)
+/*.json
+!.mcp.json
+/sprint_ids.txt
+
+# SQLite runtime databases (schema is recreated on startup; not source)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
