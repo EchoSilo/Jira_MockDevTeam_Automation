@@ -16,23 +16,58 @@ if TYPE_CHECKING:
     from ..logging import AsyncLogWriter
 
 
+class _AgentRoutedJira:
+    """Attribute/method proxy that routes Jira calls to the acting agent's client.
+
+    Resolves the underlying client at call time from the owning JiraTools' current
+    agent context (``_current_agent_id``), so cached CrewAI tool closures — which
+    capture this proxy once at construction — transparently use the right per-agent
+    client. Falls back to the default (admin) client when there is no agent context
+    or no registry. Forwards both attribute access (``_client``, ``project_key``)
+    and method calls.
+    """
+
+    def __init__(self, tools: "JiraTools"):
+        object.__setattr__(self, "_tools", tools)
+
+    def _resolve(self):
+        tools = self._tools
+        if tools._registry is not None:
+            return tools._registry.resolve(
+                tools._current_agent_id, tools._default_client
+            )
+        return tools._default_client
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+
 class JiraTools:
     """
     Collection of Jira tools for CrewAI agents.
 
     Tools are organized by role - different agent types get different tool sets.
-    All tools share a single JiraClient instance for consistent authentication.
+    Issue-level writes are routed to the acting agent's own Jira client (per-agent
+    attribution) via a call-time proxy; callers that must bypass routing (e.g. sprint
+    board-admin ops) use ``self.default_jira``.
     """
 
     def __init__(
         self,
         jira_client: JiraClient,
         log_writer: "AsyncLogWriter | None" = None,
+        registry=None,
     ):
-        self.jira = jira_client
+        # The shared default/admin client and the per-agent registry.
+        self._default_client = jira_client
+        self._registry = registry
         self.log_writer = log_writer
         self._current_agent_id: str | None = None
         self._current_ticket_key: str | None = None
+        # `self.jira` is a routing proxy: tool closures capture it once but it
+        # resolves the acting agent's client per call. `default_jira` bypasses routing.
+        self.default_jira = jira_client
+        self.jira = _AgentRoutedJira(self)
         self._create_tools()
 
     def set_context(

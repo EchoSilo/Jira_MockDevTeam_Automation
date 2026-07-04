@@ -74,7 +74,7 @@ class SprintPlanningCrew(BaseCrew):
         added_keys = []
         dev_index = 0
         for item in items_to_add:
-            success = self.jira_tools.jira.add_issue_to_sprint(sprint_id, [item["key"]])
+            success = self.jira_tools.default_jira.add_issue_to_sprint(sprint_id, [item["key"]])
             if success:
                 added_keys.append(item["key"])
                 # Assign if unassigned (sprint items must have assignees)
@@ -164,7 +164,7 @@ class SprintPlanningCrew(BaseCrew):
         sprint_name = f"Sprint {sprint_number}"
 
         # Create sprint directly via Jira API
-        sprint = self.jira_tools.jira.create_sprint(
+        sprint = self.jira_tools.default_jira.create_sprint(
             sprint_name, start_date=start_date, end_date=end_date
         )
 
@@ -219,7 +219,7 @@ class SprintPlanningCrew(BaseCrew):
         # Add items directly via Jira API
         added_keys = []
         for item in items_to_add:
-            success = self.jira_tools.jira.add_issue_to_sprint(sprint_id, [item["key"]])
+            success = self.jira_tools.default_jira.add_issue_to_sprint(sprint_id, [item["key"]])
             if success:
                 added_keys.append(item["key"])
 
@@ -335,7 +335,7 @@ class SprintPlanningCrew(BaseCrew):
         # Sprint is 2 weeks: start Monday, end Sunday (14 days - 1 = 13 days later)
         end_date = start_date + timedelta(days=13)
 
-        success, error = self.jira_tools.jira.start_sprint(
+        success, error = self.jira_tools.default_jira.start_sprint(
             sprint_id, start_date=start_date, end_date=end_date
         )
 
@@ -434,7 +434,7 @@ class SprintPlanningCrew(BaseCrew):
         closed_count = self._transition_done_to_closed(sprint_id)
 
         # Complete sprint directly via Jira API
-        success, error = self.jira_tools.jira.complete_sprint(
+        success, error = self.jira_tools.default_jira.complete_sprint(
             sprint_id, move_incomplete_to=next_sprint_id
         )
 
@@ -518,7 +518,7 @@ class SprintPlanningCrew(BaseCrew):
         # If no matching sprint found, create a new one
         if next_sprint_id is None:
             if new_sprint_name:
-                new_sprint = self.jira_tools.jira.create_sprint(
+                new_sprint = self.jira_tools.default_jira.create_sprint(
                     name=new_sprint_name,
                     start_date=start_date,
                     end_date=end_date,
@@ -548,7 +548,7 @@ class SprintPlanningCrew(BaseCrew):
                 }
 
         # Step 2: Close current sprint, moving incomplete issues to next sprint
-        close_success, close_error = self.jira_tools.jira.complete_sprint(
+        close_success, close_error = self.jira_tools.default_jira.complete_sprint(
             current_sprint_id, move_incomplete_to=next_sprint_id
         )
         if not close_success:
@@ -561,7 +561,7 @@ class SprintPlanningCrew(BaseCrew):
             }
 
         # Step 3: Start the new sprint with proper 2-week duration
-        start_success, start_error = self.jira_tools.jira.start_sprint(
+        start_success, start_error = self.jira_tools.default_jira.start_sprint(
             next_sprint_id, start_date=start_date, end_date=end_date
         )
         if not start_success:

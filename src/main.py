@@ -8,6 +8,7 @@ This version uses the scenario-driven CrewAI orchestration system.
 """
 
 import logging
+import os
 import random
 import time
 import threading
@@ -34,6 +35,7 @@ import litellm
 
 from .state import load_state, save_state, SimulationState, sync_state_with_jira, validate_state_agent_ids
 from .services import JiraClient, LLMService
+from .services.agent_client_registry import AgentClientRegistry
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
 from .time import Clock, RealClock, get_clock, validate_business_hours
@@ -448,6 +450,19 @@ async def lifespan(app: FastAPI):
     app.state.jira = JiraClient()
     app.state.llm = LLMService()
 
+    # Per-agent Jira client registry for per-agent attribution. Validates each
+    # team member's token at startup (JIRA_EMAIL_<NAME>/JIRA_API_TOKEN_<NAME>) and
+    # logs a report; agents without creds fall back to the shared admin client.
+    app.state.agent_clients = AgentClientRegistry(
+        app.state.personas,
+        app.state.log_writer,
+        url=os.environ.get("JIRA_URL"),
+    )
+    try:
+        app.state.agent_clients.preflight()
+    except Exception as e:
+        print(f"Warning: per-agent Jira attribution preflight failed: {e}")
+
     # Initialize Scheduler with a REAL-TIME clock and SQLite persistence.
     # The simulator is real-time paced (tickets advance on real elapsed time, e.g. the
     # 24h in-progress minimum), so the scheduler must track real wall-clock time rather
@@ -701,6 +716,7 @@ async def trigger_simulation():
             templates=app.state.templates,
             settings=app.state.settings,
             clock=clock,
+            agent_registry=app.state.agent_clients,
         )
 
         # Set up comprehensive logging (CrewAI LLM calls, Jira API calls, events)
@@ -1768,6 +1784,7 @@ async def force_sprint_planning():
             templates=app.state.templates,
             settings=app.state.settings,
             clock=clock,
+            agent_registry=app.state.agent_clients,
         )
         orchestrator.set_log_writer(app.state.log_writer)
 

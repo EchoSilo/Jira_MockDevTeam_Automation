@@ -67,6 +67,7 @@ class ScenarioOrchestrator:
         templates: dict,
         settings: dict,
         clock: Clock = None,
+        agent_registry=None,
     ):
         self.clock = clock or RealClock()
         self.jira = jira_client
@@ -75,6 +76,10 @@ class ScenarioOrchestrator:
         self.templates = templates
         self.settings = settings
 
+        # Per-agent Jira client registry (for per-agent attribution). Falls back
+        # to `self.jira` (admin) when an agent has no creds or agent_id is None.
+        self._registry = agent_registry
+
         # Optional log writer - injected by main.py
         self.log_writer: "AsyncLogWriter | None" = None
 
@@ -82,7 +87,7 @@ class ScenarioOrchestrator:
         self.crewai_callback: "CrewAILoggingCallback | None" = None
 
         # Create shared JiraTools (log_writer will be set later via set_log_writer)
-        self.jira_tools = JiraTools(jira_client)
+        self.jira_tools = JiraTools(jira_client, registry=agent_registry)
 
         # Create LLM config for crews
         routine = settings.get("llm", {}).get("routine_model", "claude-haiku-4-5")
@@ -138,6 +143,16 @@ class ScenarioOrchestrator:
             "executed": 0,
             "idempotent_skips": 0,
         }
+
+    def _client_for(self, agent_id):
+        """Return the acting agent's Jira client for attributed direct writes.
+
+        Falls back to the shared admin client (`self.jira`) when there is no
+        registry, no agent_id, or the agent has no credentials.
+        """
+        if self._registry is not None:
+            return self._registry.resolve(agent_id, self.jira)
+        return self.jira
 
     def set_log_writer(self, log_writer: "AsyncLogWriter") -> None:
         """
@@ -670,7 +685,7 @@ class ScenarioOrchestrator:
             persona = self.personas.get("agents", {}).get(agent_id, {})
             jira_account_id = persona.get("jira_account_id")
             if jira_account_id:
-                success = self.jira.assign_issue(ticket_key, jira_account_id)
+                success = self._client_for(agent_id).assign_issue(ticket_key, jira_account_id)
                 if success:
                     logger.info(f"Assigned {ticket_key} to {agent_id}")
                 return success
@@ -1056,8 +1071,8 @@ class ScenarioOrchestrator:
 
             if epic_key and new_status:
                 try:
-                    # Transition the Epic
-                    success = self.jira.transition_issue(epic_key, new_status)
+                    # Transition the Epic (attributed to the acting PM)
+                    success = self._client_for(pm_id).transition_issue(epic_key, new_status)
                     if success:
                         # Add comment explaining the status change
                         persona = self.personas.get("agents", {}).get(pm_id, {})
@@ -1066,7 +1081,7 @@ class ScenarioOrchestrator:
                             f"Updated Epic status to '{new_status}'. "
                             f"Reason: {reason}. - {pm_name}"
                         )
-                        self.jira.add_comment(epic_key, comment)
+                        self._client_for(pm_id).add_comment(epic_key, comment)
                         result.update({
                             "success": True,
                             "epic_key": epic_key,
@@ -1089,14 +1104,14 @@ class ScenarioOrchestrator:
                     pm_name = persona.get("display_name", "Product Manager")
 
                     if pm_account_id:
-                        # Assign the Epic to the PM
-                        self.jira.assign_issue(epic_key, pm_account_id)
+                        # Assign the Epic to the PM (attributed to the acting PM)
+                        self._client_for(pm_id).assign_issue(epic_key, pm_account_id)
                         # Add comment explaining the assignment
                         comment = (
                             f"Assigned to {pm_name} for Epic ownership. "
                             f"Epics should be managed by Product Management."
                         )
-                        self.jira.add_comment(epic_key, comment)
+                        self._client_for(pm_id).add_comment(epic_key, comment)
                         result.update({
                             "success": True,
                             "epic_key": epic_key,
@@ -1280,7 +1295,7 @@ class ScenarioOrchestrator:
                             persona = self.personas.get("agents", {}).get(pm_id, {})
                             pm_name = persona.get("display_name", "Product Manager")
                             comment = f"{fix_comment} - {pm_name}"
-                            self.jira.add_comment(ticket_key, comment)
+                            self._client_for(pm_id).add_comment(ticket_key, comment)
                             result.update({
                                 "success": True,
                                 "ticket_key": ticket_key,
@@ -1307,11 +1322,11 @@ class ScenarioOrchestrator:
                     pm_name = persona.get("display_name", "Product Manager")
 
                     if pm_account_id:
-                        # Reassign Epic to PM
-                        self.jira.assign_issue(epic_key, pm_account_id)
+                        # Reassign Epic to PM (attributed to the acting PM)
+                        self._client_for(pm_id).assign_issue(epic_key, pm_account_id)
                         # Add explanatory comment
                         comment = f"{fix_comment} - {pm_name}"
-                        self.jira.add_comment(epic_key, comment)
+                        self._client_for(pm_id).add_comment(epic_key, comment)
                         result.update({
                             "success": True,
                             "epic_key": epic_key,
@@ -1360,7 +1375,7 @@ class ScenarioOrchestrator:
                         persona = self.personas.get("agents", {}).get(pm_id, {})
                         pm_name = persona.get("display_name", "Product Manager")
                         comment = f"{fix_comment} - {pm_name}"
-                        self.jira.add_comment(ticket_key, comment)
+                        self._client_for(pm_id).add_comment(ticket_key, comment)
                         result.update({
                             "success": True,
                             "ticket_key": ticket_key,
