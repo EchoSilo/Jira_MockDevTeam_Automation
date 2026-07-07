@@ -73,6 +73,7 @@ class TickExecutor:
             "reconciliation_skips": 0,
             "recalculations": 0,
             "circuit_breaker_skips": 0,
+            "rescheduled": 0,
         }
 
     def execute_tick(
@@ -219,6 +220,32 @@ class TickExecutor:
 
                     # Handle RECALCULATE strategy with pathfinding adapter
                     if reconciliation.strategy == AdaptationStrategy.RECALCULATE:
+                        # Scenario lifecycle steps land here when the ticket is
+                        # simply BEHIND the expected status (an earlier step in the
+                        # script hasn't run yet). Rather than burn a recalculation
+                        # or skip, re-date the step to the next business-hours slot
+                        # so it waits and retries. The reschedule cap (inside the
+                        # scheduler) prevents this from looping forever; once hit,
+                        # we fall through to the normal recalc/skip handling below.
+                        if scheduled_action.scenario_id and self.scheduler.reschedule_scenario_action(
+                            scheduled_action
+                        ):
+                            self._tick_metrics["rescheduled"] = (
+                                self._tick_metrics.get("rescheduled", 0) + 1
+                            )
+                            logger.info(
+                                f"Scenario step for {ticket_key} not ready "
+                                f"(is '{actual_status}', needs "
+                                f"'{scheduled_action.expected_status}') - rescheduled"
+                            )
+                            return {
+                                "action_id": action_id,
+                                "action_type": action_type,
+                                "skipped": True,
+                                "reason": "awaiting_precondition",
+                                "rescheduled": True,
+                            }
+
                         # Loop guard: if this ticket has already been recalculated too
                         # many times, stop pathfinding and skip. This is the backstop
                         # that breaks the thrash even if some other divergence recurs.
@@ -351,4 +378,5 @@ class TickExecutor:
             "reconciliation_skips": 0,
             "recalculations": 0,
             "circuit_breaker_skips": 0,
+            "rescheduled": 0,
         }

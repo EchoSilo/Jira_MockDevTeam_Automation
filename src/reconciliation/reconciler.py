@@ -100,8 +100,14 @@ class ReconciliationEngine:
         Returns:
             ReconciliationResult with strategy and reason
         """
+        # Case-insensitive lookups: the board may use any casing (e.g.
+        # "CODE REVIEW", "TESTING") while STATUS_ORDER/TERMINAL_STATUSES are
+        # title case. Normalize so ranks resolve instead of falling to -1.
+        terminal_lc = {s.lower() for s in self.TERMINAL_STATUSES}
+        order_lc = {k.lower(): v for k, v in self.STATUS_ORDER.items()}
+
         # Terminal statuses - scenario is complete
-        if actual_status in self.TERMINAL_STATUSES:
+        if actual_status.strip().lower() in terminal_lc:
             return ReconciliationResult(
                 strategy=AdaptationStrategy.CANCEL,
                 reason=f"Ticket moved to terminal status '{actual_status}' externally",
@@ -109,8 +115,8 @@ class ReconciliationEngine:
             )
 
         # Get status ranks
-        expected_rank = self.STATUS_ORDER.get(expected_status, -1)
-        actual_rank = self.STATUS_ORDER.get(actual_status, -1)
+        expected_rank = order_lc.get(expected_status.strip().lower(), -1)
+        actual_rank = order_lc.get(actual_status.strip().lower(), -1)
 
         # Handle unknown statuses
         if expected_rank == -1 or actual_rank == -1:

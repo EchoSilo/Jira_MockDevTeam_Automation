@@ -7,6 +7,7 @@ uvicorn[standard]>=0.27.0
 
 # Jira integration
 jira>=3.6.0
+requests>=2.31.0  # direct use for Jira Teams GraphQL calls
 
 # CrewAI for agent orchestration
 crewai[google-genai]>=0.80.0

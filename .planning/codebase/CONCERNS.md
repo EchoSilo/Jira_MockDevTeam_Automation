@@ -18,11 +18,9 @@
 - Impact: Sprint scenarios never detect these conditions, limiting scenario variety and realism
 - Fix approach: Implement dependency tracking in analyzer and epic/feature detection logic
 
-**Hardcoded BOARD_ID in Multiple Locations:**
-- Issue: Sprint board ID hardcoded as `4` in multiple places instead of centralized config
-- Files: `src/services/jira_client.py` (line 16), `src/main.py` (line 592)
-- Impact: Configuration changes require code edits; won't work if board ID changes
-- Fix approach: Move BOARD_ID to `config/settings.yaml`, inject via dependency injection
+**Hardcoded BOARD_ID in Multiple Locations — FIXED 2026-07-06:**
+- Was: Sprint board ID hardcoded as `4` in `src/services/jira_client.py` and inlined again in `src/main.py`'s `/api/sprint-data` velocity lookup, which also reached into `jira._client` directly instead of a wrapper method.
+- Fix: `jira_client.py` now loads `BOARD_ID` from `config/settings.yaml`'s `sprint.board_id` at import time (`_load_board_id()`, falls back to `4` if the file/key is missing). Added `JiraClient.get_closed_sprints()` (mirrors `get_future_sprints()`) so `main.py` calls the wrapper instead of `jira._client.sprints(4, ...)`.
 
 ## Known Bugs
 

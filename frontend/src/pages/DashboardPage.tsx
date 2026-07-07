@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, WifiOff } from 'lucide-react';
 import { Header, Tabs, TabsContent } from '@/components/common';
 import {
@@ -8,6 +8,7 @@ import {
   ActiveScenariosCard,
   SprintOverviewCard,
   SprintHealthCard,
+  FutureSprintsCard,
   WorkloadCard,
   VelocityChart,
   BurndownChart,
@@ -30,6 +31,8 @@ import {
   useGenerateReleaseNotes,
   useReleaseNotesHistory,
   useDownloadReleaseNotes,
+  useFutureSprints,
+  usePlanFutureSprintsMutation,
 } from '@/hooks/useApi';
 import type { OutputFormat } from '@/lib/api';
 import {
@@ -51,6 +54,15 @@ export function DashboardPage() {
   // Release view state
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
 
+  // Auto-refresh is opt-in (off by default); preference persists across reloads.
+  const [autoRefresh, setAutoRefresh] = useState(
+    () => localStorage.getItem('dashboardAutoRefresh') === 'true'
+  );
+  useEffect(() => {
+    localStorage.setItem('dashboardAutoRefresh', String(autoRefresh));
+  }, [autoRefresh]);
+  const AUTO_REFRESH_INTERVAL_MS = 15000;
+
   // Release notes store for shelf state
   const {
     isShelfOpen,
@@ -60,9 +72,10 @@ export function DashboardPage() {
     openShelf,
   } = useReleaseNotesStore();
 
-  // Fetch real data from backend with 15 second refresh
+  // Fetch real data from backend. Polling only runs when auto-refresh is on
+  // (0 disables the interval in useDashboardData/useApi).
   const { data, isLoading, error, refetch } = useDashboardData({
-    refetchInterval: 15000,
+    refetchInterval: autoRefresh ? AUTO_REFRESH_INTERVAL_MS : 0,
   });
 
   const { health, state, agents, scenarios, sprintData } = data;
@@ -74,6 +87,25 @@ export function DashboardPage() {
   const { generate: generateNotes, isLoading: notesLoading } = useGenerateReleaseNotes();
   const { data: historyData, refetch: refetchHistory } = useReleaseNotesHistory();
   const { download: downloadNotes, isDownloading } = useDownloadReleaseNotes();
+
+  // Planning horizon (future sprints) data + on-demand planning
+  const {
+    data: futureSprintsData,
+    isLoading: futureSprintsLoading,
+    refetch: refetchFutureSprints,
+  } = useFutureSprints({
+    refetchInterval: autoRefresh ? AUTO_REFRESH_INTERVAL_MS : 0,
+  });
+  const { planFutureSprints, isLoading: isPlanningFuture } = usePlanFutureSprintsMutation();
+
+  const handlePlanFutureSprints = async () => {
+    try {
+      await planFutureSprints();
+      await refetchFutureSprints();
+    } catch {
+      // Error surfaced via the mutation hook; horizon refetch is best-effort.
+    }
+  };
 
   // Handle release notes generation
   const handleGenerateNotes = async (format: OutputFormat, regenerate?: boolean) => {
@@ -133,10 +165,8 @@ export function DashboardPage() {
               Unable to Connect to Backend
             </h2>
             <p className="text-sm text-[var(--color-text-muted)] mb-4 max-w-md">
-              Make sure the backend server is running at{' '}
-              <code className="px-1 py-0.5 bg-[var(--color-surface-elevated)] rounded">
-                http://localhost:8000
-              </code>
+              Make sure the backend server is running and reachable at this
+              site's address.
             </p>
             <button
               onClick={() => refetch()}
@@ -240,12 +270,32 @@ export function DashboardPage() {
           </div>
         )}
 
-        {/* Refresh indicator */}
-        <div className="flex items-center justify-end text-xs text-[var(--color-text-muted)]">
-          <RefreshCw
-            className={cn('h-3 w-3 mr-1', isLoading && 'animate-spin')}
-          />
-          {isLoading ? 'Refreshing...' : 'Auto-refresh: 15s'}
+        {/* Refresh controls */}
+        <div className="flex items-center justify-end gap-3 text-xs text-[var(--color-text-muted)]">
+          {isLoading && (
+            <span className="flex items-center gap-1">
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              Refreshing...
+            </span>
+          )}
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              className="accent-[var(--color-primary)] cursor-pointer"
+            />
+            <span>Auto-refresh (15s)</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--color-surface-elevated)] text-[var(--color-text-primary)] hover:bg-[var(--color-primary)] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={cn('h-3 w-3', isLoading && 'animate-spin')} />
+            Refresh
+          </button>
         </div>
 
         {/* Top metric cards - 5 cards with Sprint Overview + Health */}
@@ -288,6 +338,7 @@ export function DashboardPage() {
         <Tabs
           tabs={[
             { value: 'sprint', label: 'Sprint View' },
+            { value: 'planning', label: 'Planning', badge: futureSprintsData?.planned_count || undefined },
             { value: 'release', label: 'Release View', badge: unreleasedCount || undefined },
             { value: 'simulation', label: 'Simulation', badge: activeScenarioCount }
           ]}
@@ -305,6 +356,16 @@ export function DashboardPage() {
 
             {/* Assignment Trends - full width chart */}
             <AssignmentTrendsCard selectedTeam={selectedTeam} />
+          </TabsContent>
+
+          {/* Planning View - Future sprints in the planning horizon */}
+          <TabsContent value="planning" className="space-y-6">
+            <FutureSprintsCard
+              data={futureSprintsData ?? null}
+              isLoading={futureSprintsLoading}
+              onPlan={handlePlanFutureSprints}
+              isPlanning={isPlanningFuture}
+            />
           </TabsContent>
 
           {/* Release View - Fix versions and release notes */}

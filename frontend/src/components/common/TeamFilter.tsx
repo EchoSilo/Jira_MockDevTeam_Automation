@@ -1,8 +1,12 @@
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useDashboardStore } from '@/store';
+import { api } from '@/lib/api';
 import type { Team } from '@/types';
 
-const TEAMS: { value: Team; label: string }[] = [
+// Fallback labels used until /api/teams responds (or if it fails). The `value`
+// (internal key) is what drives all filtering; only the label is Jira-derived.
+const DEFAULT_TEAMS: { value: Team; label: string }[] = [
   { value: 'all', label: 'All Teams' },
   { value: 'alpha', label: 'Alpha' },
   { value: 'beta', label: 'Beta' },
@@ -10,6 +14,26 @@ const TEAMS: { value: Team; label: string }[] = [
 
 export function TeamFilter() {
   const { selectedTeam, setSelectedTeam } = useDashboardStore();
+  const [teams, setTeams] = useState(DEFAULT_TEAMS);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getTeams()
+      .then((res) => {
+        if (!active) return;
+        setTeams([
+          { value: 'all', label: 'All Teams' },
+          ...res.teams.map((t) => ({ value: t.key as Team, label: t.name })),
+        ]);
+      })
+      .catch(() => {
+        /* keep DEFAULT_TEAMS on failure */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div
@@ -21,9 +45,10 @@ export function TeamFilter() {
       role="tablist"
       aria-label="Filter by team"
     >
-      {TEAMS.map((team) => (
+      {teams.map((team) => (
         <button
           key={team.value}
+          type="button"
           role="tab"
           aria-selected={selectedTeam === team.value}
           onClick={() => setSelectedTeam(team.value)}

@@ -644,22 +644,8 @@ class ScenarioAnalyzer:
 
     def _get_team_agents(self, team: str) -> dict:
         """Get all agent IDs for a team, organized by role."""
-        agents_by_role = {
-            "pm": None,
-            "tech_lead": None,
-            "developer": [],
-            "qa": None,
-        }
-
-        for agent_id, config in self.personas.get("agents", {}).items():
-            if config.get("team") == team:
-                role = config.get("role", "developer")
-                if role in ["pm", "tech_lead", "qa"]:
-                    agents_by_role[role] = agent_id
-                else:
-                    agents_by_role["developer"].append(agent_id)
-
-        return agents_by_role
+        from src.services.team_resolver import get_team_roster
+        return get_team_roster(self.personas, team)
 
     def calculate_metrics(self, state: SimulationState, board_snapshot: dict) -> dict:
         """Calculate summary metrics for the analysis."""
@@ -890,27 +876,11 @@ class ScenarioAnalyzer:
                         })
                         break  # Only one PM needs to do planning
 
-            # Opportunity: Create future sprints if < 2 exist
-            future_sprint_count = len(future_sprints)
-            target_future_sprints = self.settings.get("sprint", {}).get(
-                "future_sprints_to_maintain", 2
-            )
-
-            if future_sprint_count < target_future_sprints:
-                pm_id = self._get_team_agents("alpha").get("pm")
-                if pm_id:
-                    opportunities.append({
-                        "type": "create_future_sprint",
-                        "priority": "medium",
-                        "pm_id": pm_id,
-                        "current_sprint_number": state.sprint.sprint_number,
-                        "existing_future_sprints": future_sprint_count,
-                        "target_count": target_future_sprints,
-                        "description": (
-                            f"Need to create future sprints "
-                            f"({future_sprint_count}/{target_future_sprints} exist)"
-                        ),
-                    })
+            # NOTE: Future-sprint creation is intentionally NOT an opportunity here.
+            # SprintPlanner.plan_to_horizon (driven every tick from /trigger) creates
+            # AND populates future sprints reliably using the board's real naming/cadence.
+            # The old "create_future_sprint" opportunity was inert (missing start_date/
+            # pm_id downstream) and would have used a conflicting naming convention.
 
         except Exception as e:
             logger.warning(f"Failed to detect sprint planning opportunities: {e}")

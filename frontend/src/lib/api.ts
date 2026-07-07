@@ -2,7 +2,10 @@
  * API Service Layer for Jira Team Simulator Backend
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Default to same-origin (relative URLs) so the app works on whatever host/port
+// serves it (e.g. the backend publishes on :8001). Override with VITE_API_URL
+// when the frontend dev server runs separately from the backend.
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // Types matching backend models
 export interface HealthResponse {
@@ -410,6 +413,60 @@ async function fetchApi<T>(
   }
 }
 
+// Team info (Jira-derived) for the team filter toggle
+export interface TeamInfo {
+  key: 'alpha' | 'beta';
+  name: string;
+  jira_team_id: string | null;
+}
+
+export interface TeamsResponse {
+  teams: TeamInfo[];
+}
+
+export interface FutureSprintItem {
+  key: string;
+  summary: string;
+  status: string | null;
+  assignee: string | null;
+  assignee_id: string | null;
+  agent_id: string | null;
+  team: string | null;
+  points: number;
+}
+
+export interface FutureSprintWorkload {
+  assignee: string;
+  agent_id: string | null;
+  team: string | null;
+  item_count: number;
+  points: number;
+}
+
+export interface FutureSprint {
+  sprint_id: string;
+  sprint_number: number;
+  name: string;
+  start_date: string | null;
+  end_date: string | null;
+  committed_items: string[];
+  committed_points: number;
+  velocity_estimate: number | null;
+  status: 'planned' | 'active' | 'completed';
+  planned_at: string | null;
+  items: FutureSprintItem[];
+  workload: FutureSprintWorkload[];
+}
+
+export interface FutureSprintsResponse {
+  target: number;
+  planned_count: number;
+  needs_planning: boolean;
+  min_days_ahead: number;
+  active_sprint_name: string | null;
+  future_sprints: FutureSprint[];
+}
+
 // API Methods
 export const api = {
   // Health check
@@ -424,8 +481,14 @@ export const api = {
   // Get active scenarios
   getScenarios: () => fetchApi<ScenariosResponse>('/scenarios'),
 
+  // Get the simulator's teams (Jira-derived display names)
+  getTeams: () => fetchApi<TeamsResponse>('/api/teams'),
+
   // Get sprint data from Jira (status breakdown, burndown, velocity)
   getSprintData: () => fetchApi<SprintDataResponse>('/api/sprint-data'),
+
+  // Get the planning horizon (future planned sprints, read-only)
+  getFutureSprints: () => fetchApi<FutureSprintsResponse>('/api/future-sprints'),
 
   // Get assignment trends data
   getAssignmentTrends: (params?: AssignmentTrendsParams) => {
@@ -445,6 +508,17 @@ export const api = {
 
   // Reset simulation state
   reset: () => fetchApi<{ message: string }>('/reset', { method: 'POST' }),
+
+  // Force planning + population of future sprints (brings horizon up to target)
+  planFutureSprints: () =>
+    fetchApi<{
+      success: boolean;
+      active_sprint: string | null;
+      target_future_sprints: number;
+      future_sprints_planned_now: number;
+      future_sprint_count: number;
+      result: Record<string, unknown>;
+    }>('/plan-future-sprints', { method: 'POST' }),
 
   // Force sprint planning
   planSprint: () =>

@@ -72,8 +72,15 @@ class PlanningHorizon(BaseModel):
     gets too short.
     """
     future_sprints: List[SprintPlan] = Field(default_factory=list)
-    min_sprints: int = 2   # Minimum sprints to maintain
+    min_sprints: int = 3   # Minimum sprints to maintain (overridable from settings.planning_horizon_sprints)
     min_days_ahead: int = 14  # Minimum days of planned work
+
+    # Estimated points at risk of spilling out of the active sprint, based on
+    # its current burndown pace vs. ideal. Recomputed and overwritten every
+    # tick (src/main.py _update_predicted_spillover) - safe to store here
+    # since, unlike last_planned_for_sprint, it has no cross-tick persistence
+    # requirement (this object is rebuilt from Jira every tick anyway).
+    predicted_spillover_points: int = 0
 
     def get_sprint_count(self) -> int:
         """Get number of planned future sprints (not active/completed)."""

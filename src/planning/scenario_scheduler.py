@@ -81,6 +81,7 @@ class ScenarioScheduler:
                 agent_id=script_action.get("agent_id", ""),
                 ticket_key=ticket_key,
                 scenario_id=scenario_id,
+                window_minutes=script_action.get("window_minutes", 30),
                 expected_status=script_action.get("expected_status"),
                 target_status=script_action.get("target_status"),
                 expected_assignee=script_action.get("expected_assignee"),

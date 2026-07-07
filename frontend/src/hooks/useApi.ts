@@ -15,6 +15,7 @@ import api, {
   type OutputFormat,
   type AssignmentTrendsResponse,
   type AssignmentTrendsParams,
+  type FutureSprintsResponse,
   ApiError,
 } from '@/lib/api';
 
@@ -124,6 +125,10 @@ export function useSprintData(options?: UseQueryOptions) {
   return useQuery<SprintDataResponse>(() => api.getSprintData(), options);
 }
 
+export function useFutureSprints(options?: UseQueryOptions) {
+  return useQuery<FutureSprintsResponse>(() => api.getFutureSprints(), options);
+}
+
 // Hook for assignment trends
 export function useAssignmentTrends(
   params?: AssignmentTrendsParams,
@@ -162,7 +167,7 @@ export interface DashboardData {
 }
 
 export function useDashboardData(options?: { refetchInterval?: number }) {
-  const { refetchInterval = 15000 } = options || {}; // Default 15 second refresh
+  const { refetchInterval = 0 } = options || {}; // 0 = no polling unless caller opts in
 
   const health = useHealth({ refetchInterval });
   const state = useSimulationState({ refetchInterval });
@@ -235,6 +240,31 @@ export function useTriggerMutation() {
   }, []);
 
   return { trigger, isLoading, error };
+}
+
+// Mutation hook for planning future sprints (tops up the planning horizon)
+export function usePlanFutureSprintsMutation() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const planFutureSprints = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      return await api.planFutureSprints();
+    } catch (err) {
+      const apiError =
+        err instanceof ApiError
+          ? err
+          : new ApiError(err instanceof Error ? err.message : 'Unknown error', 0);
+      setError(apiError);
+      throw apiError;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return { planFutureSprints, isLoading, error };
 }
 
 // Mutation hook for reset

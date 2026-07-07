@@ -8,6 +8,11 @@ providing conservative sprint planning recommendations.
 from typing import List, Optional
 from .velocity_tracker import VelocityTracker
 
+# Story points custom field on the real Jira board (null on most backlog
+# issues in practice - see _estimate_points for the type-based fallback used
+# consistently everywhere points are needed).
+STORY_POINTS_FIELD = "customfield_10016"
+
 
 class CapacityPlanner:
     """Select backlog items based on velocity-derived capacity."""
@@ -95,6 +100,26 @@ class CapacityPlanner:
             "Feature": 8,
         }
         return estimates.get(item_type, 3)
+
+    def issues_to_backlog_items(self, issues: List) -> List[dict]:
+        """Convert real Jira Issue objects into the dict shape select_items/
+        get_selection_summary expect ({"key", "type", "points"}).
+
+        Use this whenever "how many points does sprint X already have" needs
+        to be computed from live Jira issues, so already-committed points and
+        freshly-selected points are always measured on the same
+        estimated-points basis (real story points are null on most backlog
+        issues in this project - see _estimate_points).
+        """
+        items = []
+        for issue in issues:
+            points = getattr(issue.fields, STORY_POINTS_FIELD, None) or 0
+            items.append({
+                "key": issue.key,
+                "type": issue.fields.issuetype.name,
+                "points": points,
+            })
+        return items
 
     def get_selection_summary(
         self,

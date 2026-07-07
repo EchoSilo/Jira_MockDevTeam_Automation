@@ -87,9 +87,9 @@ class TestPlanningHorizon:
         assert horizon.needs_planning() is True  # Only 1, need 2
 
     def test_needs_planning_satisfied(self):
-        """Test needs_planning when sufficient sprints planned."""
+        """Test needs_planning when sufficient sprints planned (default target: 3)."""
         horizon = PlanningHorizon()
-        # Add 2 sprints far enough in future
+        # Add 3 sprints far enough in future (default min_sprints is 3)
         horizon.add_sprint_plan(SprintPlan(
             sprint_number=8,
             start_date=pendulum.now("UTC").add(days=7),
@@ -100,7 +100,12 @@ class TestPlanningHorizon:
             start_date=pendulum.now("UTC").add(days=14),
             end_date=pendulum.now("UTC").add(days=21),
         ))
-        assert horizon.get_sprint_count() == 2
+        horizon.add_sprint_plan(SprintPlan(
+            sprint_number=10,
+            start_date=pendulum.now("UTC").add(days=21),
+            end_date=pendulum.now("UTC").add(days=28),
+        ))
+        assert horizon.get_sprint_count() == 3
         assert horizon.needs_planning() is False
 
     def test_needs_planning_not_far_enough(self):

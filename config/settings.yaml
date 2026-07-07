@@ -99,13 +99,31 @@ cycle_times:
 # LLM configuration
 # Uses LiteLLM for provider flexibility. Model format: "provider/model-name"
 # Supported providers:
+#   - openrouter/author/model: OpenRouter (requires OPENROUTER_API_KEY) <- active
+#     Examples: openrouter/google/gemma-4-31b-it:free, openrouter/anthropic/claude-3.5-sonnet
 #   - anthropic/model-name: Direct Anthropic API (requires ANTHROPIC_API_KEY)
-#   - openrouter/provider/model: OpenRouter (requires OPENROUTER_API_KEY)
-#     Examples: openrouter/anthropic/claude-3.5-sonnet, openrouter/openai/gpt-4o
 #   - openai/model-name: Direct OpenAI API (requires OPENAI_API_KEY)
+#
+# This is a mock-data simulator, so it runs on a *free* OpenRouter model.
+# gpt-oss-120b is MoE (~5B active -> fast) with native function calling, which the
+# CrewAI crews need for their Jira tools.
+# NOTE: ":free" variants route through shared upstream pools that rate-limit (429)
+# unpredictably (independent of your OpenRouter credit balance). That's absorbed by
+# the backoff wrapper (see retry_* keys below); this app does not need to be performant.
+# If the free pool becomes unusable, dropping ":free" uses paid capacity - Gemma/gpt-oss
+# are pennies/day for a mock sim (google/gemma-4-26b-a4b-it, etc.).
+# Also avoid Google-served free models (gemma-*, gemini-*) if a Google BYOK key is set
+# in OpenRouter -> Settings -> Integrations and blocked -> they 403 API_KEY_SERVICE_BLOCKED.
+# Free-model availability shifts over time - if a call 404s, re-check the current
+# free slugs at https://openrouter.ai/api/v1/models (need "tools" + ":free").
 llm:
-  routine_model: "gemini/gemini-2.5-flash-lite"
-  complex_model: "gemini/gemini-2.5-flash-lite"
+  routine_model: "openrouter/openai/gpt-oss-120b:free"  # MoE ~5B active, tool-calling
+  complex_model: "openrouter/openai/gpt-oss-120b:free"  # same model for complex_actions
+  # Rate-limit backoff for the free Google pool (429s). A backoff wrapper is
+  # installed on litellm.completion (covers direct calls AND the CrewAI crews).
+  num_retries: 4                  # retries after the first try (total 5 attempts)
+  retry_base_delay_seconds: 6     # linear backoff: waits 6,12,18,24s before retries
+  retry_max_delay_seconds: 60     # cap per individual backoff wait
   orchestrator_thinking: true
 
   # Temperature settings
@@ -129,15 +147,20 @@ sprint:
   start_day: wednesday        # Sprint start day
   planning_day: 1             # Monday (day 1 of sprint)
   board_id: 4                 # Jira board ID for sprint operations
-  future_sprints_to_maintain: 2  # Always keep 1-2 future sprints planned
-  planning_horizon_sprints: 3  # Maintain 2-3 future sprints
+  future_sprints_to_maintain: 3  # Always keep 3 future sprints planned
+  planning_horizon_sprints: 3  # Maintain 3 future sprints (drives PlanningHorizon.min_sprints)
   capacity_buffer: 0.8        # Use 80% of velocity for capacity
 
 # Scheduler configuration
 scheduler:
   tick_duration_hours: 0.75   # 45 minutes per tick
-  execution_window_minutes: 30  # Action execution window
-  max_actions_per_tick: 4     # Maximum actions per tick
+  execution_window_minutes: 30  # Default action execution window
+  max_actions_per_tick: 8     # Max scheduled actions per tick (raised from 4 so a
+                              # sprint's worth of due lifecycle steps isn't starved)
+  scenario_window_minutes: 480  # Wide window (a full workday) for sprint lifecycle
+                                # steps so a ~45-min tick reliably lands inside it
+  scenario_max_reschedules: 3   # Times a not-yet-ready lifecycle step is re-dated
+                                # before it is finally skipped
 
 # Issue type permissions by role
 # Controls which issue types each role can act on and create
@@ -258,8 +281,13 @@ random_events:
 # Performance Optimization Configuration (Phase 5)
 performance:
   # Async execution timeouts
-  max_action_timeout_seconds: 10    # Per-action timeout
-  max_tick_timeout_seconds: 45      # Total tick budget
+  max_action_timeout_seconds: 10    # Per-action timeout (dormant: async_executor only)
+  max_tick_timeout_seconds: 45      # Total tick budget (dormant: async_executor only)
+
+  # Live per-action wall-clock budget (the sync TickExecutor bridge in main.py).
+  # Generous so LLM calls that hit the free-pool rate limit have room to back off
+  # and retry (litellm num_retries) instead of being abandoned. Perf is not a goal.
+  action_join_timeout_seconds: 180
 
   # Heartbeat monitoring
   heartbeat:

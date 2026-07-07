@@ -132,16 +132,18 @@ class TestPreExecutionValidatorStatus:
         assert result.actual_state["status"] == "Done"
         assert result.expected_state["status"] == "In Progress"
 
-    def test_status_case_sensitive_comparison(self, pre_validator, mock_jira_client):
-        """Status comparison should be case-sensitive (Jira uses exact names)."""
+    def test_status_case_insensitive_comparison(self, pre_validator, mock_jira_client):
+        """Status comparison is case-INsensitive: real Jira workflows name statuses
+        in arbitrary case (e.g. 'CODE REVIEW', 'in progress') while the simulation
+        uses title case. A pure case difference must NOT read as a mismatch."""
         mock_jira_client.get_issue.return_value = create_mock_issue(
-            status="in progress"  # Lowercase
+            status="in progress"  # Lowercase variant of the expected status
         )
 
         result = pre_validator.validate_status("ESCRUM-123", "In Progress")
 
-        # Case mismatch should be treated as invalid
-        assert result.valid is False
+        # Same status, different case -> valid
+        assert result.valid is True
 
     def test_various_status_mismatches(self, pre_validator, mock_jira_client):
         """Test various status mismatch scenarios."""

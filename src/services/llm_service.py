@@ -4,6 +4,7 @@ Routes between Haiku (fast/cheap) and Sonnet (complex) based on action type.
 """
 
 import os
+import sys
 import logging
 import time
 from typing import Optional
@@ -12,6 +13,73 @@ import litellm
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# --- Free-tier rate-limit backoff -------------------------------------------
+# The OpenRouter *free* Google pool that serves Gemma rate-limits (429) frequently
+# and unpredictably. LiteLLM's built-in `num_retries` backoff is far too short
+# (~sub-second per retry) to ride out these limits. So we monkeypatch
+# `litellm.completion` once with a real backoff wrapper. Because CrewAI also calls
+# `litellm.completion(**params)` as a module attribute (crewai/llm.py), this single
+# patch covers BOTH our direct LLMService calls AND the CrewAI crews - the path that
+# actually executes Jira actions - with no per-call-site wiring.
+_ORIG_LITELLM_COMPLETION = None  # original, un-wrapped litellm.completion (for fast probes)
+_BACKOFF_INSTALLED = False
+
+
+def _install_litellm_backoff(attempts: int, base_delay: float, max_delay: float) -> None:
+    """Wrap litellm.completion with linear backoff on rate-limit/transient errors.
+
+    Idempotent (safe across multiple LLMService instances). `attempts` is total
+    tries including the first; delay before retry i (1-based) is ``base_delay * i``
+    capped at ``max_delay``, or the server's Retry-After when provided.
+    """
+    global _ORIG_LITELLM_COMPLETION, _BACKOFF_INSTALLED
+    if _BACKOFF_INSTALLED:
+        return
+    _ORIG_LITELLM_COMPLETION = litellm.completion
+    retryable = tuple(
+        c for c in (
+            getattr(litellm, "RateLimitError", None),
+            getattr(litellm, "Timeout", None),
+            getattr(litellm, "APIConnectionError", None),
+            getattr(litellm, "ServiceUnavailableError", None),
+            getattr(litellm, "InternalServerError", None),
+        )
+        if isinstance(c, type) and issubclass(c, BaseException)
+    )
+
+    def _completion_with_backoff(*args, **kwargs):
+        # Disable litellm's own (too-short) retry so it doesn't stack under ours.
+        kwargs.setdefault("num_retries", 0)
+        last_exc = None
+        for i in range(attempts):
+            try:
+                return _ORIG_LITELLM_COMPLETION(*args, **kwargs)
+            except retryable as e:
+                last_exc = e
+                if i == attempts - 1:
+                    break
+                retry_after = getattr(e, "retry_after", None)
+                wait = (
+                    retry_after
+                    if isinstance(retry_after, (int, float)) and retry_after > 0
+                    else base_delay * (i + 1)
+                )
+                wait = min(wait, max_delay)
+                logger.warning(
+                    "LLM rate-limited/transient (%s); attempt %d/%d, backing off %.0fs",
+                    type(e).__name__, i + 1, attempts, wait,
+                )
+                time.sleep(wait)
+        raise last_exc
+
+    litellm.completion = _completion_with_backoff
+    _BACKOFF_INSTALLED = True
+    logger.info(
+        "Installed litellm.completion backoff: %d attempts, base_delay=%.0fs, max=%.0fs",
+        attempts, base_delay, max_delay,
+    )
 
 
 class LLMService:
@@ -39,11 +107,87 @@ class LLMService:
         self.complex_model = config["llm"]["complex_model"]
         self.complex_actions = config["llm"]["complex_actions"]
 
+        # Install the process-wide rate-limit backoff on litellm.completion. Covers
+        # both these direct calls and CrewAI's internal completions (see module docs).
+        # Preflight probes bypass it (they call the original) to stay snappy.
+        _install_litellm_backoff(
+            attempts=int(config["llm"].get("num_retries", 4)) + 1,
+            base_delay=float(config["llm"].get("retry_base_delay_seconds", 6)),
+            max_delay=float(config["llm"].get("retry_max_delay_seconds", 60)),
+        )
+
     def _get_model(self, action_type: str) -> str:
         """Determine which model to use based on action type."""
         if action_type in self.complex_actions:
             return self.complex_model
         return self.routine_model
+
+    def assert_llm_available(self, context: str = "") -> None:
+        """Pre-flight probe: verify the LLM is actually callable, or die loudly.
+
+        CrewAI/LiteLLM swallow provider billing and auth failures into an empty
+        response ("Invalid response from LLM call - None or empty"), so a tick
+        silently no-ops and marks work done instead of failing. This makes a
+        tiny (1-token) real call through LiteLLM against the *configured* model
+        (e.g. the OpenRouter free model) - which surfaces the true error - and,
+        on a FATAL condition (bad or missing API key / out of credits), kills the
+        process loudly. Transient errors (rate limit, 5xx, timeouts, network
+        blips) are tolerated since they resolve on their own - this matters for
+        free-tier models, which rate-limit routinely.
+        """
+        # Probe the exact configured model string; LiteLLM wants the full
+        # "openrouter/..." prefix (do NOT strip it) to route to the right provider.
+        model = self.routine_model or "openrouter/google/gemma-4-26b-a4b-it:free"
+        # Bypass the backoff wrapper (call the original) so this liveness probe stays
+        # fast - it already tolerates a transient 429 by warning and continuing.
+        _completion = _ORIG_LITELLM_COMPLETION or litellm.completion
+        try:
+            _completion(
+                model=model,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+                num_retries=0,
+            )
+        except litellm.AuthenticationError as e:
+            # 401 bad/missing key (e.g. OPENROUTER_API_KEY) - cannot proceed.
+            self._die_no_tokens(context, e)
+            return  # _die_no_tokens hard-exits in prod; guard the test path
+        except (litellm.RateLimitError, litellm.Timeout, litellm.APIConnectionError) as e:
+            # Transient (429 / timeout / network) - free tiers rate-limit often.
+            logger.warning("LLM preflight transient error (%s), continuing: %s", context, e)
+        except litellm.APIError as e:
+            # Other provider/API errors: fatal only if clearly billing/quota related.
+            msg = str(getattr(e, "message", "") or e).lower()
+            if (
+                "credit balance" in msg
+                or "insufficient" in msg
+                or "quota" in msg
+                or "billing" in msg
+                or "payment" in msg
+            ):
+                self._die_no_tokens(context, e)
+                return  # _die_no_tokens hard-exits in prod; guard the test path
+            logger.warning("LLM preflight non-fatal API error (%s): %s", context, e)
+
+    def _die_no_tokens(self, context: str, error: Exception) -> None:
+        """Emit a loud banner and hard-kill the process (bad key / out of credits)."""
+        banner = (
+            "\n" + "=" * 72 + "\n"
+            "  FATAL: LLM is UNAVAILABLE (auth failure or out of credits)\n"
+            f"  Context : {context or 'llm-preflight'}\n"
+            f"  Error   : {type(error).__name__}: {error}\n"
+            "\n"
+            "  The simulator cannot run without the LLM - CrewAI would silently\n"
+            "  return empty results and mark work as done. Killing the process.\n"
+            "  Fix: repair OPENROUTER_API_KEY (or the configured provider's key /\n"
+            "  credits), then restart.\n"
+            + "=" * 72 + "\n"
+        )
+        logger.critical(banner)
+        print(banner, file=sys.stderr, flush=True)
+        # Hard exit - bypasses FastAPI/uvicorn exception handling so the failure
+        # is unmissable (container exits / crash-loops loudly rather than no-op'ing).
+        os._exit(1)
 
     def generate_comment(
         self,
@@ -162,7 +306,7 @@ Just the JSON, nothing else."""
     ) -> dict:
         """Generate PM planning + QA test-prep Tasks for a specific epic.
 
-        Pinned to Anthropic Haiku. One call returns both lists. JSON-repair retry
+        Uses the routine model. One call returns both lists. JSON-repair retry
         mirrors `generate_stories_for_epic`.
 
         Returns: {"pm_tasks": [...], "qa_tasks": [...]} - each list 1-2 items, each
@@ -226,7 +370,7 @@ Valid story_points (Fibonacci): 1, 2, 3, 5, 8, 13. Pick based on apparent comple
 
         def _call(messages: list[dict]) -> str:
             resp = litellm.completion(
-                model="claude-haiku-4-5-20251001",
+                model=self.routine_model,
                 max_tokens=2000,
                 messages=messages,
             )
@@ -269,8 +413,8 @@ Valid story_points (Fibonacci): 1, 2, 3, 5, 8, 13. Pick based on apparent comple
     ) -> list[dict]:
         """Generate 3-5 user stories for a specific epic.
 
-        Pins the model to Anthropic Haiku - structured generation from clear epic
-        context does not need the complex_model.
+        Uses the routine model - structured generation from clear epic context
+        does not need the complex_model.
 
         Returns a list of dicts: {summary, description, priority}.
         """
@@ -305,7 +449,7 @@ Valid story_points (Fibonacci): 1, 2, 3, 5, 8, 13. Pick based on apparent comple
 
         def _call(messages: list[dict]) -> str:
             resp = litellm.completion(
-                model="claude-haiku-4-5-20251001",
+                model=self.routine_model,
                 max_tokens=2000,
                 messages=messages,
             )

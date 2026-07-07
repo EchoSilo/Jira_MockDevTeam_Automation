@@ -90,7 +90,10 @@ class PreExecutionValidator:
             issue = self.jira.get_issue(ticket_key)
             actual_status = issue.fields.status.name
 
-            if actual_status != expected_status:
+            # Case-insensitive: Jira workflows may name statuses in any case
+            # (e.g. "CODE REVIEW"/"READY FOR QA") while the simulation uses
+            # title case ("Code Review"/"Ready for QA").
+            if actual_status.strip().lower() != expected_status.strip().lower():
                 return ValidationResult(
                     valid=False,
                     reason=f"Status changed: expected '{expected_status}', got '{actual_status}'",

@@ -204,6 +204,7 @@ class ScenarioOrchestrator:
         state: SimulationState,
         intensity: str = "normal",
         skip_execution: bool = False,
+        exclude_ticket_keys: Optional[set] = None,
     ) -> dict:
         """
         Run one simulation tick.
@@ -213,6 +214,10 @@ class ScenarioOrchestrator:
             intensity: Tick intensity ("light", "normal", "busy")
             skip_execution: If True, skip Phase 3 (Execute) and return after planning.
                            Used when TickExecutor handles execution (EXEC-01).
+            exclude_ticket_keys: Tickets already owned by a scheduled lifecycle
+                           script this tick. Their inline actions are dropped so
+                           the scheduled and inline paths never drive the same
+                           ticket at once (would thrash through reconciliation).
 
         Returns:
             Dict with tick results including actions taken and updated state
@@ -291,6 +296,22 @@ class ScenarioOrchestrator:
 
             # Phase 2: Plan
             planned_actions = self.planner.plan_tick(analysis, state, intensity)
+
+            # Drop inline actions for tickets already owned by a scheduled
+            # lifecycle script this tick, so the two execution paths stay disjoint.
+            if exclude_ticket_keys:
+                before = len(planned_actions)
+                planned_actions = [
+                    a for a in planned_actions
+                    if a.get("ticket_key") not in exclude_ticket_keys
+                ]
+                dropped = before - len(planned_actions)
+                if dropped:
+                    logger.info(
+                        "Dropped %d inline action(s) for tickets owned by "
+                        "scheduled scripts", dropped,
+                    )
+
             results["planned_actions"] = len(planned_actions)
             results["planning_reasoning"] = self.planner.last_reasoning
 
@@ -1183,44 +1204,13 @@ class ScenarioOrchestrator:
                     except Exception as e:
                         result["error"] = f"Sprint planning failed: {str(e)}"
 
-        elif action_type == "create_future_sprint":
-            pm_id = action.get("pm_id")
-            team = action.get("team", "alpha")
-            sprint_number = action.get("sprint_number", 1)
-            start_date = action.get("start_date")
-
-            if pm_id and start_date:
-                try:
-                    current_date = self.clock.today()
-
-                    crew_result = self.sprint_planning_crew.create_future_sprint(
-                        pm_id=pm_id,
-                        team=team,
-                        sprint_number=sprint_number,
-                        start_date=start_date,
-                        current_date=current_date,
-                    )
-                    result.update(crew_result)
-                except Exception as e:
-                    result["error"] = f"Create future sprint failed: {str(e)}"
-
-        elif action_type == "allocate_to_future_sprint":
-            pm_id = action.get("pm_id")
-            team = action.get("team", "alpha")
-            sprint_info = action.get("sprint_info", {})
-            backlog_items = action.get("backlog_items", [])
-
-            if pm_id and sprint_info:
-                try:
-                    crew_result = self.sprint_planning_crew.allocate_items_to_future_sprint(
-                        pm_id=pm_id,
-                        team=team,
-                        sprint_info=sprint_info,
-                        backlog_items=backlog_items,
-                    )
-                    result.update(crew_result)
-                except Exception as e:
-                    result["error"] = f"Allocate to future sprint failed: {str(e)}"
+        # NOTE: create_future_sprint / allocate_to_future_sprint were removed.
+        # Future-sprint creation AND population is handled reliably by
+        # SprintPlanner.plan_to_horizon (see src/planning/sprint_planner.py),
+        # which is driven every tick from /trigger. The old crew-based paths were
+        # inert (the analyzer opportunity never carried start_date/pm_id, the
+        # fallback planner stripped them, and this executor no-op'd) and used a
+        # conflicting "Sprint N"/6-day naming convention.
 
         elif action_type == "start_sprint":
             pm_id = action.get("pm_id")

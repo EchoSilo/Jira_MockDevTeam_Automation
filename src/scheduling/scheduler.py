@@ -1,5 +1,6 @@
 """Scheduler combining queue, persistence, and time management."""
 
+import heapq
 import logging
 from typing import List, Optional
 
@@ -8,6 +9,7 @@ import pendulum
 from .models import ScheduledAction, ActionStatus
 from .priority_queue import ActionPriorityQueue
 from .persistence import ScheduledActionStore
+from .business_hours import BusinessHoursScheduler
 from .virtual_clock import VirtualClock
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,7 @@ class Scheduler:
         store: Optional[ScheduledActionStore] = None,
         virtual_clock: Optional[VirtualClock] = None,
         tick_duration_hours: float = 0.75,
+        scenario_max_reschedules: int = 3,
     ):
         self.store = store or ScheduledActionStore()
         self.clock = virtual_clock or VirtualClock(
@@ -28,6 +31,11 @@ class Scheduler:
             tick_duration_hours=tick_duration_hours,
         )
         self.queue = ActionPriorityQueue()
+        self.business_hours = BusinessHoursScheduler()
+        # A scenario lifecycle step that misses its (wide) window is re-dated to
+        # the next business-hours slot rather than skipped, up to this many times,
+        # so a not-yet-ready step waits for its precondition instead of dying.
+        self.scenario_max_reschedules = scenario_max_reschedules
 
         # Load pending actions from persistence
         self._load_pending_actions()
@@ -103,14 +111,62 @@ class Scheduler:
                 break
 
     def mark_overdue_as_skipped(self) -> int:
-        """Mark all overdue actions as skipped.
+        """Handle overdue actions: reschedule scenario steps, skip the rest.
 
-        Returns count of actions marked.
+        Scenario-tagged lifecycle steps (those with a ``scenario_id``) are
+        re-dated to the next business-hours slot instead of being skipped, up to
+        ``scenario_max_reschedules`` times — this lets a step whose precondition
+        isn't ready yet (e.g. day-3 review before day-1 pickup ran) survive to
+        retry. Non-scenario actions keep the original skip-on-overdue behavior.
+
+        Returns count of actions skipped (rescheduled ones are not counted).
         """
         overdue = self.get_overdue_actions()
+        skipped = 0
+        rescheduled = False
         for action in overdue:
-            self.mark_action_skipped(action.action_id, "overdue - past execution window")
-        return len(overdue)
+            reschedules = action.params.get("reschedule_count", 0)
+            if action.scenario_id and reschedules < self.scenario_max_reschedules:
+                self._reschedule_action(action)
+                rescheduled = True
+            else:
+                self.mark_action_skipped(
+                    action.action_id, "overdue - past execution window"
+                )
+                skipped += 1
+
+        # Heap ordering is by scheduled_time; mutating it above requires a
+        # re-heapify so get_due_actions still walks earliest-first.
+        if rescheduled:
+            heapq.heapify(self.queue._heap)
+        return skipped
+
+    def reschedule_scenario_action(self, action: ScheduledAction) -> bool:
+        """Re-date a single scenario action and restore heap order.
+
+        Used when a lifecycle step's precondition isn't ready yet (an earlier
+        step hasn't completed) so it should wait and retry rather than be
+        skipped. Returns False (and does nothing) once the reschedule cap is hit,
+        letting the caller fall back to normal skip/recalculate handling.
+        """
+        if action.params.get("reschedule_count", 0) >= self.scenario_max_reschedules:
+            return False
+        self._reschedule_action(action)
+        heapq.heapify(self.queue._heap)
+        return True
+
+    def _reschedule_action(self, action: ScheduledAction) -> None:
+        """Re-date an overdue scenario action to the next business-hours slot."""
+        now = self.clock.now()
+        new_time = self.business_hours.schedule_action(now, 0)
+        action.scheduled_time = new_time
+        action.params["reschedule_count"] = action.params.get("reschedule_count", 0) + 1
+        # Persist the new time + counter so a restart doesn't resurrect the old slot.
+        self.store.save_action(action)
+        logger.info(
+            "Rescheduled scenario action %s to %s (attempt %d)",
+            action.action_id, new_time, action.params["reschedule_count"],
+        )
 
     def advance_tick(self) -> pendulum.DateTime:
         """Advance simulation time by tick duration."""
@@ -127,3 +183,16 @@ class Scheduler:
     def get_queue_size(self) -> int:
         """Get number of actions in queue."""
         return self.queue.size()
+
+    def get_scheduled_ticket_keys(self) -> set:
+        """Return ticket keys with a PENDING scheduled action.
+
+        Used to keep the inline "plan and execute now" path from touching
+        tickets the scheduled lifecycle scripts already own, so the two
+        execution paths stay genuinely disjoint (no reconciliation thrash).
+        """
+        return {
+            action.ticket_key
+            for action in self.queue._heap
+            if action.status == ActionStatus.PENDING and action.ticket_key
+        }

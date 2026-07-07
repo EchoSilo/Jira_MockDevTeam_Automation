@@ -7,9 +7,12 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 from jira import JIRA
 from jira.resources import Issue
 import pendulum
+import requests
+import yaml
 
 from .financial_fields import (
     CREATE_TIME_ISSUE_TYPES,
@@ -20,8 +23,24 @@ from .financial_fields import (
 
 logger = logging.getLogger(__name__)
 
-# Configured board ID for sprint operations
-BOARD_ID = 4
+
+def _load_board_id(default: int = 4) -> int:
+    """Load the Jira board ID from config/settings.yaml (sprint.board_id).
+
+    Falls back to `default` if the file or key is missing, so tests and
+    ad-hoc scripts that run without a config directory still work.
+    """
+    try:
+        with open("config/settings.yaml", "r") as f:
+            settings = yaml.safe_load(f) or {}
+        return settings.get("sprint", {}).get("board_id", default)
+    except Exception as e:
+        logger.warning(f"Failed to load sprint.board_id from config, using default {default}: {e}")
+        return default
+
+
+# Configured board ID for sprint operations (config/settings.yaml: sprint.board_id)
+BOARD_ID = _load_board_id()
 
 
 class JiraClient:
@@ -47,6 +66,16 @@ class JiraClient:
         self._status_cache: Optional[list[dict]] = None
         self._status_cache_time: Optional[datetime] = None
         self._cache_ttl = timedelta(hours=1)
+
+        # Teams (GraphQL) — endpoint + discovery cache. cloud_id/org_id can be
+        # pinned via env to skip runtime discovery.
+        self.gql_url = f"{self.url.rstrip('/')}/gateway/api/graphql"
+        self._cloud_id: Optional[str] = os.environ.get("JIRA_CLOUD_ID")
+        self._org_id: Optional[str] = os.environ.get("JIRA_ORG_ID")
+        self._team_map_cache: Optional[dict] = None   # {account_id: team_ari}
+        self._team_meta_cache: Optional[dict] = None   # {team_ari: display_name}
+        self._team_cache_time: Optional[datetime] = None
+        self._gql_timeout = 15  # seconds — keep startup resilient
 
     def get_issue(self, issue_key: str) -> Issue:
         """Fetch a single issue by key."""
@@ -102,6 +131,183 @@ class JiraClient:
         """Force refresh of status cache on next call."""
         self._status_cache = None
         self._status_cache_time = None
+
+    # ==================== Teams (GraphQL) Methods ====================
+
+    def _graphql(
+        self,
+        query: str,
+        variables: Optional[dict] = None,
+        extra_headers: Optional[dict] = None,
+    ) -> dict:
+        """Execute a GraphQL query against the Jira gateway.
+
+        Uses the same Basic auth as the REST client. Raises on transport error
+        or GraphQL ``errors`` so callers can fall back. Read-only usage here.
+        """
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if extra_headers:
+            headers.update(extra_headers)
+        payload: dict = {"query": query}
+        if variables:
+            payload["variables"] = variables
+        resp = requests.post(
+            self.gql_url,
+            json=payload,
+            auth=(self.email, self.api_token),
+            headers=headers,
+            timeout=self._gql_timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(f"GraphQL errors: {data['errors']}")
+        return data.get("data", {})
+
+    def get_cloud_id(self) -> str:
+        """Return the site cloudId (env override JIRA_CLOUD_ID, else discover)."""
+        if self._cloud_id:
+            return self._cloud_id
+        resp = requests.get(
+            f"{self.url.rstrip('/')}/_edge/tenant_info",
+            auth=(self.email, self.api_token),
+            headers={"Accept": "application/json"},
+            timeout=self._gql_timeout,
+        )
+        resp.raise_for_status()
+        self._cloud_id = resp.json()["cloudId"]
+        return self._cloud_id
+
+    def get_org_id(self) -> str:
+        """Return the orgId (env override JIRA_ORG_ID, else discover via GraphQL)."""
+        if self._org_id:
+            return self._org_id
+        host = urlparse(self.url).netloc
+        data = self._graphql(
+            """query GetOrg($hosts: [String!]!) {
+              tenantContexts(hostNames: $hosts) { orgId cloudId }
+            }""",
+            {"hosts": [host]},
+        )
+        contexts = data.get("tenantContexts") or []
+        if not contexts or not contexts[0].get("orgId"):
+            raise RuntimeError(f"Could not resolve orgId for host {host}")
+        self._org_id = contexts[0]["orgId"]
+        return self._org_id
+
+    def list_teams(self) -> list[dict]:
+        """List all Atlassian Teams in the site. Returns [{id, display_name}]."""
+        org_ari = f"ari:cloud:platform::org/{self.get_org_id()}"
+        site_id = self.get_cloud_id()
+        query = """query ListTeams($org: ID!, $sid: String!, $after: String) {
+          team {
+            teamSearchV2(organizationId: $org, siteId: $sid, filter: {}, first: 50, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              nodes { team { id displayName } }
+            }
+          }
+        }"""
+        headers = {"X-ExperimentalApi": "teams-beta"}
+        teams: list[dict] = []
+        after: Optional[str] = None
+        while True:
+            data = self._graphql(
+                query,
+                {"org": org_ari, "sid": site_id, "after": after},
+                extra_headers=headers,
+            )
+            conn = (data.get("team") or {}).get("teamSearchV2") or {}
+            for node in conn.get("nodes") or []:
+                t = node.get("team") or {}
+                if t.get("id"):
+                    teams.append({"id": t["id"], "display_name": t.get("displayName")})
+            page = conn.get("pageInfo") or {}
+            if page.get("hasNextPage") and page.get("endCursor"):
+                after = page["endCursor"]
+            else:
+                break
+        return teams
+
+    def get_team_members(self, team_ari: str) -> list[dict]:
+        """Return a team's members: [{account_id, role, state}]."""
+        site_id = self.get_cloud_id()
+        query = """query GetTeamMembers($id: ID!, $sid: String!, $after: String) {
+          team {
+            teamV2(id: $id, siteId: $sid) {
+              members(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                edges { node { role state member { accountId name } } }
+              }
+            }
+          }
+        }"""
+        headers = {"X-ExperimentalApi": "teams-beta,team-members-beta"}
+        members: list[dict] = []
+        after: Optional[str] = None
+        while True:
+            data = self._graphql(
+                query,
+                {"id": team_ari, "sid": site_id, "after": after},
+                extra_headers=headers,
+            )
+            conn = ((data.get("team") or {}).get("teamV2") or {}).get("members") or {}
+            for edge in conn.get("edges") or []:
+                node = edge.get("node") or {}
+                m = node.get("member") or {}
+                if m.get("accountId"):
+                    members.append(
+                        {
+                            "account_id": m["accountId"],
+                            "role": node.get("role"),
+                            "state": node.get("state"),
+                        }
+                    )
+            page = conn.get("pageInfo") or {}
+            if page.get("hasNextPage") and page.get("endCursor"):
+                after = page["endCursor"]
+            else:
+                break
+        return members
+
+    def get_account_team_map(self, use_cache: bool = True) -> tuple[dict, dict]:
+        """Build (account_id -> team_ari, team_ari -> display_name) from Jira.
+
+        Excludes non-REGULAR members and the org admin (accountId prefix
+        ``70121:``) who appears as ADMIN in every team. Cached with the same TTL
+        as statuses.
+        """
+        if (
+            use_cache
+            and self._team_map_cache is not None
+            and self._team_meta_cache is not None
+            and self._team_cache_time
+            and pendulum.now("UTC") - self._team_cache_time < self._cache_ttl
+        ):
+            return self._team_map_cache, self._team_meta_cache
+
+        account_to_team: dict = {}
+        team_meta: dict = {}
+        for team in self.list_teams():
+            team_ari = team["id"]
+            team_meta[team_ari] = team.get("display_name")
+            for member in self.get_team_members(team_ari):
+                if member.get("role") != "REGULAR":
+                    continue
+                account_id = member["account_id"]
+                if account_id.startswith("70121:"):
+                    continue
+                account_to_team[account_id] = team_ari
+
+        self._team_map_cache = account_to_team
+        self._team_meta_cache = team_meta
+        self._team_cache_time = pendulum.now("UTC")
+        return account_to_team, team_meta
+
+    def invalidate_team_cache(self) -> None:
+        """Force refresh of the team map cache on next call."""
+        self._team_map_cache = None
+        self._team_meta_cache = None
+        self._team_cache_time = None
 
     # ==================== Issue Methods ====================
 
@@ -389,6 +595,26 @@ class JiraClient:
         except Exception:
             return []
 
+    def get_closed_sprints(
+        self, board_id: int = BOARD_ID, max_results: int = 5
+    ) -> list[dict]:
+        """Get recently closed sprints for velocity history, oldest first."""
+        try:
+            sprints = self._client.sprints(board_id, state="closed")
+            result = []
+            for sprint in sprints[-max_results:]:
+                result.append({
+                    "id": sprint.id,
+                    "name": sprint.name,
+                    "state": sprint.state,
+                    "start_date": getattr(sprint, "startDate", None),
+                    "end_date": getattr(sprint, "endDate", None),
+                })
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to get closed sprints: {e}")
+            return []
+
     def get_sprint_issues(
         self,
         sprint_id: int,
@@ -400,6 +626,26 @@ class JiraClient:
             type_str = ", ".join(f'"{t}"' for t in issue_types)
             jql += f" AND issuetype IN ({type_str})"
         return self._client.search_issues(jql)
+
+    def get_issues_by_keys(
+        self,
+        keys: list[str],
+        fields: Optional[str] = None,
+    ) -> list[Issue]:
+        """Batch-fetch issues by key in a single JQL search.
+
+        Returns raw Issue objects; pass a comma-separated ``fields`` string to
+        limit the payload (e.g. "summary,status,assignee,customfield_10016").
+        Empty input returns an empty list without hitting Jira.
+        """
+        if not keys:
+            return []
+        # De-duplicate while preserving order to avoid an oversized JQL clause.
+        unique_keys = list(dict.fromkeys(keys))
+        jql = f"key in ({','.join(unique_keys)})"
+        return self._client.search_issues(
+            jql, maxResults=len(unique_keys), fields=fields
+        )
 
     def add_issue_to_sprint(self, sprint_id: int, issue_keys: list[str]) -> bool:
         """Add issues to a sprint.
@@ -485,11 +731,17 @@ class JiraClient:
     ) -> Optional[dict]:
         """Create a new sprint on the board."""
         try:
+            # Accept either date/datetime objects or pre-formatted ISO strings.
+            # (SprintPlanner passes ISO strings; calling .isoformat() on a str
+            # used to raise and get swallowed by the except below -> silent None.)
+            def _iso(v):
+                return v if isinstance(v, str) else v.isoformat()
+
             sprint_data = {"name": name, "board_id": board_id}
             if start_date:
-                sprint_data["startDate"] = start_date.isoformat()
+                sprint_data["startDate"] = _iso(start_date)
             if end_date:
-                sprint_data["endDate"] = end_date.isoformat()
+                sprint_data["endDate"] = _iso(end_date)
 
             sprint = self._client.create_sprint(**sprint_data)
             return {
@@ -499,7 +751,8 @@ class JiraClient:
                 "start_date": getattr(sprint, "startDate", None),
                 "end_date": getattr(sprint, "endDate", None),
             }
-        except Exception:
+        except Exception as e:
+            logger.error("create_sprint('%s') failed: %s", name, e)
             return None
 
     def start_sprint(

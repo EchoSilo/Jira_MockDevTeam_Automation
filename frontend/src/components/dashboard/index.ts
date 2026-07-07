@@ -5,6 +5,7 @@ export { ScenarioDistributionChart } from './ScenarioDistributionChart';
 export { ActiveScenariosCard } from './ActiveScenariosCard';
 export { SprintOverviewCard } from './SprintOverviewCard';
 export { SprintHealthCard } from './SprintHealthCard';
+export { FutureSprintsCard } from './FutureSprintsCard';
 export { AgentCard } from './AgentCard';
 export { WorkloadCard } from './WorkloadCard';
 export { VelocityChart } from './VelocityChart';

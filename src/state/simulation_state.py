@@ -70,6 +70,12 @@ def _assign_qa_to_testing_scenarios(state: SimulationState) -> None:
     with open(personas_path, "r") as f:
         personas = yaml.safe_load(f)
 
+    # Persona team is no longer stored in the YAML — it's derived from Jira at
+    # startup. This is an independent parse, so replay the last-good team map
+    # from the disk cache before reading `team` below.
+    from src.services.team_resolver import apply_persona_team_cache
+    apply_persona_team_cache(personas)
+
     # Build team -> qa_agent mapping
     team_qa = {}
     for agent_id, config in personas.get("agents", {}).items():
@@ -229,20 +235,59 @@ def _convert_ticket_to_scenario(ticket_key: str, old_ticket: dict) -> Optional[A
 def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) -> SimulationState:
     """
     Sync simulation state with actual Jira board state.
-    Creates scenarios for tickets not yet tracked.
-    Updates phases for tickets that have changed status.
+
+    Scoped to the ACTIVE sprint so the tracked scenario picture matches what the
+    board actually shows (the "proper state of the backlog"):
+      - Creates scenarios for active-sprint tickets not yet tracked.
+      - Completes tracked scenarios whose ticket is Done/Closed/Resolved.
+      - Reconciles reassignment (Jira assignee changed).
+      - Reconciles removal: drops tracked scenarios whose ticket Jira no longer
+        shows in the active sprint (moved to backlog / another sprint / deleted).
+
+    If there is no active sprint, falls back to the legacy all-active-issues
+    behavior and skips removal reconciliation (nothing to scope against).
 
     Note: Sprint state (sprint_number, sprint_day) is handled via inject_jira_sprint()
     at the start of each tick, not in this function. This function only syncs scenarios.
     """
-    # Get all active tickets from Jira
+    # Determine the active sprint so we reconcile against the sprint board,
+    # not every open issue across all sprints.
     try:
-        jira_tickets = jira_client.get_all_active_issues()
+        active_sprint = jira_client.get_active_sprint()
+    except Exception as e:
+        logger.error(f"Failed to get active sprint for sync: {e}")
+        active_sprint = None
+
+    active_sprint_id = active_sprint.get("id") if active_sprint else None
+
+    try:
+        if active_sprint_id:
+            jira_tickets = jira_client.get_sprint_issues(active_sprint_id)
+        else:
+            jira_tickets = jira_client.get_all_active_issues()
     except Exception as e:
         logger.error(f"Failed to sync state with Jira: {e}")
         return state
 
-    tracked_tickets = {s.ticket_key for s in state.active_scenarios.values()}
+    # Status -> phase map (includes .title() variants for case normalization)
+    jira_status_to_phase = {
+        "To Do": ScenarioPhase.BACKLOG,
+        "Backlog": ScenarioPhase.BACKLOG,
+        "Selected For Development": ScenarioPhase.ASSIGNED,  # .title() variant
+        "In Progress": ScenarioPhase.IN_PROGRESS,
+        "Code Review": ScenarioPhase.IN_REVIEW,
+        "In Review": ScenarioPhase.IN_REVIEW,
+        "Ready For Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "READY FOR QA"
+        "Testing": ScenarioPhase.IN_TESTING,
+        "QA": ScenarioPhase.IN_TESTING,
+        "Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "QA"
+        "Done": ScenarioPhase.COMPLETED,
+        "Closed": ScenarioPhase.COMPLETED,
+    }
+
+    tracked_by_key = {s.ticket_key: s for s in state.active_scenarios.values()}
+    # Keys Jira currently shows as live (non-done) in the sync scope.
+    live_jira_keys: set[str] = set()
 
     for ticket in jira_tickets:
         ticket_key = ticket.key
@@ -258,35 +303,21 @@ def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) ->
                 state.complete_scenario(scenario.scenario_id)
             continue
 
-        # If not tracked, create a new scenario
-        if ticket_key not in tracked_tickets:
-            complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
-            assigned_agent = _find_agent_by_jira_account(
-                personas,
-                assignee.accountId if assignee else None
-            )
+        live_jira_keys.add(ticket_key)
+        assigned_agent = _find_agent_by_jira_account(
+            personas,
+            assignee.accountId if assignee else None
+        )
 
+        existing = tracked_by_key.get(ticket_key)
+        if existing is None:
+            # Not tracked - create a new scenario
+            complexity = ISSUE_TYPE_TO_COMPLEXITY.get(issue_type, TicketComplexity.STORY)
             scenario = ActiveScenario.create_normal_flow(
                 ticket_key=ticket_key,
                 complexity=complexity,
                 assigned_agent=assigned_agent,
             )
-
-            # Set phase based on current Jira status (includes .title() variants for case normalization)
-            jira_status_to_phase = {
-                "To Do": ScenarioPhase.BACKLOG,
-                "Backlog": ScenarioPhase.BACKLOG,
-                "Selected For Development": ScenarioPhase.ASSIGNED,  # .title() variant
-                "In Progress": ScenarioPhase.IN_PROGRESS,
-                "Code Review": ScenarioPhase.IN_REVIEW,
-                "In Review": ScenarioPhase.IN_REVIEW,
-                "Ready For Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "READY FOR QA"
-                "Testing": ScenarioPhase.IN_TESTING,
-                "QA": ScenarioPhase.IN_TESTING,
-                "Qa": ScenarioPhase.IN_TESTING,  # .title() variant of "QA"
-                "Done": ScenarioPhase.COMPLETED,
-                "Closed": ScenarioPhase.COMPLETED,
-            }
             if status in jira_status_to_phase:
                 scenario.current_phase = jira_status_to_phase[status]
 
@@ -295,8 +326,44 @@ def sync_state_with_jira(state: SimulationState, jira_client, personas: dict) ->
             # Update agent assignment
             if assigned_agent:
                 state.get_agent_state(assigned_agent).assign_ticket(ticket_key)
+        elif assigned_agent and existing.assigned_agent != assigned_agent:
+            # Reconcile a reassignment that happened in Jira
+            _reassign_scenario(state, existing, assigned_agent)
+
+    # Reconcile removal: drop tracked scenarios Jira no longer shows in the active
+    # sprint. Only when we actually scoped to a sprint (else we'd nuke everything).
+    if active_sprint_id:
+        for scenario in list(state.active_scenarios.values()):
+            if scenario.ticket_key not in live_jira_keys:
+                _drop_scenario(state, scenario)
 
     return state
+
+
+def _reassign_scenario(state: SimulationState, scenario: ActiveScenario, new_agent: str) -> None:
+    """Move a tracked scenario's assignment to a new agent to match Jira."""
+    old_agent = scenario.assigned_agent
+    if old_agent and old_agent in state.agents:
+        state.agents[old_agent].unassign_ticket(scenario.ticket_key)
+    scenario.assigned_agent = new_agent
+    if new_agent not in scenario.involved_agents:
+        scenario.involved_agents.append(new_agent)
+    state.get_agent_state(new_agent).assign_ticket(scenario.ticket_key)
+    logger.info(f"Reconciled reassignment of {scenario.ticket_key} -> {new_agent}")
+
+
+def _drop_scenario(state: SimulationState, scenario: ActiveScenario) -> None:
+    """Remove a scenario Jira no longer shows in the active sprint.
+
+    This is a reconciliation (moved to backlog / another sprint / deleted), NOT a
+    completion, so it does not record a completion for velocity purposes.
+    """
+    if scenario.assigned_agent and scenario.assigned_agent in state.agents:
+        state.agents[scenario.assigned_agent].unassign_ticket(scenario.ticket_key)
+    state.active_scenarios.pop(scenario.scenario_id, None)
+    logger.info(
+        f"Reconciled out scenario {scenario.ticket_key} - no longer in active sprint"
+    )
 
 
 def _find_agent_by_jira_account(personas: dict, account_id: Optional[str]) -> Optional[str]:

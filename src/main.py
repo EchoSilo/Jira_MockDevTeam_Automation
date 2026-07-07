@@ -36,6 +36,7 @@ import litellm
 from .state import load_state, save_state, SimulationState, sync_state_with_jira, validate_state_agent_ids
 from .services import JiraClient, LLMService
 from .services.agent_client_registry import AgentClientRegistry
+from .services.team_resolver import resolve_persona_teams, apply_persona_team_cache
 from .orchestrator import ScenarioOrchestrator
 from .logging import AsyncLogWriter, LoggedLLMService, LoggedJiraClient, logs_router
 from .time import Clock, RealClock, get_clock, validate_business_hours
@@ -43,7 +44,7 @@ from .scheduling import Scheduler
 from .scheduling.persistence import ScheduledActionStore
 from .scheduling.virtual_clock import VirtualClock, RealtimeClock
 from .orchestrator.tick_executor import TickExecutor
-from .planning import SprintPlanner
+from .planning import SprintPlanner, CapacityPlanner
 from .chaos import (
     RandomEventGenerator,
     ScenarioAdapter,
@@ -257,30 +258,43 @@ def _rebuild_agent_workloads_from_jira(
 
 def _sync_planning_horizon_from_jira(
     state: SimulationState,
-    jira_client: JiraClient
+    jira_client: JiraClient,
+    target_sprints: int = 3,
 ) -> None:
     """
     Rebuild planning horizon from actual Jira sprints.
 
     Fetches future sprints from Jira and populates the planning horizon
-    to ensure sprint planning reflects Jira reality.
+    to ensure sprint planning reflects Jira reality. Always rebuilds the
+    horizon (even to empty) so stale "planned" sprints that were deleted or
+    started in Jira do not linger in state.json.
+
+    Also reads each future sprint's actual issues so committed_items/
+    committed_points mirror what Jira really has committed, instead of
+    always zeroing them out. Without this, this "sync" step discarded any
+    real committed points every tick, only for plan_to_horizon() to
+    re-fabricate a fresh (possibly wrong) total right after.
 
     Args:
         state: SimulationState to update
         jira_client: Jira client for API calls
+        target_sprints: Number of future sprints to maintain (min_sprints)
     """
     from src.planning.models import PlanningHorizon, SprintPlan, SprintPlanStatus
 
     future_sprints = jira_client.get_future_sprints(max_results=4)
 
-    if not future_sprints:
-        return
+    horizon = PlanningHorizon(min_sprints=target_sprints)
 
-    horizon = PlanningHorizon()
-
-    for jira_sprint in future_sprints:
-        start_date = pendulum.parse(jira_sprint["startDate"]) if jira_sprint.get("startDate") else None
-        end_date = pendulum.parse(jira_sprint["endDate"]) if jira_sprint.get("endDate") else None
+    for jira_sprint in future_sprints or []:
+        # get_future_sprints() returns snake_case keys (start_date/end_date).
+        # Reading camelCase here silently yielded None for every sprint, so the
+        # horizon always looked empty and the planner thought it must create 3
+        # more every tick. Accept both spellings to be safe.
+        raw_start = jira_sprint.get("start_date") or jira_sprint.get("startDate")
+        raw_end = jira_sprint.get("end_date") or jira_sprint.get("endDate")
+        start_date = pendulum.parse(raw_start) if raw_start else None
+        end_date = pendulum.parse(raw_end) if raw_end else None
 
         sprint_number = 1
         if jira_sprint.get("name"):
@@ -289,16 +303,153 @@ def _sync_planning_horizon_from_jira(
             except (ValueError, IndexError):
                 pass
 
+        committed_items: list[str] = []
+        committed_points = 0
+        sprint_id = jira_sprint.get("id")
+        if sprint_id:
+            try:
+                issues = jira_client.get_sprint_issues(sprint_id)
+                committed_items = [issue.key for issue in issues]
+                # Use estimated points (type-based fallback), not raw
+                # customfield_10016, which is null on nearly all real backlog
+                # issues in this project - summing raw points alone would
+                # silently read 0 even for a sprint with real committed items.
+                capacity_planner = CapacityPlanner()
+                backlog_items = capacity_planner.issues_to_backlog_items(issues)
+                committed_points = capacity_planner.get_selection_summary(
+                    backlog_items
+                )["total_points"]
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(
+                    "Could not read issues for future sprint %s: %s", sprint_id, e
+                )
+
         if start_date and end_date:
             plan = SprintPlan(
                 sprint_number=sprint_number,
                 start_date=start_date,
                 end_date=end_date,
+                committed_items=committed_items,
+                committed_points=committed_points,
                 status=SprintPlanStatus.PLANNED,
+                scenario_id=str(sprint_id) if sprint_id is not None else None,
             )
             horizon.future_sprints.append(plan)
 
     state.set_planning_horizon(horizon)
+
+
+def _update_predicted_spillover(
+    state: SimulationState,
+    jira_client: JiraClient,
+) -> None:
+    """Estimate points at risk of spilling out of the active sprint, based on
+    its current burndown pace vs. ideal, and store the result on the
+    planning horizon for the next sprint-planning pass to discount against.
+
+    Runs every tick (unlike the once-per-sprint gated planning logic) so the
+    estimate stays current as the active sprint progresses. Overwrites (does
+    not accumulate) the stored value each call - it reflects current, not
+    historical, risk.
+    """
+    horizon = state.get_planning_horizon()
+    horizon.predicted_spillover_points = 0
+
+    active_sprint = jira_client.get_active_sprint()
+    start_raw = active_sprint.get("start_date") if active_sprint else None
+    end_raw = active_sprint.get("end_date") if active_sprint else None
+    if not active_sprint or not start_raw or not end_raw:
+        state.set_planning_horizon(horizon)
+        return
+
+    try:
+        start_date = pendulum.parse(start_raw)
+        end_date = pendulum.parse(end_raw)
+        sprint_id = active_sprint.get("id")
+        issues = jira_client.get_sprint_issues(sprint_id) if sprint_id else []
+    except Exception as e:  # pylint: disable=broad-except
+        logger.warning("Could not compute predicted spillover: %s", e)
+        state.set_planning_horizon(horizon)
+        return
+
+    # Estimated points (type-based fallback), not raw customfield_10016,
+    # which is null on nearly all real backlog issues in this project - see
+    # CapacityPlanner._estimate_points.
+    capacity_planner = CapacityPlanner()
+    backlog_items = capacity_planner.issues_to_backlog_items(issues)
+    total_points = capacity_planner.get_selection_summary(backlog_items)["total_points"]
+
+    not_done_items = [
+        item for item, issue in zip(backlog_items, issues)
+        if issue.fields.status.name.lower() not in ("done", "closed", "resolved")
+    ]
+    actual_remaining_points = capacity_planner.get_selection_summary(
+        not_done_items
+    )["total_points"]
+
+    # Same ideal-burndown-curve pattern as /api/sprint-data's burndown chart
+    # (day 0 -> full capacity remaining, so a sprint that just started is
+    # never falsely flagged as at risk).
+    total_days = max(1, (end_date - start_date).days)
+    days_elapsed = max(0, (pendulum.now("UTC") - start_date).days)
+    ideal_remaining_fraction = max(0.0, 1 - (days_elapsed / total_days))
+    ideal_remaining_points = total_points * ideal_remaining_fraction
+
+    horizon.predicted_spillover_points = max(
+        0, round(actual_remaining_points - ideal_remaining_points)
+    )
+    state.set_planning_horizon(horizon)
+
+
+def _should_run_sprint_planning(state: SimulationState) -> bool:
+    """True if full sprint planning (top-up + create-new) hasn't run yet for
+    the current sprint. Gates planning to once per sprint - the manual
+    /plan-future-sprints endpoint bypasses this entirely by design."""
+    return state.sprint.sprint_number != state.last_planned_for_sprint
+
+
+def _record_sprint_velocity(
+    jira_client: JiraClient,
+    state: SimulationState,
+    sprint_id: int,
+    sprint_number: int,
+) -> None:
+    """Record a just-completed sprint's velocity for capacity planning.
+
+    Reads the closing sprint's issues from Jira, sums committed (all) vs.
+    completed (statusCategory == "Done") story points, and feeds the
+    VelocityTracker. Without this, velocity history stays empty and
+    CapacityPlanner forever falls back to the flat default of 20 points.
+    Also marks the sprint completed in the planning horizon.
+    """
+    try:
+        issues = jira_client.get_sprint_issues(sprint_id)
+    except Exception as e:  # pylint: disable=broad-except
+        logger.warning("Could not read issues for closing sprint %s: %s", sprint_id, e)
+        return
+
+    committed = 0
+    completed = 0
+    for issue in issues:
+        points = getattr(issue.fields, "customfield_10016", None) or 0
+        committed += points
+        status = getattr(issue.fields, "status", None)
+        category = getattr(getattr(status, "statusCategory", None), "name", None)
+        if category == "Done":
+            completed += points
+
+    tracker = state.get_velocity_tracker()
+    tracker.record_sprint(sprint_number, int(committed), int(completed))
+    state.set_velocity_tracker(tracker)
+
+    horizon = state.get_planning_horizon()
+    horizon.complete_sprint(sprint_number)
+    state.set_planning_horizon(horizon)
+
+    logger.info(
+        "Recorded velocity for sprint %s: %d/%d points completed",
+        sprint_number, int(completed), int(committed),
+    )
 
 
 def check_and_handle_expired_sprint(
@@ -347,9 +498,22 @@ def check_and_handle_expired_sprint(
                 f"End date: {end_date_str}"
             )
 
+            # Record velocity for the sprint that is about to close (needs the
+            # sprint's issues while it still resolves via its Jira id). Feeds
+            # capacity planning so it stops defaulting to 20 points.
+            if state is not None and sprint_id is not None:
+                try:
+                    closing_number = int(str(sprint_name).split()[-1])
+                    _record_sprint_velocity(jira_client, state, sprint_id, closing_number)
+                except (ValueError, IndexError):
+                    logger.warning("Could not derive sprint number from %r", sprint_name)
+
             # Load configs if not provided
             if personas is None or settings is None:
                 _settings, _personas, _ = load_config()
+                # This is an independent parse of personas.yaml (team is no longer
+                # in the file); replay the Jira-derived team map from disk cache.
+                apply_persona_team_cache(_personas)
                 personas = personas or _personas
                 settings = settings or _settings
 
@@ -450,6 +614,26 @@ async def lifespan(app: FastAPI):
     app.state.jira = JiraClient()
     app.state.llm = LLMService()
 
+    # Fail fast + loud if the LLM isn't callable (out of Anthropic credits or a
+    # bad key). Otherwise every tick's crews silently return empty results and
+    # mark work "done". Kills the process here rather than running blind.
+    app.state.llm.assert_llm_available(context="startup")
+
+    # Derive each persona's team from Jira Team membership (via GraphQL) and
+    # inject it into app.state.personas, so all downstream config.get("team")
+    # readers work unchanged. Falls back to the last-good disk cache if Jira is
+    # unreachable; keys (alpha/beta) stay stable regardless.
+    try:
+        report = resolve_persona_teams(app.state.personas, app.state.jira)
+        logger.info(f"Jira team resolution: {report}")
+    except Exception as e:
+        logger.warning(f"Jira team resolution failed; using cache fallback: {e}")
+        if not apply_persona_team_cache(app.state.personas):
+            logger.warning(
+                "No team map cache available; personas have no team until a "
+                "successful Jira resolution."
+            )
+
     # Per-agent Jira client registry for per-agent attribution. Validates each
     # team member's token at startup (JIRA_EMAIL_<NAME>/JIRA_API_TOKEN_<NAME>) and
     # logs a report; agents without creds fall back to the shared admin client.
@@ -473,7 +657,11 @@ async def lifespan(app: FastAPI):
 
     store = ScheduledActionStore(db_path=scheduler_db_path)
     realtime_clock = RealtimeClock(tick_duration_hours=tick_duration)
-    app.state.scheduler = Scheduler(store=store, virtual_clock=realtime_clock)
+    app.state.scheduler = Scheduler(
+        store=store,
+        virtual_clock=realtime_clock,
+        scenario_max_reschedules=scheduler_config.get("scenario_max_reschedules", 3),
+    )
 
     # Initialize SprintPlanner (Phase 3)
     app.state.sprint_planner = SprintPlanner(
@@ -481,6 +669,7 @@ async def lifespan(app: FastAPI):
         llm_service=app.state.llm,
         scheduler=app.state.scheduler,
         settings=settings,
+        personas=personas,
     )
 
     # Initialize chaos components (Phase 4)
@@ -648,6 +837,11 @@ async def trigger_simulation():
         logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
         logged_llm = LoggedLLMService(log_writer=app.state.log_writer)
 
+        # Pre-flight the LLM before doing any crew work this tick. If Anthropic
+        # credits ran out since startup, die loudly instead of executing a tick
+        # whose crews would silently no-op (empty LLM responses marked as done).
+        app.state.llm.assert_llm_available(context="trigger-tick")
+
         # EARLY: Inject Jira sprint data (source of truth for sprint_number/day)
         # This must happen before any sprint-dependent logic
         previous_sprint_number = state.sprint.sprint_number  # From cached Jira data
@@ -696,16 +890,54 @@ async def trigger_simulation():
         state = validate_state_agent_ids(state, app.state.personas)
 
         # Check if sprint planning needed (PLAN-08)
-        # This maintains 2-3 sprint planning horizon
+        # This maintains the future-sprint planning horizon.
+        # First reconcile the horizon against the REAL Jira board so the planning
+        # gate reflects what actually exists (not a stale state.json mirror), then
+        # top up future sprints - creating AND populating them - up to the target.
         planning_result = None
+        target_future_sprints = (
+            app.state.settings.get("sprint", {}).get("planning_horizon_sprints", 3)
+        )
+        try:
+            _sync_planning_horizon_from_jira(
+                state, logged_jira, target_sprints=target_future_sprints
+            )
+        except Exception as horizon_error:
+            logger.error(f"Planning horizon sync failed: {horizon_error}")
+
+        try:
+            _update_predicted_spillover(state, logged_jira)
+        except Exception as spillover_error:
+            logger.error(f"Predicted spillover update failed: {spillover_error}")
+
+        # Full sprint planning (top-up existing future sprints + create new
+        # ones) is gated to run once per real sprint - not every tick - unless
+        # forced via POST /plan-future-sprints. state.last_planned_for_sprint
+        # is only written after BOTH calls below succeed, so a mid-run
+        # failure retries next tick instead of being silently marked done.
         if hasattr(app.state, 'sprint_planner') and app.state.sprint_planner:
-            try:
-                # Use alpha_pm as default PM for planning
-                planning_result = app.state.sprint_planner.check_and_plan(state, "alpha_pm")
-                if planning_result:
-                    logger.info(f"Sprint planning completed: {planning_result}")
-            except Exception as e:
-                logger.error(f"Sprint planning failed: {e}")
+            if not _should_run_sprint_planning(state):
+                logger.debug(
+                    f"Sprint planning already done for sprint {state.sprint.sprint_number}, skipping"
+                )
+            else:
+                try:
+                    top_up_result = app.state.sprint_planner.top_up_future_sprints(
+                        state, "alpha_pm"
+                    )
+                    if top_up_result and top_up_result.get("sprints_populated"):
+                        logger.info(f"Future sprint top-up completed: {top_up_result}")
+
+                    # Use alpha_pm as default PM for planning
+                    planning_result = app.state.sprint_planner.plan_to_horizon(
+                        state, "alpha_pm", target_sprints=target_future_sprints
+                    )
+                    if planning_result and planning_result.get("sprints_planned"):
+                        logger.info(f"Sprint planning completed: {planning_result}")
+
+                    state.last_planned_for_sprint = state.sprint.sprint_number
+                except Exception as e:
+                    logger.error(f"Sprint planning failed: {e}")
 
         # Create orchestrator with logged services for this tick
         clock = RealClock()
@@ -726,7 +958,9 @@ async def trigger_simulation():
         tick_executor = TickExecutor(
             scheduler=app.state.scheduler,
             jira_client=logged_jira,
-            max_actions_per_tick=4,
+            max_actions_per_tick=app.state.settings.get("scheduler", {}).get(
+                "max_actions_per_tick", 8
+            ),
             per_ticket_breaker=_per_ticket_breaker,
             pathfinding_adapter=_pathfinding_adapter,
         )
@@ -755,7 +989,13 @@ async def trigger_simulation():
 
             thread = threading.Thread(target=run_async)
             thread.start()
-            thread.join(timeout=60)  # 60 second timeout
+            # Generous per-action budget so an LLM call that hits the free-pool rate
+            # limit has room to back off and retry (litellm num_retries) instead of
+            # being abandoned mid-retry. Perf is not a goal for this mock simulator.
+            _join_timeout = app.state.settings.get("performance", {}).get(
+                "action_join_timeout_seconds", 180
+            )
+            thread.join(timeout=_join_timeout)
 
             if exception:
                 raise exception
@@ -855,12 +1095,15 @@ async def trigger_simulation():
         # Self-contained tick (the intended model): the orchestrator executes the actions
         # it just planned against the CURRENT board (Phase 3), instead of deferring them
         # to a future tick via the scheduler queue. TickExecutor above already ran any
-        # genuinely due scheduled/calendar work (sprint scripts); that action set is
-        # disjoint from the freshly-planned actions, so nothing double-executes.
+        # genuinely due scheduled/calendar work (sprint scripts). To keep the two action
+        # sets disjoint (so nothing double-drives a ticket), we ENFORCE it: tickets still
+        # owned by a pending scheduled lifecycle step are excluded from the inline path.
+        scheduled_ticket_keys = app.state.scheduler.get_scheduled_ticket_keys()
         orchestrator_results = await orchestrator.run_tick(
             state=state,
             intensity=intensity,
             skip_execution=False,  # self-contained: plan AND act this tick
+            exclude_ticket_keys=scheduled_ticket_keys,
         )
 
         # Merge results (scheduled actions + freshly-planned actions + chaos metrics)
@@ -1052,19 +1295,19 @@ async def get_sprint_data():
         # Get velocity from closed sprints
         velocity_data = []
         try:
-            closed_sprints = jira._client.sprints(4, state="closed")  # Board ID 4
-            for sprint in closed_sprints[-5:]:  # Last 5 sprints
-                sprint_num = int(''.join(filter(str.isdigit, sprint.name)) or '0')
+            closed_sprints = jira.get_closed_sprints(max_results=5)
+            for sprint in closed_sprints:
+                sprint_num = int(''.join(filter(str.isdigit, sprint["name"])) or '0')
                 # Count done issues in this sprint
                 done_count = 0
                 try:
-                    sprint_issues_closed = jira.get_sprint_issues(sprint.id)
+                    sprint_issues_closed = jira.get_sprint_issues(sprint["id"])
                     done_count = sum(1 for i in sprint_issues_closed if i.fields.status.name.lower() in ["done", "closed", "resolved"])
                 except Exception as e:
-                    logger.warning(f"Failed to get sprint issues for {sprint.name}: {e}")
+                    logger.warning(f"Failed to get sprint issues for {sprint['name']}: {e}")
                 velocity_data.append({
                     "sprintNumber": sprint_num,
-                    "sprintName": sprint.name,
+                    "sprintName": sprint["name"],
                     "completedItems": done_count,
                 })
         except Exception as e:
@@ -1689,7 +1932,11 @@ async def sync_reset_state():
         _rebuild_agent_workloads_from_jira(new_state, jira_client, app.state.personas, sprint_id=sprint_id)
 
         # 4. Sync planning horizon from Jira future sprints
-        _sync_planning_horizon_from_jira(new_state, jira_client)
+        _sync_planning_horizon_from_jira(
+            new_state,
+            jira_client,
+            target_sprints=app.state.settings.get("sprint", {}).get("planning_horizon_sprints", 3),
+        )
 
         # === Phase 3: Scheduler Infrastructure Reset ===
         scheduler = app.state.scheduler
@@ -1866,6 +2113,219 @@ async def force_sprint_planning():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/plan-future-sprints")
+async def plan_future_sprints():
+    """
+    Force planning + population of FUTURE sprints on demand (distinct from a tick).
+
+    A tick only drains due scheduled actions; this operation creates future
+    sprints on the board (matching the active sprint's cadence/naming) and
+    populates each with prioritized backlog items, bringing the planning
+    horizon up to the configured target. Idempotent: if the horizon is already
+    satisfied, no new sprints are created.
+    """
+    if not (hasattr(app.state, 'sprint_planner') and app.state.sprint_planner):
+        raise HTTPException(status_code=503, detail="Sprint planner not available")
+
+    try:
+        state = load_state()
+        state = validate_state_agent_ids(state, app.state.personas)
+
+        logged_jira = LoggedJiraClient(log_writer=app.state.log_writer)
+
+        # Anchor to the live active sprint (source of truth for cadence/naming)
+        jira_sprint = logged_jira.get_active_sprint()
+        state.sprint.inject_jira_sprint(jira_sprint, current_time=pendulum.now("UTC"))
+
+        target_future_sprints = (
+            app.state.settings.get("sprint", {}).get("planning_horizon_sprints", 3)
+        )
+
+        # Reconcile horizon against the real board, refresh the spillover
+        # estimate, then top up + plan to target. Manual call - always runs,
+        # bypassing the once-per-sprint gate the tick flow uses.
+        _sync_planning_horizon_from_jira(
+            state, logged_jira, target_sprints=target_future_sprints
+        )
+        _update_predicted_spillover(state, logged_jira)
+
+        top_up_result = app.state.sprint_planner.top_up_future_sprints(
+            state, "alpha_pm"
+        )
+        result = app.state.sprint_planner.plan_to_horizon(
+            state, "alpha_pm", target_sprints=target_future_sprints
+        )
+        state.last_planned_for_sprint = state.sprint.sprint_number
+
+        save_state(state)
+        _state_cache.update(state)
+
+        horizon = state.get_planning_horizon()
+        return {
+            "success": True,
+            "active_sprint": jira_sprint.get("name") if jira_sprint else None,
+            "target_future_sprints": target_future_sprints,
+            "future_sprints_planned_now": result.get("sprints_planned", 0),
+            "sprints_populated": top_up_result.get("sprints_populated", 0),
+            "future_sprint_count": horizon.get_sprint_count(),
+            "result": result,
+            "top_up_result": top_up_result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Future sprint planning failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _derive_future_sprint_name(active_sprint_name: Optional[str], sprint_number: int) -> str:
+    """Derive a display name for a planned sprint from the active sprint's naming.
+
+    Mirrors SprintPlanner._derive_sprint_prefix: 'ESCRUM Sprint 10' -> 'ESCRUM Sprint 11'.
+    Falls back to 'Sprint N' when the active sprint name is unavailable.
+    """
+    if active_sprint_name:
+        parts = active_sprint_name.rsplit(" ", 1)
+        prefix = parts[0] if len(parts) == 2 and parts[1].isdigit() else active_sprint_name
+        return f"{prefix} {sprint_number}"
+    return f"Sprint {sprint_number}"
+
+
+def _fetch_future_sprint_item_details(keys: list[str]) -> dict[str, dict]:
+    """Batch-fetch Jira details (summary, status, assignee, points) for issue keys.
+
+    Returns a ``key -> detail`` map. On any Jira error returns an empty map so
+    the horizon view still renders with bare keys instead of failing.
+    """
+    if not keys:
+        return {}
+    try:
+        team_lookup = build_account_team_lookup(app.state.personas)
+        issues = app.state.jira.get_issues_by_keys(
+            keys, fields="summary,status,assignee,customfield_10016"
+        )
+    except Exception as e:  # pylint: disable=broad-except
+        logger.warning(f"Could not fetch future-sprint item details: {e}")
+        return {}
+
+    details: dict[str, dict] = {}
+    for issue in issues:
+        assignee = getattr(issue.fields, "assignee", None)
+        account_id = getattr(assignee, "accountId", None) if assignee else None
+        agent_info = team_lookup.get(account_id, {}) if account_id else {}
+        # Prefer the simulator's persona display name; fall back to Jira's.
+        assignee_name = agent_info.get("display_name") or (
+            getattr(assignee, "displayName", None) if assignee else None
+        )
+        status = getattr(issue.fields, "status", None)
+        details[issue.key] = {
+            "key": issue.key,
+            "summary": getattr(issue.fields, "summary", None) or "",
+            "status": getattr(status, "name", None) if status else None,
+            "assignee": assignee_name,
+            "assignee_id": account_id,
+            "agent_id": agent_info.get("agent_id"),
+            "team": agent_info.get("team"),
+            "points": getattr(issue.fields, "customfield_10016", None) or 0,
+        }
+    return details
+
+
+def _build_workload(items: list[dict]) -> list[dict]:
+    """Aggregate committed items into per-assignee workload (count + points)."""
+    buckets: dict[str, dict] = {}
+    for item in items:
+        name = item.get("assignee") or "Unassigned"
+        bucket = buckets.setdefault(
+            name,
+            {
+                "assignee": name,
+                "agent_id": item.get("agent_id"),
+                "team": item.get("team"),
+                "item_count": 0,
+                "points": 0,
+            },
+        )
+        bucket["item_count"] += 1
+        bucket["points"] += item.get("points") or 0
+    # Heaviest workload first; keep "Unassigned" last for readability.
+    return sorted(
+        buckets.values(),
+        key=lambda b: (b["assignee"] == "Unassigned", -b["points"], -b["item_count"]),
+    )
+
+
+@app.get("/api/future-sprints")
+async def get_future_sprints():
+    """Read-only view of the planning horizon (2-3 future sprints planned ahead).
+
+    Returns the planned-but-not-yet-started sprints with derived display names,
+    per-item details (summary/status/assignee/points), and per-assignee workload.
+    The horizon itself comes from cached state; item details are batch-fetched
+    from Jira in a single JQL search (best-effort — falls back to bare keys).
+    Use POST /plan-future-sprints to actually create/populate future sprints.
+    """
+    from src.planning.models import SprintPlanStatus
+
+    state = _state_cache.get()
+    horizon = state.get_planning_horizon()
+    active_sprint_name = state.sprint.jira_sprint_name
+
+    planned = [s for s in horizon.future_sprints if s.status == SprintPlanStatus.PLANNED]
+    planned.sort(key=lambda s: s.sprint_number)
+
+    # One batched Jira call for every committed key across all planned sprints.
+    all_keys = [k for s in planned for k in s.committed_items]
+    detail_map = _fetch_future_sprint_item_details(all_keys)
+
+    future_sprints = []
+    for s in planned:
+        items = [
+            detail_map.get(
+                key,
+                {
+                    "key": key,
+                    "summary": "",
+                    "status": None,
+                    "assignee": None,
+                    "assignee_id": None,
+                    "agent_id": None,
+                    "team": None,
+                    "points": 0,
+                },
+            )
+            for key in s.committed_items
+        ]
+        future_sprints.append(
+            {
+                "sprint_id": s.sprint_id,
+                "sprint_number": s.sprint_number,
+                "name": _derive_future_sprint_name(active_sprint_name, s.sprint_number),
+                "start_date": s.start_date.isoformat() if s.start_date else None,
+                "end_date": s.end_date.isoformat() if s.end_date else None,
+                "committed_items": s.committed_items,
+                "committed_points": s.committed_points,
+                "velocity_estimate": s.velocity_estimate,
+                "status": s.status.value,
+                "planned_at": s.planned_at.isoformat() if s.planned_at else None,
+                "items": items,
+                "workload": _build_workload(items),
+            }
+        )
+
+    target = app.state.settings.get("sprint", {}).get("planning_horizon_sprints", horizon.min_sprints)
+
+    return {
+        "target": target,
+        "planned_count": len(future_sprints),
+        "needs_planning": horizon.needs_planning(),
+        "min_days_ahead": horizon.min_days_ahead,
+        "active_sprint_name": active_sprint_name,
+        "future_sprints": future_sprints,
+    }
+
+
 @app.get("/agents")
 async def list_agents():
     """List configured agents and their current state (cached for dashboard performance)."""
@@ -1896,6 +2356,25 @@ async def list_agents():
             "end_hour": schedule_config.get("end_hour", 17),
         }
     }
+
+
+@app.get("/api/teams")
+async def list_teams():
+    """List the simulator's teams with Jira-derived display names.
+
+    `key` is the stable internal key (alpha/beta) used for filtering; `name` is
+    the Jira team display name (falls back to the config label). The frontend
+    prepends an "All Teams" option.
+    """
+    teams = [
+        {
+            "key": key,
+            "name": meta.get("display_name") or meta.get("name") or key.title(),
+            "jira_team_id": meta.get("jira_team_id"),
+        }
+        for key, meta in app.state.personas.get("teams", {}).items()
+    ]
+    return {"teams": teams}
 
 
 class ChatRequest(BaseModel):

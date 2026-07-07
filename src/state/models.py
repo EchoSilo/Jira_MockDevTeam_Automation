@@ -888,6 +888,14 @@ class SimulationState(BaseModel):
     # Planning horizon for sprint lookahead (Phase 3)
     planning_horizon: Optional[dict] = None  # Serialized PlanningHorizon
 
+    # Sprint number that full sprint planning (top-up + create-new-sprints)
+    # last completed for. Gates planning to once per sprint (unless manually
+    # triggered via /plan-future-sprints). Deliberately NOT stored on
+    # PlanningHorizon - that object is rebuilt from scratch every tick by
+    # _sync_planning_horizon_from_jira, which would wipe it before the gate
+    # is ever checked.
+    last_planned_for_sprint: Optional[int] = None
+
     # Velocity tracking for capacity planning
     velocity_tracker: Optional[dict] = None  # Serialized VelocityTracker
 
